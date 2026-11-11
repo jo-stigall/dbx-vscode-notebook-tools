@@ -1,0 +1,117 @@
+{
+  "name": "dbx-notebook",
+  "displayName": "Databricks Source Notebooks",
+  "description": "Open Databricks .py source notebooks in the native notebook UI and run cells on a cluster.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Notebooks"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "contributes": {
+    "notebooks": [
+      {
+        "type": "dbx-notebook",
+        "displayName": "Databricks Source Notebook",
+        "priority": "option",
+        "selector": [
+          {
+            "filenamePattern": "*.py"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "dbxNotebook.openAsNotebook",
+        "title": "Open as Databricks Notebook",
+        "category": "Databricks Notebook",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "dbxNotebook.selectCluster",
+        "title": "Select Cluster",
+        "category": "Databricks Notebook",
+        "icon": "$(server)"
+      },
+      {
+        "command": "dbxNotebook.resetContext",
+        "title": "Reset Execution Context (Clear State)",
+        "category": "Databricks Notebook",
+        "icon": "$(debug-restart)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "dbxNotebook.openAsNotebook",
+          "when": "resourceExtname == .py && !notebookType && !isInDiffEditor",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "dbxNotebook.openAsNotebook",
+          "when": "resourceExtname == .py",
+          "group": "navigation@90"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "dbxNotebook.selectCluster",
+          "when": "notebookType == dbx-notebook",
+          "group": "navigation/execute@10"
+        },
+        {
+          "command": "dbxNotebook.resetContext",
+          "when": "notebookType == dbx-notebook",
+          "group": "navigation/execute@11"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dbxNotebook.resetContext",
+          "when": "notebookType == dbx-notebook"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Databricks Source Notebooks",
+      "properties": {
+        "dbxNotebook.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open .py files that start with '# Databricks notebook source' in the notebook UI automatically."
+        },
+        "dbxNotebook.host": {
+          "type": "string",
+          "default": "",
+          "description": "Databricks workspace URL. Leave empty to use DATABRICKS_HOST, the Databricks extension's project settings, or ~/.databrickscfg."
+        },
+        "dbxNotebook.profile": {
+          "type": "string",
+          "default": "",
+          "description": "Profile in ~/.databrickscfg to read the host and token from. Defaults to DATABRICKS_CONFIG_PROFILE, then DEFAULT."
+        },
+        "dbxNotebook.clusterId": {
+          "type": "string",
+          "default": "",
+          "description": "Cluster that runs notebook cells. Leave empty to choose with 'Databricks Notebook: Select Cluster'."
+        },
+        "dbxNotebook.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Databricks CLI, used for OAuth login when no token is configured. Defaults to the CLI bundled with the Databricks extension, then 'databricks' on PATH."
+        }
+      }
+    }
+  }
+}
