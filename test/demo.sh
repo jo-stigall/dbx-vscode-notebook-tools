@@ -1,7 +1,20 @@
 #!/bin/bash
-# Try the extension by hand without a Databricks workspace: opens a separate
-# VS Code window (own profile, no other extensions) on a copy of samples/,
-# connected to the local mock server. Close the window to stop.
+# Try the extension without a Databricks workspace.
+#
+# Usage:
+#     test/demo.sh               # the fake server uses port 8765
+#     PORT=9000 test/demo.sh     # use a different port
+#
+# The script does three things:
+#   1. It copies samples/ to .vscode-test/demo. Your edits do not change samples/.
+#   2. It starts the fake Databricks server (test/mock_databricks.py).
+#   3. It opens demo.py in a second VS Code. That VS Code has its own settings
+#      and no other extensions.
+#
+# Close the VS Code window to stop the script and the fake server.
+#
+# The fake server runs Python on this computer and SQL in an empty SQLite
+# database. It has no Databricks tables.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$ROOT/.vscode-test"

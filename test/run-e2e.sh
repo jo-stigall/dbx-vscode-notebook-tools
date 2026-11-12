@@ -1,10 +1,22 @@
 #!/bin/bash
-# Launches a throwaway VS Code instance (its own profile, no other extensions),
-# loads this extension, and runs test/e2e.js against the mock Databricks server.
-# Usage: test/run-e2e.sh [scratch-dir]
+# Run the end-to-end test (test/e2e.js) in a separate VS Code window.
+#
+# Usage:
+#     test/run-e2e.sh              # use the folder .vscode-test in the project
+#     test/run-e2e.sh /tmp/dbx     # use a different folder
+#
+# The script starts a second VS Code. That VS Code has its own settings and no
+# other extensions, thus the test does not change your normal VS Code. A window
+# opens for some seconds and closes when the test is done.
+#
+# The script prints one "ok" line for each step, then PASS or FAIL.
+# The exit code is 0 if the test passed.
+#
+# Keep the path of the folder short. VS Code puts a socket file in the folder,
+# and macOS does not accept a socket path longer than 103 characters.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TMP="${1:-$ROOT/.vscode-test}" # keep this path short: VS Code puts a socket in it
+TMP="${1:-$ROOT/.vscode-test}"
 CODE="${VSCODE_BIN:-/Applications/Visual Studio Code.app/Contents/MacOS/Code}"
 
 rm -rf "$TMP/ws" "$TMP/result.txt"

@@ -1,6 +1,22 @@
 'use strict';
-// End-to-end test. Runs inside a real VS Code extension host against the mock
-// Databricks server; see test/run-e2e.sh for how it is launched.
+/**
+ * Test the full extension in a real VS Code window.
+ *
+ * Do not run this file directly. Run test/run-e2e.sh. That script starts
+ * VS Code, and VS Code calls run() at the end of this file.
+ *
+ * The test uses the fake Databricks server (test/mock_databricks.py), not a
+ * real cluster. It does what a person does: open samples/demo.py, run cells,
+ * edit a cell, save the file. After each step it checks the cells, the
+ * outputs or the file on disk.
+ *
+ * The test writes one line for each step that passed to the result file:
+ *
+ *     ok   auto-opens as a notebook
+ *     ok   parses cells
+ *     ...
+ *     PASS
+ */
 const vscode = require('vscode');
 const assert = require('assert');
 const fs = require('fs');
@@ -10,6 +26,18 @@ const { spawn } = require('child_process');
 const NOTEBOOK_TYPE = 'dbx-notebook';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Wait until a condition is true. Check the condition 10 times each second.
+ *
+ * @example
+ * await until('the cell to finish', () => cell.executionSummary && cell.executionSummary.success);
+ *
+ * @param {string} what  The thing that you wait for. The error message contains this text.
+ * @param {() => any} fn  Returns a true value when the condition is true.
+ * @param {number} [timeout]  The longest time to wait, in milliseconds.
+ * @returns {Promise<any>}  The value that `fn` returned.
+ * @throws {Error}  If the condition is not true after `timeout`.
+ */
 async function until(what, fn, timeout = 20000) {
   const end = Date.now() + timeout;
   for (;;) {
@@ -20,6 +48,11 @@ async function until(what, fn, timeout = 20000) {
   }
 }
 
+/**
+ * Start the fake Databricks server on a free port.
+ *
+ * @returns {Promise<{ proc: import('child_process').ChildProcess, port: number }>}  The server process and its port. Call `proc.kill()` to stop the server.
+ */
 function startMock() {
   const proc = spawn('python3', [path.join(__dirname, 'mock_databricks.py')]);
   return new Promise((resolve, reject) => {
@@ -29,6 +62,17 @@ function startMock() {
   });
 }
 
+/**
+ * Get the output of a cell as text.
+ *
+ * @example
+ * outputText(cell)                // 'hello, world'
+ * outputText(cell, 'text/html')   // '<table ...'
+ *
+ * @param {vscode.NotebookCell} cell
+ * @param {string} [mime]  The output type to read. An error has the type 'application/vnd.code.notebook.error'.
+ * @returns {string}  Empty if the cell has no output of this type.
+ */
 const outputText = (cell, mime = 'text/plain') =>
   cell.outputs
     .flatMap((o) => o.items)
@@ -36,11 +80,50 @@ const outputText = (cell, mime = 'text/plain') =>
     .map((i) => new TextDecoder().decode(i.data))
     .join('\n');
 
+/**
+ * Tell VS Code to run cells. The promise ends when the cells are done.
+ *
+ * To do something while a cell runs, do not wait for the promise immediately.
+ *
+ * @example
+ * await runAll(nb);                       // run all cells
+ * await runAll(nb, { start: 2, end: 3 }); // run the third cell only
+ *
+ * const running = runAll(nb, { start: 2, end: 3 });
+ * // ... stop the cell here ...
+ * await running;
+ *
+ * @param {vscode.NotebookDocument} nb
+ * @param {{ start: number, end: number }} [range]  The cells to run. `start` is the first cell (0 = top). `end` is the cell after the last one.
+ */
 async function runAll(nb, range) {
   if (range) await vscode.commands.executeCommand('notebook.cell.execute', { ranges: [range], document: nb.uri });
   else await vscode.commands.executeCommand('notebook.execute', nb.uri);
 }
 
+/**
+ * Send a request to the fake server. Use it for the two test requests of the server.
+ *
+ * @example
+ * await mock('POST', '/mock/config', { context_delay: 3 });   // a new session takes 3 seconds to start
+ * await mock('POST', '/mock/requests');                        // forget the requests until now
+ * await mock('GET', '/mock/requests');                         // ['POST /api/1.2/contexts/create', ...]
+ *
+ * @param {'GET'|'POST'} method
+ * @param {string} urlPath
+ * @param {object} [body]
+ * @returns {Promise<any>}  The JSON answer of the server.
+ */
+async function mock(method, urlPath, body) {
+  const res = await fetch(process.env.DATABRICKS_HOST + urlPath, { method, body: body ? JSON.stringify(body) : undefined });
+  return res.json();
+}
+
+/**
+ * Do all test steps. Stop at the first step that fails.
+ *
+ * @param {(message: string) => void} log  Call it after each step that passed.
+ */
 async function main(log) {
   const work = process.env.DBX_E2E_DIR;
   fs.cpSync(path.join(__dirname, '..', 'samples'), work, { recursive: true });
@@ -140,6 +223,47 @@ async function main(log) {
   assert.ok(outputText(cells[2], 'application/vnd.code.notebook.error').includes('ValueError: boom'));
   log('reports cell errors');
 
+  // 7b. Stop while the session on the cluster starts: the cell must not run.
+  const sent = async (request) => (await mock('GET', '/mock/requests')).includes(request);
+  const quick = new vscode.WorkspaceEdit();
+  quick.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), 'print("must not run")');
+  await vscode.workspace.applyEdit(quick);
+  await vscode.commands.executeCommand('dbxNotebook.resetContext');
+  await mock('POST', '/mock/config', { context_delay: 2 });
+  await mock('POST', '/mock/requests');
+  let running = runAll(nb, { start: 2, end: 3 });
+  await until('the session to start', () => sent('POST /api/1.2/contexts/create'));
+  await vscode.commands.executeCommand('notebook.cell.cancelExecution', { ranges: [{ start: 2, end: 3 }], document: nb.uri });
+  await running;
+  assert.strictEqual(outputText(cells[2]), 'Cancelled.');
+  assert.ok(!(await sent('POST /api/1.2/commands/execute')), 'a stopped cell is not sent to the cluster');
+  log('does not run a cell that you stop while the session starts');
+
+  // 7c. Reset while the session starts: the cell must not run, and the cluster must not keep the new session.
+  await vscode.commands.executeCommand('dbxNotebook.resetContext');
+  await mock('POST', '/mock/requests');
+  running = runAll(nb, { start: 2, end: 3 });
+  await until('the session to start', () => sent('POST /api/1.2/contexts/create'));
+  await vscode.commands.executeCommand('dbxNotebook.resetContext');
+  await running;
+  assert.strictEqual(outputText(cells[2]), 'Cancelled.');
+  assert.ok(!(await sent('POST /api/1.2/commands/execute')), 'a cell is not sent to the cluster after a reset');
+  assert.ok(await sent('POST /api/1.2/contexts/destroy'), 'the session that started during the reset is deleted');
+  await mock('POST', '/mock/config', { context_delay: 0 });
+  log('deletes a session that you reset while it starts');
+
+  // 7d. Stop while the cluster accepts the command: the kernel must cancel the command when it gets the ID.
+  await mock('POST', '/mock/config', { execute_delay: 2 });
+  await mock('POST', '/mock/requests');
+  running = runAll(nb, { start: 2, end: 3 });
+  await until('the command to be sent', () => sent('POST /api/1.2/commands/execute'));
+  await vscode.commands.executeCommand('notebook.cell.cancelExecution', { ranges: [{ start: 2, end: 3 }], document: nb.uri });
+  await running;
+  assert.strictEqual(outputText(cells[2]), 'Cancelled.');
+  assert.ok(await sent('POST /api/1.2/commands/cancel'), 'the command is cancelled on the cluster');
+  await mock('POST', '/mock/config', { execute_delay: 0 });
+  log('cancels a command that you stop while the cluster accepts it');
+
   // 8. Adding cells through the notebook API (what Copilot's edit tool does) saves in Databricks format.
   const add = new vscode.WorkspaceEdit();
   add.set(nb.uri, [
@@ -164,6 +288,18 @@ async function main(log) {
   log('reopening as text sticks');
 }
 
+/**
+ * Start the fake server, do the test steps and write the result file.
+ *
+ * VS Code calls this function. The function reads two environment variables
+ * that test/run-e2e.sh sets:
+ *
+ * - DBX_E2E_DIR: an empty folder. The test copies the sample notebooks into it.
+ * - DBX_E2E_RESULT: the path of the result file.
+ *
+ * The function points the extension at the fake server with the variables
+ * DATABRICKS_HOST, DATABRICKS_TOKEN and DATABRICKS_CLUSTER_ID.
+ */
 exports.run = async () => {
   const lines = [];
   const log = (m) => lines.push('ok   ' + m);

@@ -1,12 +1,30 @@
 'use strict';
-// Run with VS Code's bundled runtime (no Node install needed):
-//   ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code" test/format.test.js
+/**
+ * Tests for src/format.js: convert a .py file to cells, and back.
+ *
+ * The most important tests make sure that a file does not change when you
+ * open it and save it without an edit.
+ *
+ * You do not need Node.js. VS Code contains a JavaScript runtime. Run:
+ *
+ *     ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code" test/format.test.js
+ *
+ * The script prints the number of tests that passed, for example "13 passed". It prints each failure
+ * and exits with code 1 if a test fails.
+ */
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { parseNotebook, serializeNotebook, parseCell, renderCell } = require('../src/format');
+const { parseNotebook, serializeNotebook, parseCell, renderCell, hasHeader } = require('../src/format');
 
 let passed = 0;
+
+/**
+ * Run one test. Print the error if the test fails, then continue with the next test.
+ *
+ * @param {string} name  What the test checks. The script prints it if the test fails.
+ * @param {() => void} fn  The test. It throws an error if a check fails.
+ */
 function test(name, fn) {
   try {
     fn();
@@ -16,8 +34,11 @@ function test(name, fn) {
     process.exitCode = 1;
   }
 }
+
+/** Do what "open the file, then save it" does: convert the text to cells, and back to text. */
 const roundTrip = (text) => serializeNotebook(parseNotebook(text));
 
+/** A notebook file in the format that Databricks writes. It has five cells. */
 const CANONICAL = [
   '# Databricks notebook source',
   '# MAGIC %md',
@@ -192,6 +213,15 @@ test('renderCell/parseCell are inverses for generated cells', () => {
     { kind: 'code', language: 'python', value: '%pip install x', dbtitle: '1,Install' },
   ];
   for (const c of cells) assert.deepStrictEqual(parseCell(renderCell(c)), c);
+});
+
+test('hasHeader accepts the header line only', () => {
+  assert.strictEqual(hasHeader('# Databricks notebook source'), true);
+  assert.strictEqual(hasHeader('# Databricks notebook source  \r\nx = 1'), true);
+  assert.strictEqual(hasHeader('# Databricks notebook sources'), false);
+  assert.strictEqual(hasHeader('x = 1\n# Databricks notebook source'), false);
+  // The function agrees with the parser: a file without the header is one Python cell.
+  assert.strictEqual(parseNotebook('# Databricks notebook sources\n').header, '');
 });
 
 console.log(`${passed} passed${process.exitCode ? ', with failures' : ''}`);

@@ -1,12 +1,44 @@
 'use strict';
+/**
+ * Start the extension: connect the parser, the kernel and the commands to VS Code.
+ *
+ * VS Code loads this file when you open a Python file or a Databricks
+ * notebook. VS Code then calls activate() one time.
+ *
+ * The other source files do the work:
+ *
+ * - src/format.js converts a .py file to cells, and back.
+ * - src/client.js finds your Databricks workspace and sends requests to it.
+ * - src/kernel.js runs cells on the cluster.
+ */
 const vscode = require('vscode');
-const { parseNotebook, serializeNotebook, HEADER } = require('./src/format');
+const { parseNotebook, serializeNotebook, hasHeader } = require('./src/format');
 const { Connection } = require('./src/client');
 const { Kernel } = require('./src/kernel');
 
+/** The name of the notebook type. package.json uses the same name. */
 const NOTEBOOK_TYPE = 'dbx-notebook';
 
+/**
+ * Converts between the bytes of a .py file and the cells that VS Code shows.
+ *
+ * VS Code calls deserializeNotebook() when you open a file as a notebook.
+ * VS Code calls serializeNotebook() when you save the notebook.
+ *
+ * Each cell keeps the data from src/format.js in `cell.metadata.dbx`:
+ * the original text (`raw`), the original separator (`sep`), the title
+ * (`dbtitle`) and the markdown type (`magic`). The notebook keeps the line
+ * ending, the header and the end of the file in `notebook.metadata.dbx`.
+ *
+ * @type {vscode.NotebookSerializer}
+ */
 const serializer = {
+  /**
+   * Convert the bytes of a .py file to notebook cells.
+   *
+   * @param {Uint8Array} content  The bytes of the file.
+   * @returns {vscode.NotebookData}
+   */
   deserializeNotebook(content) {
     const nb = parseNotebook(new TextDecoder().decode(content));
     const data = new vscode.NotebookData(
@@ -23,6 +55,15 @@ const serializer = {
     return data;
   },
 
+  /**
+   * Convert notebook cells to the bytes of a .py file.
+   *
+   * A cell that Copilot or you added has no `metadata.dbx`. The function
+   * writes that cell in the format that Databricks uses.
+   *
+   * @param {vscode.NotebookData} data
+   * @returns {Uint8Array}  The bytes to write to the file.
+   */
   serializeNotebook(data) {
     const cells = data.cells.map((c) => ({
       ...((c.metadata && c.metadata.dbx) || {}),
@@ -35,34 +76,77 @@ const serializer = {
   },
 };
 
-/** @param {vscode.ExtensionContext} context */
+/**
+ * Start the extension. VS Code calls this function one time.
+ *
+ * The function adds these parts to VS Code:
+ *
+ * - The serializer, so that VS Code can open and save .py notebooks.
+ * - The kernel "Databricks Cluster", so that you can run cells.
+ * - Automatic open: a .py file that starts with the Databricks header opens
+ *   as a notebook.
+ * - The cell title: VS Code shows the "# DBTITLE" text below the cell.
+ * - Three commands: "Open as Databricks Notebook", "Select Cluster" and
+ *   "Reset Execution Context".
+ *
+ * @param {vscode.ExtensionContext} context  VS Code removes all parts in `context.subscriptions` when the extension stops.
+ */
 function activate(context) {
   const conn = new Connection(context);
   const kernel = new Kernel(NOTEBOOK_TYPE, conn);
+
+  /** @returns {boolean} true if the notebook is a Databricks .py notebook. */
   const isOurs = (nb) => nb && nb.notebookType === NOTEBOOK_TYPE;
+
+  /** @returns {vscode.NotebookDocument|undefined} The Databricks notebook that you look at now, if there is one. */
   const activeNotebook = () => {
     const nb = vscode.window.activeNotebookEditor && vscode.window.activeNotebookEditor.notebook;
     return isOurs(nb) ? nb : undefined;
   };
 
-  // Text editor -> notebook, for files that start with the Databricks header.
-  const recentlyClosed = new Map(); // uri -> time the notebook view was closed
+  /** Notebook URI -> the time when you closed the notebook view of that file. */
+  const recentlyClosed = new Map();
+
+  /**
+   * Open a file as a notebook if it is a Databricks notebook.
+   *
+   * VS Code calls this function each time you go to a text editor. The
+   * function does nothing in these conditions:
+   *
+   * - The setting "dbxNotebook.autoOpen" is off.
+   * - The file is not a saved .py file on your disk.
+   * - The first line is not "# Databricks notebook source".
+   * - The file is open as a notebook, or you closed its notebook less than
+   *   2 seconds ago. This occurs when you select "Reopen Editor With... >
+   *   Text Editor". The file must then stay open as text.
+   *
+   * @param {vscode.TextEditor|undefined} editor  The text editor that you went to.
+   * @returns {Promise<void>}
+   */
   async function autoOpen(editor) {
     if (!editor || !vscode.workspace.getConfiguration('dbxNotebook').get('autoOpen')) return;
     const doc = editor.document;
     if (doc.uri.scheme !== 'file' || !doc.fileName.endsWith('.py') || doc.isDirty) return;
-    if (!doc.lineCount || !doc.lineAt(0).text.startsWith(HEADER)) return;
+    if (!doc.lineCount || !hasHeader(doc.lineAt(0).text)) return;
     const key = doc.uri.toString();
-    // Respect "Reopen Editor With... Text Editor": don't bounce straight back.
     if (vscode.workspace.notebookDocuments.some((nb) => isOurs(nb) && nb.uri.toString() === key)) return;
     if (Date.now() - (recentlyClosed.get(key) || 0) < 2000) return;
     await openAsNotebook(doc.uri);
   }
 
+  /**
+   * Open a .py file in the notebook view and close its text editor tab.
+   *
+   * This is the command "Open as Databricks Notebook".
+   *
+   * @param {vscode.Uri} [uri]  The file to open. If you omit it, the function uses the file in the text editor that you look at.
+   * @returns {Promise<void>}
+   */
   async function openAsNotebook(uri) {
     uri = uri || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri);
     if (!uri) return;
     const key = uri.toString();
+    // Do not close a text tab that has changes that you did not save.
     const textTabs = vscode.window.tabGroups.all
       .flatMap((g) => g.tabs)
       .filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === key && !t.isDirty);
@@ -72,19 +156,24 @@ function activate(context) {
 
   context.subscriptions.push(
     kernel,
+    // transientOutputs: VS Code does not save cell outputs, and a new output does not mark the file as changed.
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, serializer, { transientOutputs: true }),
 
     vscode.window.onDidChangeActiveTextEditor(autoOpen),
+
+    // Select the "Databricks Cluster" kernel for each notebook that opens.
     vscode.workspace.onDidOpenNotebookDocument((nb) => {
       if (isOurs(nb)) kernel.controller.updateNotebookAffinity(nb, vscode.NotebookControllerAffinity.Preferred);
     }),
+
+    // When you close a notebook, delete its session on the cluster.
     vscode.workspace.onDidCloseNotebookDocument((nb) => {
       if (!isOurs(nb)) return;
       recentlyClosed.set(nb.uri.toString(), Date.now());
       kernel.reset(nb.uri);
     }),
 
-    // Show a cell's Databricks title (# DBTITLE) under the cell.
+    // Show the title of a cell below the cell. "# DBTITLE 1,Load the data" shows "Load the data".
     vscode.notebooks.registerNotebookCellStatusBarItemProvider(NOTEBOOK_TYPE, {
       provideCellStatusBarItems(cell) {
         const t = cell.metadata && cell.metadata.dbx && cell.metadata.dbx.dbtitle;
@@ -94,6 +183,8 @@ function activate(context) {
     }),
 
     vscode.commands.registerCommand('dbxNotebook.openAsNotebook', openAsNotebook),
+
+    // "Select Cluster": after you select a cluster, delete all sessions. They are on the old cluster.
     vscode.commands.registerCommand('dbxNotebook.selectCluster', async () => {
       const nb = activeNotebook();
       const uri = nb ? nb.uri : vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0].uri;
@@ -103,6 +194,8 @@ function activate(context) {
         vscode.window.showErrorMessage(e.message);
       }
     }),
+
+    // "Reset Execution Context": the cluster forgets the variables of the notebook that you look at.
     vscode.commands.registerCommand('dbxNotebook.resetContext', async () => {
       const nb = activeNotebook();
       if (!nb) return;
@@ -111,12 +204,14 @@ function activate(context) {
     })
   );
 
+  // Handle the notebooks and the text editor that were open before the extension started.
   for (const nb of vscode.workspace.notebookDocuments) {
     if (isOurs(nb)) kernel.controller.updateNotebookAffinity(nb, vscode.NotebookControllerAffinity.Preferred);
   }
   autoOpen(vscode.window.activeTextEditor);
 }
 
+/** Stop the extension. VS Code removes the parts in `context.subscriptions`, thus this function does nothing. */
 function deactivate() {}
 
 module.exports = { activate, deactivate, NOTEBOOK_TYPE };
