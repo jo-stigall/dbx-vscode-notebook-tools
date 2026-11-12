@@ -18,6 +18,8 @@ export interface ProfileOptions {
   signal?: CancelSignal;
   /** The profiler calls this function when the state of the query changes. */
   onProgress?: (state: 'queued' | 'running', statementId?: string) => void;
+  /** true: do not answer from the cache. Run the query again. */
+  refresh?: boolean;
 }
 
 /** Answers requests about datasets. */
@@ -134,6 +136,7 @@ export function createDispatcher(deps: {
       const profiler = deps.profilerFor(request.dataset.profile);
       const result = await profiler.profile(request, {
         signal,
+        refresh: message.refresh,
         onProgress: (state, statementId) => deps.post({ type: 'progress', id, state, statementId }),
       });
       if (signal.aborted) reply({ type: 'cancelled', id });
