@@ -81,7 +81,10 @@ function toNumber(column: DemoColumn, value: number): number {
  */
 function measuredNumbers(column: DemoColumn, measure: Measure | undefined): number[] {
   const out: number[] = [];
-  if (measure === 'length') {
+  if (measure === 'day') {
+    if (column.family !== 'date' && column.family !== 'timestamp') throw new ProfilerError(`The column ${column.name} is not a date.`);
+    for (const v of column.values) if (v !== null) out.push(column.family === 'timestamp' ? Math.floor((v as number) / DAY_MS) : (v as number));
+  } else if (measure === 'length') {
     if (column.family === 'complex') throw new ProfilerError(`The column ${column.name} has the type ${column.typeText}, so its values have no length.`);
     for (const v of column.values) if (v !== null) out.push(formatDemoValue(column, v).length);
   } else {
@@ -130,6 +133,33 @@ export class DemoProfiler implements Profiler {
       case 'validateFilter':
         tableOf(request.dataset); // throws if the table does not exist or the dataset has a filter
         return { ...base, type: 'validateFilter' };
+      case 'quantiles': {
+        const sorted = measuredNumbers(columnOf(tableOf(request.dataset), request.columns[0]), request.measure).sort((a, b) => a - b);
+        return { ...base, type: 'quantiles', values: sorted.length ? request.probabilities.map((p) => percentileOf(sorted, p)) : [] };
+      }
+      case 'driftBins': {
+        const table = tableOf(request.dataset);
+        const numbers = measuredNumbers(columnOf(table, request.columns[0]), request.measure);
+        const counts = new Array<number>(request.cuts.length + 1).fill(0);
+        for (const x of numbers) {
+          // The bin of a value is the number of cut points that are not above it.
+          let bin = 0;
+          for (const cut of request.cuts) if (x >= cut) bin++;
+          counts[bin] = (counts[bin] as number) + 1;
+        }
+        return { ...base, type: 'driftBins', rowCount: table.rowCount, nulls: table.rowCount - numbers.length, counts };
+      }
+      case 'valueCounts': {
+        const column = columnOf(tableOf(request.dataset), request.columns[0]);
+        const counts = new Map<string, number>(request.values.map((value) => [value, 0]));
+        for (const v of column.values) {
+          if (v === null) continue;
+          const text = formatDemoValue(column, v);
+          const n = counts.get(text);
+          if (n !== undefined) counts.set(text, n + 1);
+        }
+        return { ...base, type: 'valueCounts', values: request.values.map((value) => ({ value, count: counts.get(value) ?? 0 })) };
+      }
     }
   }
 

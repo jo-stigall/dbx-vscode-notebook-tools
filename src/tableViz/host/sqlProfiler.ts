@@ -12,7 +12,18 @@
  */
 import { toProfilerError, type ErrorContext } from '../core/errors.ts';
 import type { Limiter } from '../core/limiter.ts';
-import { parseDateCounts, parseDescribeDetail, parseDescribeHistory, parseFrequency, parseHistogram, parseNumericStats, parseOverview } from '../core/parse.ts';
+import {
+  parseDateCounts,
+  parseDescribeDetail,
+  parseDescribeHistory,
+  parseDriftBins,
+  parseFrequency,
+  parseHistogram,
+  parseNumericStats,
+  parseOverview,
+  parseQuantiles,
+  parseValueCounts,
+} from '../core/parse.ts';
 import { CancelledError, type CancelSignal, type ProfileOptions, type Profiler } from '../core/profiler.ts';
 import { QueryError, type QueryResult, type QueryRunner } from '../core/runner.ts';
 import type { ColumnInfo, Request, RequestOf, Result, ResultOf, TableName } from '../core/schema.ts';
@@ -75,6 +86,12 @@ export class SqlProfiler implements Profiler {
           return { ...base, approximate: false, ...parseDateCounts(request, result) };
         case 'validateFilter':
           return { ...base, approximate: false, type: 'validateFilter' };
+        case 'quantiles':
+          return { ...base, approximate: true, ...parseQuantiles(request, result) };
+        case 'driftBins':
+          return { ...base, approximate: false, ...parseDriftBins(request, result) };
+        case 'valueCounts':
+          return { ...base, approximate: false, ...parseValueCounts(request, result) };
       }
     } catch (e) {
       if (e instanceof CancelledError || options.signal?.aborted) throw new CancelledError();

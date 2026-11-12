@@ -92,6 +92,14 @@ test('validateFilter', (t) => {
   snapshot(t, render({ type: 'validateFilter', dataset: plain }));
 });
 
+test('quantiles, driftBins and valueCounts', (t) => {
+  snapshot(t, render({ type: 'quantiles', dataset: plain, columns: [amount], probabilities: [0.1, 0.5, 0.9] }));
+  snapshot(t, render({ type: 'quantiles', dataset: full, columns: [{ name: 'order_ts', typeText: 'timestamp' }], probabilities: [0.5], measure: 'day' }));
+  snapshot(t, render({ type: 'driftBins', dataset: full, columns: [amount], cuts: [10, 20.5, 1e6] }));
+  snapshot(t, render({ type: 'driftBins', dataset: odd, columns: [{ name: 'select', typeText: 'date' }], cuts: [20454], measure: 'day' }, 'backtick'));
+  snapshot(t, render({ type: 'valueCounts', dataset: full, columns: [{ name: 'we`ird', typeText: 'string' }], values: ["it's", 'x`; DROP TABLE t; --', ''] }));
+});
+
 test('a name never goes into the SQL text without backticks', () => {
   const evil = "x`; DROP TABLE t; --";
   const dataset: Dataset = { profile: 'p', table: { catalog: evil, schema: evil, name: evil } };

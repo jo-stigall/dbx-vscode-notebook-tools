@@ -87,6 +87,7 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
       defaultBins: config.get('defaultBins'),
       topValues: config.get('topValues'),
       largeTableBytes: session.settings().largeTableWarningGB * 1024 ** 3,
+      matchColumnsCaseSensitive: config.get('matchColumnsCaseSensitive') === true,
     });
     return parsed.success ? parsed.data : DEFAULT_SETTINGS;
   };

@@ -118,9 +118,19 @@ class Parts {
   }
 }
 
-/** Write the expression that a number request measures: the column as a number, or the length of the column as text. */
+/**
+ * Write the expression that a number request measures.
+ *
+ * | Measure  | Expression                              |
+ * |----------|-----------------------------------------|
+ * | 'value'  | the column                              |
+ * | 'length' | the number of characters of the column as text |
+ * | 'day'    | the date of the column, as days after 1970-01-01 |
+ */
 function measured(column: string, measure: Measure | undefined): string {
-  return measure === 'length' ? `length(CAST(${column} AS STRING))` : column;
+  if (measure === 'length') return `length(CAST(${column} AS STRING))`;
+  if (measure === 'day') return `unix_date(CAST(${column} AS DATE))`;
+  return column;
 }
 
 /**
@@ -265,6 +275,45 @@ function validateFilter(request: RequestOf<'validateFilter'>, options: BuildOpti
 }
 
 /**
+ * The statement for "quantiles": approximate percentiles, one result column (`q0`, `q1`, ...) for each probability.
+ */
+function quantiles(request: RequestOf<'quantiles'>, options: BuildOptions): Statement[] {
+  const parts = new Parts(options);
+  const x = `CAST(${measured(parts.column(request.columns[0]), request.measure)} AS DOUBLE)`;
+  const outer = request.probabilities.map((_, i) => `\`q\`[${i}] AS \`q${i}\``).join(', ');
+  const sql =
+    `SELECT ${outer}\nFROM (\n  SELECT approx_percentile(${x}, array(${request.probabilities.join(', ')})) AS \`q\`\n  ` +
+    `${parts.from(request.dataset)}${parts.where(request.dataset).replace(/\n/g, '\n  ')}\n)`;
+  return [{ sql, params: parts.params }];
+}
+
+/**
+ * The statement for "driftBins": the number of rows between each two cut points.
+ *
+ * The bucket of a value is the number of cut points that are not above it:
+ * 0 for a value below the first cut point, and `cuts.length` for a value at
+ * or above the last one. The bucket of a null is -1.
+ */
+function driftBins(request: RequestOf<'driftBins'>, options: BuildOptions): Statement[] {
+  const parts = new Parts(options);
+  const x = `CAST(${measured(parts.column(request.columns[0]), request.measure)} AS DOUBLE)`;
+  const steps = request.cuts.map((cut, i) => `CASE WHEN ${x} >= ${parts.param(`k${i}`, cut, 'DOUBLE')} THEN 1 ELSE 0 END`);
+  const sql =
+    `SELECT\n  CASE WHEN ${x} IS NULL THEN -1 ELSE\n    ${steps.join(' +\n    ')}\n  END AS \`bucket\`,\n  count(*) AS \`n\`\n` +
+    `${parts.from(request.dataset)}${parts.where(request.dataset)}\nGROUP BY 1`;
+  return [{ sql, params: parts.params }];
+}
+
+/** The statement for "valueCounts": the number of rows for each value in a list. A value with no rows gives no result row. */
+function valueCounts(request: RequestOf<'valueCounts'>, options: BuildOptions): Statement[] {
+  const parts = new Parts(options);
+  const x = `CAST(${parts.column(request.columns[0])} AS STRING)`;
+  const list = request.values.map((value, i) => parts.param(`v${i}`, value, 'STRING')).join(', ');
+  const sql = `SELECT ${x} AS \`value\`, count(*) AS \`n\`\n${parts.from(request.dataset)}${parts.where(request.dataset, `${x} IN (${list})`)}\nGROUP BY 1`;
+  return [{ sql, params: parts.params }];
+}
+
+/**
  * Build the statements for a request.
  *
  * Most requests need one statement. "tableDetails" needs two.
@@ -285,6 +334,12 @@ export function buildStatements(request: Request, options: BuildOptions = {}): S
       return dateCounts(request, options);
     case 'validateFilter':
       return validateFilter(request, options);
+    case 'quantiles':
+      return quantiles(request, options);
+    case 'driftBins':
+      return driftBins(request, options);
+    case 'valueCounts':
+      return valueCounts(request, options);
   }
 }
 

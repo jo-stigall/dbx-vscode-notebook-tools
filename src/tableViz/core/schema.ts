@@ -89,11 +89,15 @@ export type Grain = z.infer<typeof grainSchema>;
 const oneColumn = z.tuple([columnRefSchema]);
 
 /**
- * What a request measures in a column: the value, or the number of
- * characters of the value as text. The card of an identifier column shows a
- * histogram of the lengths.
+ * What a request measures in a column.
+ *
+ * - 'value': the value, for a number column.
+ * - 'length': the number of characters of the value as text. The card of an
+ *   identifier column shows a histogram of the lengths.
+ * - 'day': the date of the value, as a number of days after 1970-01-01. The
+ *   drift score of a date column uses it.
  */
-export const measureSchema = z.enum(['value', 'length']);
+export const measureSchema = z.enum(['value', 'length', 'day']);
 export type Measure = z.infer<typeof measureSchema>;
 
 /** The percentiles in the statistics of a number column. */
@@ -133,6 +137,26 @@ export const requestSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('dateCounts'), dataset: datasetSchema, columns: oneColumn, grain: grainSchema }),
   /** Check that Databricks can read the filter of the dataset. The request reads no rows. */
   z.strictObject({ type: z.literal('validateFilter'), dataset: datasetSchema }),
+  /** The values below which a given part of the rows is. Compare mode asks for the nine deciles of dataset A. */
+  z.strictObject({
+    type: z.literal('quantiles'),
+    dataset: datasetSchema,
+    columns: oneColumn,
+    measure: measureSchema.optional(),
+    /** Each number is more than 0 and less than 1. Example: [0.1, 0.2, ..., 0.9]. */
+    probabilities: z.array(z.number().gt(0).lt(1)).min(1).max(20),
+  }),
+  /** The number of rows between each two cut points. Compare mode uses the same cut points for A and B. */
+  z.strictObject({
+    type: z.literal('driftBins'),
+    dataset: datasetSchema,
+    columns: oneColumn,
+    measure: measureSchema.optional(),
+    /** The cut points, smallest first. n cut points make n + 1 bins. */
+    cuts: z.array(z.number()).min(1).max(20),
+  }),
+  /** The exact number of rows for each value in a list. Compare mode asks for the values that are in the top list of the other dataset only. */
+  z.strictObject({ type: z.literal('valueCounts'), dataset: datasetSchema, columns: oneColumn, values: z.array(z.string()).min(1).max(200) }),
 ]);
 export type Request = z.infer<typeof requestSchema>;
 export type RequestOf<T extends Request['type']> = Extract<Request, { type: T }>;
@@ -220,6 +244,18 @@ export const resultSchema = z.discriminatedUnion('type', [
   }),
   /** The filter is valid. If it is not valid, the request fails with an error that has the text from Databricks. */
   z.strictObject({ ...resultBase, type: z.literal('validateFilter') }),
+  /** One value for each probability of the request. Empty if the column has no values. */
+  z.strictObject({ ...resultBase, type: z.literal('quantiles'), values: z.array(z.number()) }),
+  z.strictObject({
+    ...resultBase,
+    type: z.literal('driftBins'),
+    rowCount: z.number(),
+    nulls: z.number(),
+    /** One count more than the request has cut points. Bin 0 has the values below the first cut point. */
+    counts: z.array(z.number()),
+  }),
+  /** One entry for each value of the request, in the same sequence. A value that no row has gets the count 0. */
+  z.strictObject({ ...resultBase, type: z.literal('valueCounts'), values: z.array(z.strictObject({ value: z.string(), count: z.number() })) }),
 ]);
 export type Result = z.infer<typeof resultSchema>;
 export type ResultOf<T extends Result['type']> = Extract<Result, { type: T }>;
@@ -247,6 +283,10 @@ export const cardSchema = z.strictObject({
   showSql: z.boolean().optional(),
   /** true: the card asked for exact numbers. */
   exact: z.boolean().optional(),
+  /** Compare mode. true: the card shows one chart for A and one for B. false: one chart with the two datasets. */
+  sideBySide: z.boolean().optional(),
+  /** Compare mode. true: the charts show the number of rows. false: they show the percent of the rows of each dataset. */
+  rawCounts: z.boolean().optional(),
 });
 export type Card = z.infer<typeof cardSchema>;
 
@@ -258,9 +298,11 @@ export const boardSettingsSchema = z.strictObject({
   topValues: z.number().int().min(1).max(100),
   /** The board asks before the first full scan of a table that is larger than this number of bytes. */
   largeTableBytes: z.number().positive(),
+  /** true: compare mode matches 'Region' with 'Region' only. false: it matches 'Region' with 'region' also. */
+  matchColumnsCaseSensitive: z.boolean(),
 });
 export type BoardSettings = z.infer<typeof boardSettingsSchema>;
-export const DEFAULT_SETTINGS: BoardSettings = { defaultBins: 30, topValues: 20, largeTableBytes: 100 * 1024 ** 3 };
+export const DEFAULT_SETTINGS: BoardSettings = { defaultBins: 30, topValues: 20, largeTableBytes: 100 * 1024 ** 3, matchColumnsCaseSensitive: false };
 
 /** What the webview stores so that a board comes back after a window reload. It contains no data and no token. */
 export const boardStateSchema = z.strictObject({
@@ -269,6 +311,8 @@ export const boardStateSchema = z.strictObject({
   cards: z.array(cardSchema).optional(),
   /** true: the user chose to scan a table that is larger than the size limit. */
   scanLarge: z.boolean().optional(),
+  /** Compare mode: the names of the columns of A whose types differ from B, and that the user chose to compare as text. */
+  asText: z.array(z.string()).optional(),
 });
 export type BoardState = z.infer<typeof boardStateSchema>;
 

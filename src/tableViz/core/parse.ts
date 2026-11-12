@@ -9,7 +9,7 @@ import type { QueryResult } from './runner.ts';
 import { PERCENTILES, type OverviewColumn, type RequestOf, type ResultOf } from './schema.ts';
 
 /** The fields of a result that the parsers do not set. The SQL profiler adds them. */
-type Body<T extends ResultOf<'overview'>['type'] | 'tableDetails' | 'numericStats' | 'histogram' | 'frequency' | 'dateCounts'> = Omit<
+type Body<T extends ResultOf<'overview'>['type'] | 'tableDetails' | 'numericStats' | 'histogram' | 'frequency' | 'dateCounts' | 'quantiles' | 'driftBins' | 'valueCounts'> = Omit<
   ResultOf<T>,
   'sql' | 'approximate' | 'asOf'
 >;
@@ -167,6 +167,43 @@ export function parseDateCounts(request: RequestOf<'dateCounts'>, result: QueryR
     if (start !== null) buckets.push({ start: start.slice(0, 10), count: toCount(get('n')) });
   }
   return { type: 'dateCounts', grain: request.grain, buckets };
+}
+
+/** The partner of the "quantiles" builder. If the column has no values, all percentiles are null and the list is empty. */
+export function parseQuantiles(request: RequestOf<'quantiles'>, result: QueryResult): Body<'quantiles'> {
+  const get = reader(result, 0);
+  const values: number[] = [];
+  request.probabilities.forEach((_, i) => {
+    const value = toNumber(get(`q${i}`));
+    if (value !== undefined) values.push(value);
+  });
+  return { type: 'quantiles', values: values.length === request.probabilities.length ? values : [] };
+}
+
+/** The partner of the "driftBins" builder. Bucket -1 has the nulls. Buckets 0 to `cuts.length` are the bins. */
+export function parseDriftBins(request: RequestOf<'driftBins'>, result: QueryResult): Body<'driftBins'> {
+  const counts = new Array<number>(request.cuts.length + 1).fill(0);
+  let nulls = 0;
+  for (let i = 0; i < result.rows.length; i++) {
+    const get = reader(result, i);
+    const bucket = Number(get('bucket'));
+    const n = toCount(get('n'));
+    if (bucket === -1) nulls += n;
+    else if (Number.isInteger(bucket) && bucket >= 0 && bucket < counts.length) counts[bucket] = (counts[bucket] as number) + n;
+    else throw new ParseError(`"${get('bucket')}" is not a bucket of ${counts.length} bins.`);
+  }
+  return { type: 'driftBins', rowCount: nulls + counts.reduce((a, b) => a + b, 0), nulls, counts };
+}
+
+/** The partner of the "valueCounts" builder. The result has one entry for each value of the request; a value without a row gets 0. */
+export function parseValueCounts(request: RequestOf<'valueCounts'>, result: QueryResult): Body<'valueCounts'> {
+  const found = new Map<string, number>();
+  for (let i = 0; i < result.rows.length; i++) {
+    const get = reader(result, i);
+    const value = get('value');
+    if (value !== null) found.set(value, toCount(get('n')));
+  }
+  return { type: 'valueCounts', values: request.values.map((value) => ({ value, count: found.get(value) ?? 0 })) };
 }
 
 /** The facts of a Delta table that come from SQL. */

@@ -283,6 +283,74 @@ SELECT
 FROM IDENTIFIER(:tbl)
 `;
 
+exports[`quantiles, driftBins and valueCounts 1`] = `
+-- :c0 = '\`amount\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT \`q\`[0] AS \`q0\`, \`q\`[1] AS \`q1\`, \`q\`[2] AS \`q2\`
+FROM (
+  SELECT approx_percentile(CAST(IDENTIFIER(:c0) AS DOUBLE), array(0.1, 0.5, 0.9)) AS \`q\`
+  FROM IDENTIFIER(:tbl)
+)
+`;
+
+exports[`quantiles, driftBins and valueCounts 2`] = `
+-- :c0 = '\`order_ts\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT \`q\`[0] AS \`q0\`
+FROM (
+  SELECT approx_percentile(CAST(unix_date(CAST(IDENTIFIER(:c0) AS DATE)) AS DOUBLE), array(0.5)) AS \`q\`
+  FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+  WHERE (
+    order_date >= '2026-01-01' AND region = 'EMEA'
+  )
+)
+`;
+
+exports[`quantiles, driftBins and valueCounts 3`] = `
+-- :c0 = '\`amount\`'
+-- :k0 = 10
+-- :k1 = 20.5
+-- :k2 = 1000000
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) IS NULL THEN -1 ELSE
+    CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) >= :k0 THEN 1 ELSE 0 END +
+    CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) >= :k1 THEN 1 ELSE 0 END +
+    CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) >= :k2 THEN 1 ELSE 0 END
+  END AS \`bucket\`,
+  count(*) AS \`n\`
+FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+WHERE (
+  order_date >= '2026-01-01' AND region = 'EMEA'
+)
+GROUP BY 1
+`;
+
+exports[`quantiles, driftBins and valueCounts 4`] = `
+-- :k0 = 20454
+SELECT
+  CASE WHEN CAST(unix_date(CAST(\`select\` AS DATE)) AS DOUBLE) IS NULL THEN -1 ELSE
+    CASE WHEN CAST(unix_date(CAST(\`select\` AS DATE)) AS DOUBLE) >= :k0 THEN 1 ELSE 0 END
+  END AS \`bucket\`,
+  count(*) AS \`n\`
+FROM \`główny\`.\`sales data\`.\`select\`\`from\`
+GROUP BY 1
+`;
+
+exports[`quantiles, driftBins and valueCounts 5`] = `
+-- :c0 = '\`we\`\`ird\`'
+-- :v0 = 'it''s'
+-- :v1 = 'x\`; DROP TABLE t; --'
+-- :v2 = ''
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT CAST(IDENTIFIER(:c0) AS STRING) AS \`value\`, count(*) AS \`n\`
+FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+WHERE (
+  order_date >= '2026-01-01' AND region = 'EMEA'
+) AND CAST(IDENTIFIER(:c0) AS STRING) IN (:v0, :v1, :v2)
+GROUP BY 1
+`;
+
 exports[`tableDetails 1`] = `
 -- :tbl = '\`main\`.\`sales\`.\`orders\`'
 DESCRIBE DETAIL IDENTIFIER(:tbl)

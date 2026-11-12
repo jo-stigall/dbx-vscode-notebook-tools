@@ -52,7 +52,7 @@ export class Board {
       profilerFor: deps.profilerFor,
       post: (message) => {
         // Log the type and the time of each request. Never log a value from a result.
-        if (message.type !== 'init' && message.type !== 'progress') {
+        if (message.type === 'result' || message.type === 'error' || message.type === 'cancelled') {
           const ms = Date.now() - (started.get(message.id) ?? Date.now());
           started.delete(message.id);
           const exchange = this.dispatcher.exchanges.find((x) => x.id === message.id);

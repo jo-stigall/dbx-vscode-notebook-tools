@@ -61,7 +61,7 @@ export async function answerStatement(statement: Statement): Promise<QueryResult
     return { name, typeText: column.typeText };
   };
   const ask = <T extends Request>(request: T) => profiler.profile(request) as Promise<ResultOf<T['type']>>;
-  const measure: Measure | undefined = sql.includes('length(CAST(') ? 'length' : undefined;
+  const measure: Measure | undefined = sql.includes('length(CAST(') ? 'length' : sql.includes('unix_date(') ? 'day' : undefined;
 
   if (sql.startsWith('DESCRIBE DETAIL ')) {
     const partitions = demo.columns.filter((c) => c.partition).map((c) => c.name);
@@ -117,6 +117,22 @@ export async function answerStatement(statement: Statement): Promise<QueryResult
     return rowsOf(['value', 'n', 'total'], rows.slice(0, limit));
   }
   if (sql.startsWith('SELECT 1 AS `ok`')) return rowsOf(['ok'], []);
+  if (sql.includes(' AS `q`\n')) {
+    const probabilities = (/array\(([^)]*)\)/.exec(sql)?.[1] ?? '').split(',').map(Number);
+    const r = await ask({ type: 'quantiles', dataset, columns: [ref('c0')], measure, probabilities });
+    // With no values, Databricks gives one row of nulls.
+    return rowsOf(probabilities.map((_, i) => `q${i}`), [probabilities.map((_, i) => r.values[i])]);
+  }
+  if (sql.includes('THEN -1 ELSE')) {
+    const cuts = params.filter((p) => /^k\d+$/.test(p.name)).map((p) => Number(p.value));
+    const r = await ask({ type: 'driftBins', dataset, columns: [ref('c0')], measure, cuts });
+    return rowsOf(['bucket', 'n'], [[-1, r.nulls], ...r.counts.map((n, i) => [i, n])].filter(([, n]) => (n as number) > 0));
+  }
+  if (sql.includes(' IN (:v0')) {
+    const values = params.filter((p) => /^v\d+$/.test(p.name)).map((p) => p.value);
+    const r = await ask({ type: 'valueCounts', dataset, columns: [ref('c0')], values });
+    return rowsOf(['value', 'n'], r.values.filter((v) => v.count > 0).map((v) => [v.value, v.count]));
+  }
   const trunc = /date_trunc\('(DAY|WEEK|MONTH|YEAR)'/.exec(sql);
   if (trunc) {
     const r = await ask({ type: 'dateCounts', dataset, columns: [ref('c0')], grain: (trunc[1] as string).toLowerCase() as Grain });
