@@ -1,0 +1,193 @@
+/*
+ * The styles of the board.
+ *
+ * All colors and fonts come from the --vscode-* variables, so the board
+ * follows the theme of the user: light, dark and high contrast.
+ *
+ * --tv-a is the color of dataset A on each chart. --tv-b is the color of
+ * dataset B. Blue and orange stay different for people who cannot tell red
+ * from green.
+ */
+:root {
+  --tv-a: var(--vscode-charts-blue, #3794ff);
+  --tv-b: var(--vscode-charts-orange, #d18616);
+  --tv-border: var(--vscode-contrastBorder, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  --tv-muted: var(--vscode-descriptionForeground, inherit);
+}
+
+body {
+  margin: 0;
+  padding: 0 20px 24px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+h1 {
+  margin: 16px 0 8px;
+  font-size: 1.35em;
+  font-weight: 600;
+}
+
+.badge {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 0.7em;
+  font-weight: normal;
+  vertical-align: middle;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  border: 1px solid var(--vscode-contrastBorder, transparent);
+}
+
+.status {
+  margin: 24px 0;
+  color: var(--tv-muted);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 28px;
+  margin: 0 0 14px;
+}
+.fact dt {
+  font-size: 0.85em;
+  color: var(--tv-muted);
+}
+.fact dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.toolbar input,
+.toolbar select {
+  padding: 3px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--tv-border));
+  border-radius: 2px;
+  font: inherit;
+}
+.toolbar input {
+  width: 220px;
+}
+.toolbar input:focus,
+.toolbar select:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.count {
+  color: var(--tv-muted);
+}
+
+table.columns {
+  width: 100%;
+  border-collapse: collapse;
+}
+.columns th,
+.columns td {
+  padding: 4px 12px 4px 0;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--tv-border);
+  white-space: nowrap;
+}
+.columns thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
+  background: var(--vscode-editor-background);
+}
+.columns tbody tr:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.columns .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.columns .name {
+  font-weight: normal;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+.columns .type {
+  color: var(--tv-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--tv-border);
+  border-radius: 3px;
+  font-family: var(--vscode-font-family);
+  font-size: 0.8em;
+  color: var(--tv-muted);
+}
+
+.share {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.share-track {
+  /* The text color at a low strength. The fill then shows in each theme, also in high contrast. */
+  fill: var(--vscode-foreground);
+  opacity: 0.18;
+}
+.share-fill {
+  fill: var(--tv-a);
+}
+
+.thumb-cell {
+  display: flex;
+  align-items: center;
+  min-width: 132px;
+  height: 28px;
+}
+.thumb rect {
+  fill: var(--tv-a);
+}
+.thumb rect:hover {
+  fill: var(--vscode-focusBorder, var(--tv-a));
+}
+.thumb-none,
+.thumb-error {
+  color: var(--tv-muted);
+  font-size: 0.9em;
+}
+.thumb-wait {
+  width: 132px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--tv-border);
+  opacity: 0.6;
+}
+
+.error {
+  margin: 12px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+  background: var(--vscode-inputValidation-errorBackground, transparent);
+}
+.error p {
+  margin: 2px 0;
+}
+.error-message {
+  font-weight: 600;
+}
+.error pre {
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+}

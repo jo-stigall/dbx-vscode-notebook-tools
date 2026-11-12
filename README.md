@@ -48,20 +48,28 @@ Without the extension, VS Code shows this file as text. With the extension:
 
 ## Install the extension
 
-1. Build the install file:
+1. Get the packages that the build uses. You need Node.js 22 or later for
+   this step and the next step.
 
    ```bash
-   python3 scripts/package.py
+   npm install
    ```
 
-2. Install it in VS Code:
+2. Build the install file:
+
+   ```bash
+   npm run package
+   ```
+
+3. Install it in VS Code:
 
    ```bash
    code --install-extension dbx-notebook-0.0.1.vsix
    ```
 
-You do not need Node.js. To try the extension without a Databricks workspace,
-see [test/README.md](test/README.md).
+A computer that only installs the `.vsix` file does not need Node.js. To try
+the extension without a Databricks workspace, see
+[test/README.md](test/README.md).
 
 ## Connect to your workspace
 
@@ -124,6 +132,17 @@ A cell keeps its language when you replace its text. If you paste Python into
 an SQL cell, the cluster reports an SQL error. Change the language of the cell
 to Python first.
 
+## Look at a table
+
+The command "Databricks Notebook: Visualize Table" opens a page that shows
+each column of a table: its type, how many rows are null, how many different
+values it has, and a small chart of its values.
+
+This part is not complete. It shows two demo tables only,
+`demo.shop.orders_2025` and `demo.shop.orders_2026`. It does not connect to
+your workspace yet. [docs/table-viz-design.md](docs/table-viz-design.md) has
+the plan.
+
 ## Magic commands
 
 | First line of the cell | What the extension does |
@@ -177,3 +196,4 @@ A real cluster must confirm each item in this list:
 |---|---|
 | [docs/how-it-works.md](docs/how-it-works.md) | How the extension opens, saves and runs a notebook. Where each part is in the code. |
 | [test/README.md](test/README.md) | How to run the tests and the demo. What the fake Databricks server does. |
+| [docs/table-viz-design.md](docs/table-viz-design.md) | The plan for the "Visualize Table" feature. |

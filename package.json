@@ -13,8 +13,17 @@
     "Notebooks"
   ],
   "main": "./extension.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p src/tableViz/tsconfig.core.json && tsc -p src/tableViz/tsconfig.host.json && tsc -p src/tableViz/tsconfig.webview.json && tsc -p test/tableViz/tsconfig.json",
+    "test:unit": "node test/format.test.js && node test/client.test.js && node --test \"test/tableViz/unit/*.test.ts\"",
+    "test:e2e": "npm run build && test/run-e2e.sh",
+    "test": "npm run typecheck && npm run test:unit && npm run test:e2e",
+    "package": "npm run build && python3 scripts/package.py"
+  },
   "activationEvents": [
-    "onLanguage:python"
+    "onLanguage:python",
+    "onWebviewPanel:dbxNotebook.tableViz.board"
   ],
   "contributes": {
     "notebooks": [
@@ -47,6 +56,11 @@
         "title": "Reset Execution Context (Clear State)",
         "category": "Databricks Notebook",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.visualizeTable",
+        "title": "Visualize Table",
+        "category": "Databricks Notebook"
       }
     ],
     "menus": {
@@ -113,5 +127,18 @@
         }
       }
     }
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/vscode": "1.90.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
   }
 }

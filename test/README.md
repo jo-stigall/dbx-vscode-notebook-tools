@@ -1,8 +1,18 @@
 # Tests and demo
 
-**Summary:** This folder contains three tests, one demo and a fake Databricks
-server. You can run all of them on a computer that has VS Code and Python 3.
-You do not need Node.js or a Databricks workspace.
+**Summary:** This folder contains the tests, one demo and a fake Databricks
+server. You can run all of them on a computer that has VS Code, Python 3 and
+Node.js 22 or later. You do not need a Databricks workspace.
+
+To run all tests with one command:
+
+```bash
+npm install
+npm test
+```
+
+That command checks the types, then runs the three groups of tests that this
+page describes.
 
 The installed extension contains this page but not the test files. Get the
 test files from the repository.
@@ -14,6 +24,9 @@ test files from the repository.
 | `run-e2e.sh` + `e2e.js` | Tests the full extension in a VS Code window. | 30 seconds |
 | `demo.sh` | Opens a VS Code window so that you can try the extension. | Until you close the window |
 | `mock_databricks.py` | The fake Databricks server. The test and the demo start it. | |
+| `tableViz/unit/` | Tests the pure code and the demo data of "Visualize Table". | 1 second |
+| `tableViz/integration/demo.cjs` | Tests "Visualize Table" in a VS Code window. `e2e.js` runs it. | 2 seconds |
+| `tableViz/harness/` | A page that shows a board in a normal browser. | |
 
 ## Test the parser
 
@@ -52,11 +65,35 @@ The tests make sure that the extension obeys these rules:
 - It stops a request that gets no answer.
 - It remembers one selected cluster for each project folder.
 
+## Test the code of "Visualize Table"
+
+```bash
+node --test "test/tableViz/unit/*.test.ts"
+```
+
+Node.js runs the TypeScript files directly. The last lines of the output give
+the number of tests that passed and failed:
+
+```text
+ℹ pass 23
+ℹ fail 0
+```
+
+The tests make sure of these things:
+
+- The demo tables contain the same rows on each run, and they contain the six
+  known differences between 2025 and 2026.
+- Each number from the demo profiler is equal to a direct count of the rows.
+- Each value goes in exactly one histogram bin.
+- The host refuses a message from the webview that has the wrong shape.
+
 ## Test the full extension
 
 ```bash
-test/run-e2e.sh
+npm run test:e2e
 ```
+
+This command builds "Visualize Table", then runs `test/run-e2e.sh`.
 
 A second VS Code window opens for some seconds, then closes. This VS Code has
 its own settings in the folder `.vscode-test`. It does not change your normal
@@ -79,11 +116,37 @@ ok   deletes a session that you reset while it starts
 ok   cancels a command that you stop while the cluster accepts it
 ok   writes new cells in Databricks format
 ok   reopening as text sticks
+ok   tableViz: Visualize Table opens a board
+ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
+ok   tableViz: a bad table name opens no board
+ok   tableViz: a missing table shows a plain error
 PASS
 ```
 
 If a step fails, the script prints `FAIL` and the error. The file
 `.vscode-test/vscode.log` contains the messages from VS Code.
+
+## See a board in a browser
+
+A board is a web page inside VS Code. The test page shows the same page in a
+normal browser, with the demo tables. Use it to look at the page in each
+theme.
+
+```bash
+npm run build
+```
+
+```bash
+python3 -m http.server 8791 --bind 127.0.0.1 --directory dist/harness
+```
+
+Then open one of these addresses:
+
+```text
+http://localhost:8791/index.html?theme=dark
+http://localhost:8791/index.html?theme=light&table=demo.shop.orders_2025
+http://localhost:8791/index.html?theme=hc
+```
 
 ## Try the extension
 

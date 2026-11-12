@@ -310,6 +310,8 @@ exports.run = async () => {
   process.env.DATABRICKS_CONFIG_FILE = path.join(process.env.DBX_E2E_DIR, 'no-such-databrickscfg');
   try {
     await main(log);
+    // The steps for the table visualization feature are in their own file.
+    await require('./tableViz/integration/demo.cjs').main(log);
     lines.push('PASS');
   } catch (e) {
     lines.push('FAIL ' + (e.stack || e));

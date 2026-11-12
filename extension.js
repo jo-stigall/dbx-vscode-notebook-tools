@@ -154,6 +154,16 @@ function activate(context) {
     await vscode.window.tabGroups.close(textTabs).then(undefined, () => {});
   }
 
+  /**
+   * Load the table visualization feature. The feature is a separate file
+   * (dist/tableViz/host.js, built from src/tableViz), and the extension loads
+   * it only when you use a command or a panel of the feature.
+   *
+   * @returns {import('./src/tableViz/host/index.ts').TableVizApi}
+   */
+  let tableViz;
+  const loadTableViz = () => tableViz || (tableViz = require('./dist/tableViz/host.js').activate(context));
+
   context.subscriptions.push(
     kernel,
     // transientOutputs: VS Code does not save cell outputs, and a new output does not mark the file as changed.
@@ -183,6 +193,14 @@ function activate(context) {
     }),
 
     vscode.commands.registerCommand('dbxNotebook.openAsNotebook', openAsNotebook),
+
+    // "Visualize Table": open a board that shows the columns of a table. See docs/table-viz-design.md.
+    vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeTable', (name) => loadTableViz().visualizeTable(name)),
+
+    // After a window reload, VS Code gives each board panel back to the extension with the state that the panel stored.
+    vscode.window.registerWebviewPanelSerializer('dbxNotebook.tableViz.board', {
+      deserializeWebviewPanel: (panel, state) => loadTableViz().restoreBoard(panel, state),
+    }),
 
     // "Select Cluster": after you select a cluster, delete all sessions. They are on the old cluster.
     vscode.commands.registerCommand('dbxNotebook.selectCluster', async () => {

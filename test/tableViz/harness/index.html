@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- The same policy as the webview in VS Code. 'self' replaces the nonce and the VS Code resource address. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="themes.css">
+<link rel="stylesheet" href="harness.css">
+<title>Table visualization test page</title>
+</head>
+<body>
+<div id="root"></div>
+<script src="harness.js"></script>
+</body>
+</html>

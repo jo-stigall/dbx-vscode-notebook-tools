@@ -1,0 +1,80 @@
+'use strict';
+/**
+ * Test the table visualization feature in a real VS Code window, with the Demo profile.
+ *
+ * test/e2e.js calls main() after its own steps. Run it with test/run-e2e.sh
+ * (or `npm run test:e2e`, which builds the feature first).
+ *
+ * The test opens a board with the command "Visualize Table". The board is a
+ * webview. The test cannot look into the webview, but it can read the
+ * requests that the webview sent to the extension host and the answers. A
+ * request from the webview shows that the page loaded and ran with its
+ * Content Security Policy.
+ */
+const vscode = require('vscode');
+const assert = require('assert');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Wait until `fn` returns a true value. Check 10 times each second. */
+async function until(what, fn, timeout = 20000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await sleep(100);
+  }
+}
+
+/**
+ * Do the test steps. Stop at the first step that fails.
+ *
+ * @param {(message: string) => void} log  Call it after each step that passed.
+ */
+exports.main = async function main(log) {
+  // 1. The command opens a board panel, and the webview starts.
+  const board = await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'demo.shop.orders_2026');
+  assert.ok(board, 'the command returns the board');
+  await until('a webview tab with the name of the table', () =>
+    vscode.window.tabGroups.all.flatMap((g) => g.tabs).find((t) => t.input instanceof vscode.TabInputWebview && t.label === 'orders_2026')
+  );
+  await until('the webview to start', () => board.ready);
+  log('tableViz: Visualize Table opens a board');
+
+  // 2. The webview asks for the columns and the overview numbers, and the answers are correct.
+  const exchanges = board.dispatcher.exchanges;
+  const answer = (type) => exchanges.find((x) => x.request.type === type && x.response && x.response.type === 'result');
+  const details = (await until('the table details', () => answer('tableDetails'))).response.result;
+  assert.strictEqual(details.columns.length, 18);
+  assert.deepStrictEqual(details.partitionColumns, ['order_date']);
+  const overview = (await until('the overview numbers', () => answer('overview'))).response.result;
+  assert.strictEqual(overview.rowCount, 110000);
+  const by = Object.fromEntries(overview.columns.map((c) => [c.name, c]));
+  assert.strictEqual(Object.keys(by).length, 18, 'one overview entry for each column');
+  assert.strictEqual(by.order_id.distinct, 110000);
+  assert.strictEqual(by.order_id.min, '5001000000');
+  assert.strictEqual(by.channel.distinct, 4);
+  assert.strictEqual(by.quantity.max, '8');
+  assert.strictEqual(by.items.distinct, undefined, 'a complex column has no distinct count');
+  const nullShare = 1 - by.discount_pct.nonNull / overview.rowCount;
+  assert.ok(Math.abs(nullShare - 0.35) < 0.01, `discount_pct is null in about 35% of the rows, got ${nullShare}`);
+  assert.ok(!exchanges.some((x) => x.response && x.response.type === 'error'), 'no request failed');
+  log('tableViz: the overview of demo.shop.orders_2026 has the correct numbers');
+
+  // 3. A name that is not a three-part name opens no board.
+  const tabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview).length;
+  const before = tabs();
+  assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'orders_2026'), undefined);
+  assert.strictEqual(tabs(), before);
+  log('tableViz: a bad table name opens no board');
+
+  // 4. A table that does not exist gives a plain error with a next step, not a crash.
+  const missing = await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'demo.shop.orders_1999');
+  const failed = await until('the error for a missing table', () => missing.dispatcher.exchanges.find((x) => x.response && x.response.type === 'error'));
+  assert.match(failed.response.message, /orders_1999 does not exist/);
+  assert.ok(failed.response.nextStep);
+  missing.panel.dispose();
+  board.panel.dispose();
+  log('tableViz: a missing table shows a plain error');
+};

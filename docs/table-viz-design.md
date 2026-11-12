@@ -51,19 +51,24 @@ type Dataset = {
 };
 type ColumnKind = 'continuous' | 'discrete' | 'category' | 'identifier' | 'date' | 'complex';
 
+type ColumnRef = { name: string; typeText: string };  // the type selects the aggregates, so a request alone gives its SQL
+
 type Request =                                       // `columns` is a list, so two-column views fit later
   | { type: 'tableDetails'; dataset: Dataset }
-  | { type: 'overview'; dataset: Dataset; columns: string[] }
-  | { type: 'numericStats'; dataset: Dataset; columns: [string]; exact: boolean }
-  | { type: 'histogram'; dataset: Dataset; columns: [string]; edges: BinEdges }
-  | { type: 'frequency'; dataset: Dataset; columns: [string]; top: number; values?: string[] }
-  | { type: 'dateCounts'; dataset: Dataset; columns: [string]; grain: Grain }
-  | { type: 'driftBins'; dataset: Dataset; columns: [string]; cuts: string[] }
+  | { type: 'overview'; dataset: Dataset; columns: ColumnRef[] }
+  | { type: 'numericStats'; dataset: Dataset; columns: [ColumnRef]; exact: boolean }
+  | { type: 'histogram'; dataset: Dataset; columns: [ColumnRef]; edges: BinEdges }
+  | { type: 'frequency'; dataset: Dataset; columns: [ColumnRef]; top: number; values?: string[] }
+  | { type: 'dateCounts'; dataset: Dataset; columns: [ColumnRef]; grain: Grain }
+  | { type: 'driftBins'; dataset: Dataset; columns: [ColumnRef]; cuts: string[] }
   | { type: 'validateFilter'; dataset: Dataset };
 
 type Result = { type: Request['type']; sql: string[]; approximate: boolean; asOf: string } & ResultBody;
-// BinEdges, Grain and ResultBody (one shape for each request type) come in milestone 2.
 ```
+
+The schemas in `src/tableViz/core/schema.ts` are the source of these types.
+The first five request types exist now. The other three come with column
+detail and compare mode.
 
 Numbers that can be larger than 2^53, and decimals, stay strings in all
 results.
@@ -128,9 +133,12 @@ I will pin exact versions when I install them.
 
 ## Questions for you
 
-1. **Node.js (blocks milestone 2).** This computer has no Node.js. The
-   feature needs npm packages and a build step. May I install Node.js with
-   Homebrew? Without it I cannot add the driver, React, or TypeScript.
+Question 1 has an answer. For questions 2 and 6, milestone 2 uses my
+recommendation, because you gave no different answer. Questions 3, 4, 5 and
+7 are open, and no code depends on them yet.
+
+1. **Node.js: answered.** You said yes on 2026-11-12. Node.js 24 is
+   installed with Homebrew.
 2. **Language.** The extension is plain JavaScript. I recommend TypeScript
    for `src/tableViz/` only, and no change to the existing files. Is a
    repository with two languages acceptable?
@@ -154,6 +162,17 @@ I will pin exact versions when I install them.
 `IDENTIFIER(:col)` in each position, time travel after `IDENTIFIER(:tbl)`,
 the names of the cluster access modes in the Clusters API, how the driver
 behaves in an esbuild bundle, and all live queries.
+
+## Decisions in milestone 2
+
+- An integer column is an "identifier" when almost all of its rows have a
+  different value. The brief gives this rule for all types. A decimal or
+  float column is never an identifier, because a measurement is also
+  different in almost every row.
+- The thumbnails in the overview are plain SVG, not ECharts. One page can
+  show hundreds of them. ECharts comes with the column detail cards.
+- No linter yet. The extension has none, and the TypeScript compiler checks
+  the feature in strict mode.
 
 ## Proposals
 

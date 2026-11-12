@@ -14,12 +14,15 @@ tells you where its code is.
 | `src/kernel.js` | The kernel. Runs cells on the cluster and shows the results. |
 | `src/client.js` | The client. Finds the workspace, the login and the cluster. Sends REST requests. |
 | `package.json` | Tells VS Code the name of the extension, its commands and its settings. |
+| `src/tableViz/` | The "Visualize Table" feature, in TypeScript. See [table-viz-design.md](table-viz-design.md). |
+| `scripts/build.mjs` | Builds `src/tableViz/` into the folder `dist/`. |
 | `scripts/package.py` | Builds the `.vsix` install file. |
 | `docs/` | This page. |
 | `test/` | The tests and the fake Databricks server. See [test/README.md](../test/README.md). |
 | `samples/` | Three small notebooks for the tests and the demo. |
 
-The code is plain JavaScript. It has no build step and no packages to install.
+The notebook code is plain JavaScript and needs no build step. Only the
+"Visualize Table" feature needs a build step and npm packages.
 
 ## The file format
 

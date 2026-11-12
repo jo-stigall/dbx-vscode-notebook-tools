@@ -1,11 +1,13 @@
 """Build the file that installs the extension in VS Code (a .vsix file).
 
-Run this script from any folder:
+Run this command in the project folder:
 
-    python3 scripts/package.py
+    npm run package
 
-The script writes dbx-notebook-<version>.vsix into the project folder. It
-reads the name and the version from package.json. You do not need Node.js.
+The command builds the table visualization feature into dist/ (this step
+needs Node.js), then runs this script. The script writes
+dbx-notebook-<version>.vsix into the project folder. It reads the name and
+the version from package.json.
 
 A .vsix file is a zip file that contains:
 
@@ -30,7 +32,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # The files that the installed extension contains. The test scripts and the samples are not in the list.
 # README.md has links to the two other .md files, thus the list contains them.
-FILES = ["package.json", "extension.js", "README.md", "docs/how-it-works.md", "test/README.md", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "src").glob("*.js"))]
+# The three dist/ files are the table visualization feature. `npm run build` makes them.
+FILES = ["package.json", "extension.js", "README.md", "docs/how-it-works.md", "test/README.md",
+         "dist/tableViz/host.js", "dist/tableViz/webview.js", "dist/tableViz/webview.css", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "src").glob("*.js"))]
 
 pkg = json.loads((ROOT / "package.json").read_text())
 ident = f'{pkg["publisher"]}.{pkg["name"]}'
@@ -62,10 +66,15 @@ content_types = """<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension=".json" ContentType="application/json"/>
   <Default Extension=".js" ContentType="application/javascript"/>
+  <Default Extension=".css" ContentType="text/css"/>
   <Default Extension=".md" ContentType="text/markdown"/>
   <Default Extension=".vsixmanifest" ContentType="text/xml"/>
 </Types>
 """
+
+missing = [f for f in FILES if not (ROOT / f).is_file()]
+if missing:
+    raise SystemExit(f"These files do not exist: {', '.join(missing)}. Run `npm install`, then `npm run package`.")
 
 out = ROOT / f'{pkg["name"]}-{pkg["version"]}.vsix'
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
