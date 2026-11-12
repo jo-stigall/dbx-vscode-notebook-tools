@@ -29,6 +29,7 @@ test files from the repository.
 | `tableViz/fake/` | A fake SQL warehouse, a fake workspace and a fake of the SQL driver. They answer from the demo tables. | |
 | `tableViz/integration/workspace.cjs` | Tests "Visualize Table" in a VS Code window with the fake workspace. `e2e.js` runs it. | 5 seconds |
 | `tableViz/live/` | Tests on a real Databricks workspace. They run only if you set four variables. | |
+| `run-vsix.sh` | Installs the `.vsix` file in an empty VS Code profile and runs the test of the full extension on that copy. | 40 seconds |
 | `tableViz/integration/demo.cjs` | Tests "Visualize Table" in a VS Code window. `e2e.js` runs it. | 2 seconds |
 | `tableViz/harness/` | A page that shows a board in a normal browser. | |
 
@@ -138,6 +139,7 @@ The test opens `samples/demo.py`, runs cells, edits a cell and saves the file.
 If all steps pass, the script prints:
 
 ```text
+ok   the start of the extension does not load the table feature
 ok   auto-opens as a notebook
 ok   parses cells
 ok   runs all cells with nested %run, SQL and display()
@@ -177,6 +179,24 @@ PASS
 
 If a step fails, the script prints `FAIL` and the error. The file
 `.vscode-test/vscode.log` contains the messages from VS Code.
+
+## Test the packaged extension
+
+```bash
+npm run test:vsix
+```
+
+This command builds the `.vsix` file, installs it in an empty VS Code
+profile (the folder `.vscode-test/vsix`), and runs the steps of the test
+above on the installed copy. The first line of the output is:
+
+```text
+ok   runs the copy that was installed from the .vsix file
+```
+
+This shows that the `.vsix` file contains each file that the extension
+needs, and that the notebook features and the Demo profile work after a
+normal install.
 
 ## What the fake workspace does
 

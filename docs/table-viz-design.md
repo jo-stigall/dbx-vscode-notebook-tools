@@ -1,9 +1,11 @@
 # Table visualization: design note
 
 **Summary:** This note is the plan for the table visualization feature. It
-tells you what the feature reuses from the extension, what it adds, and which
-questions need your answer before the code starts. Question 1 blocks
-milestone 2.
+tells you what the feature reuses from the extension, what it adds, and
+where the Databricks docs differ from the brief. After the plan, it lists
+the decisions of each milestone, the questions that are still open, and
+ideas that are not built. All eight milestones are done. Nothing ran on a
+real workspace.
 
 ## What the feature reuses
 
@@ -328,6 +330,42 @@ behaves in an esbuild bundle, and all live queries.
 - **Export uses the first chart of a card.** In "Side by side" mode the
   card has two charts; switch that mode off to get A and B in one image.
 
+## Decisions in milestone 8
+
+- **Version 0.1.0.** The feature is new, so the second number of the
+  version increased. The install file is now `dbx-notebook-0.1.0.vsix`.
+- **The feature loads only when it is used.** `extension.js` loads
+  `dist/tableViz/host.js` on the first command, view or saved view of the
+  feature, and `dist/tableViz/driver.js` only for a cluster. A test checks
+  the module list of Node.js after the start and after each of these steps.
+- **The packaged extension is tested in an empty VS Code profile**
+  (`npm run test:vsix`). All steps pass on the installed copy, the notebook
+  steps also.
+- **Screenshots.** The images in `docs/images` are from the test page in a
+  browser (dark, light, high contrast). I made them by hand. No test makes
+  them again (question 6).
+- **The CI file is `.github/workflows/ci.yml`.** It never ran, because the
+  repository has no remote. It does not lint, because the project has no
+  linter, and it builds the install file with `scripts/package.py`, not
+  with `vsce` (question 5).
+
 ## Proposals
 
-None yet.
+These are ideas. None is built.
+
+- **A linter.** ESLint with the TypeScript rules, for the feature folder.
+  The brief asks for a lint step in CI; the extension has none today.
+- **Screenshots in a test.** Playwright can open the test page and compare
+  each card with a stored image, in a light and a dark theme.
+- **`vsce package`.** It checks the manifest and writes the links of the
+  README for the Marketplace. Today a small Python script builds the file.
+- **A typed filter in the Demo profile.** A small reader for conditions such
+  as `region = 'EMEA' AND amount > 10` would let a person try the filter box
+  with no workspace.
+- **The selection for each folder** of a VS Code window with more than one
+  folder, as the notebook part does for its cluster.
+- **A row limit for the catalog tree.** A schema with thousands of tables
+  loads all of them now.
+- **The question for a large table also for dataset B.**
+- **The `untrustedWorkspaces` declaration**, with the notebook kernel off in
+  a project that is not trusted. A saved view could then open there and ask.

@@ -42,7 +42,6 @@ export function useResult<T extends Request>(req: T | undefined): Loadable<Resul
       current = false;
       release(req, onProgress);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return state.key === key ? state.value : { status: 'loading' };
 }

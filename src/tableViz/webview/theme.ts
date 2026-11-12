@@ -56,6 +56,5 @@ export function useTheme(): Theme {
     observer.observe(document.documentElement, { attributes: true });
     return () => observer.disconnect();
   }, []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(readTheme, [version]);
 }

@@ -2,7 +2,7 @@
   "name": "dbx-notebook",
   "displayName": "Databricks Source Notebooks",
   "description": "Open Databricks .py source notebooks in the native notebook UI and run cells on a cluster.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "local",
   "license": "UNLICENSED",
   "private": true,
@@ -21,7 +21,8 @@
     "test": "npm run typecheck && npm run test:unit && npm run test:e2e",
     "package": "npm run build && python3 scripts/package.py",
     "test:live": "node --test --test-concurrency=1 \"test/tableViz/live/*.test.ts\"",
-    "live:setup": "node test/tableViz/live/setup.ts"
+    "live:setup": "node test/tableViz/live/setup.ts",
+    "test:vsix": "npm run package && test/run-vsix.sh"
   },
   "activationEvents": [
     "onLanguage:python",

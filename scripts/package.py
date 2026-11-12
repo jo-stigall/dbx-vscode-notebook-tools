@@ -17,7 +17,7 @@ A .vsix file is a zip file that contains:
 
 Install the extension with one of these:
 
-    code --install-extension dbx-notebook-0.0.1.vsix
+    code --install-extension dbx-notebook-0.1.0.vsix
     VS Code command palette > "Extensions: Install from VSIX..."
 
 If you add a source file outside src/, add it to FILES. If you do not, the
@@ -31,9 +31,10 @@ from xml.sax.saxutils import escape
 ROOT = Path(__file__).resolve().parent.parent
 
 # The files that the installed extension contains. The test scripts and the samples are not in the list.
-# README.md has links to the two other .md files, thus the list contains them.
+# README.md has links to the other .md files and to the images in docs/images, thus the list contains them.
 # The five dist/ files are the table visualization feature. `npm run build` makes them.
 FILES = ["package.json", "extension.js", "README.md", "docs/how-it-works.md", "test/README.md",
+         "CHANGELOG.md", "docs/table-viz-design.md", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs" / "images").glob("*.jpg")),
          "dist/tableViz/host.js", "dist/tableViz/driver.js", "dist/tableViz/webview.js", "dist/tableViz/webview.css", "dist/tableViz/codicon.ttf", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "src").glob("*.js"))]
 
 pkg = json.loads((ROOT / "package.json").read_text())
@@ -68,6 +69,7 @@ content_types = """<?xml version="1.0" encoding="utf-8"?>
   <Default Extension=".js" ContentType="application/javascript"/>
   <Default Extension=".css" ContentType="text/css"/>
   <Default Extension=".ttf" ContentType="font/ttf"/>
+  <Default Extension=".jpg" ContentType="image/jpeg"/>
   <Default Extension=".md" ContentType="text/markdown"/>
   <Default Extension=".vsixmanifest" ContentType="text/xml"/>
 </Types>

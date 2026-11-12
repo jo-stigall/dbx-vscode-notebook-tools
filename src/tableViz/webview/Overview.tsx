@@ -76,7 +76,6 @@ export function useOverview(dataset: Dataset, columns: ColumnInfo[] | undefined)
       sent.forEach((request) => release(request));
     };
     // `key` is the dataset and the columns as text.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return state.key === key ? state.value : EMPTY;
 }

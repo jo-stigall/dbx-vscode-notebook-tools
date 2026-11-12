@@ -84,7 +84,6 @@ function ContinuousCompareCard(props: KindProps) {
   const settled = useDebounced(bins, 300);
   useEffect(() => {
     if (settled !== (card.bins ?? settings.defaultBins)) onChange({ bins: settled });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settled]);
 
   const ra = statsA.status === 'done' ? statsA.result : undefined;

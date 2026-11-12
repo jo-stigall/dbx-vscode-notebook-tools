@@ -63,7 +63,6 @@ export function useDrifts(a: Dataset, b: Dataset, pairs: ColumnPair[], overviewA
     return () => {
       current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, ready]);
   return state.base === base ? state.values : new Map();
 }
@@ -90,7 +89,6 @@ export function useAsync<T>(key: string, run: () => Promise<T>): AsyncState<T> {
     return () => {
       current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [full]);
   return state.key === full ? state.value : { status: 'loading' };
 }

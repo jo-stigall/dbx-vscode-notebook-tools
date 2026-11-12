@@ -64,7 +64,7 @@ Without the extension, VS Code shows this file as text. With the extension:
 3. Install it in VS Code:
 
    ```bash
-   code --install-extension dbx-notebook-0.0.1.vsix
+   code --install-extension dbx-notebook-0.1.0.vsix
    ```
 
 A computer that only installs the `.vsix` file does not need Node.js. To try
@@ -139,10 +139,14 @@ column of a Databricks table: its type, how many rows are null, how many
 different values it has, and charts of its values. Databricks computes all
 numbers. The extension never downloads the rows of the table.
 
-This part is not complete, and no person has run it on a real workspace. It
-works with SQL warehouses and with all-purpose clusters, and it can compare
-two tables. [docs/table-viz-design.md](docs/table-viz-design.md)
-has the plan.
+No person has run this part on a real workspace. All its tests use fake
+servers and the demo tables. [docs/table-viz-design.md](docs/table-viz-design.md)
+lists the decisions and the things that a real workspace must confirm.
+
+![The board of a table: one row for each column, with a small chart](docs/images/overview-dark.jpg)
+
+To try it without a workspace, run "Databricks Notebook: Visualize Table"
+and type `demo.shop.orders_2026`.
 
 ### Select the login and the compute
 
@@ -164,6 +168,61 @@ compute. Click it to select a different one.
 If the warehouse or the cluster is stopped, the extension asks before the
 first query starts it. Compute that runs costs money, and a cluster can take
 several minutes to start.
+
+#### Set up a login
+
+Use one of these four methods.
+
+**A profile with a browser login (OAuth).** Use this if your company does
+not permit personal access tokens.
+
+1. Install the Databricks CLI, or install the official Databricks extension,
+   which contains the CLI.
+2. Log in. The command opens your browser:
+
+   ```bash
+   databricks auth login --host https://adb-1234567890123456.7.azuredatabricks.net --profile work
+   ```
+
+3. Run "Select Profile and Compute for Tables" and select `work`.
+
+The extension asks the CLI for a new token when the old one expires.
+
+**A profile with a token.**
+
+1. Add these lines to the file `~/.databrickscfg`:
+
+   ```ini
+   [work]
+   host = https://adb-1234567890123456.7.azuredatabricks.net
+   token = <your personal access token>
+   ```
+
+2. Run "Select Profile and Compute for Tables" and select `work`.
+
+**Environment variables.**
+
+1. Set `DATABRICKS_HOST` and `DATABRICKS_TOKEN` before you start VS Code.
+2. Run "Select Profile and Compute for Tables" and select "Notebook
+   connection".
+
+**A workspace URL and a token that you type.**
+
+1. Run "Select Profile and Compute for Tables" and select "Type a workspace
+   URL and a token…".
+2. Type the URL, then the token. VS Code keeps the token in the secret store
+   of your operating system.
+
+#### Set up the compute
+
+**A SQL warehouse.** You need the "Can use" permission on the warehouse.
+Select it in the second list. No more steps.
+
+**An all-purpose cluster.** Select it in the second list. The first query
+connects to the cluster. If the extension cannot find the ID of your
+workspace, it asks one time for the "HTTP Path" of the cluster. You find it
+in Databricks on the page of the cluster, below "Advanced options", then
+"JDBC/ODBC".
 
 A SQL warehouse is the better choice: it starts faster, and it needs no
 extra software. The extension can use a cluster only if these three things
@@ -190,6 +249,8 @@ you cannot select it.
 The view reads the catalog with the REST API. It never starts a warehouse.
 
 ### Use the board
+
+![Detail cards for a number column and a column with few values](docs/images/cards-number-discrete-dark.jpg)
 
 Click the name of a column to open its detail card. The card shows a chart
 and a table that fit the column:
@@ -255,6 +316,8 @@ start the extension.
 
 Compare mode puts a second dataset, B, next to the first dataset, A. It
 compares each column whose name is in A and in B.
+
+![Compare mode: the columns of A and B, and two cards with A and B in one chart](docs/images/compare-dark.jpg)
 
 | To do this | Do this |
 |---|---|
@@ -366,10 +429,41 @@ A real cluster must confirm each item in this list:
   cluster reports it. We do not know if a real cluster reports it.
 - Copilot agent mode.
 
+For "Visualize Table", a real workspace must confirm these items:
+
+- Each SQL statement, on a SQL warehouse and on a cluster. The main risks
+  are `IDENTIFIER(:name)` for a column, and a Delta version after
+  `IDENTIFIER(:name)`.
+- The requests that list SQL warehouses, clusters, catalogs, schemas and
+  tables. I wrote their field names from memory.
+- The Databricks SQL driver with a real cluster, and the minimum runtime
+  14.2.
+- The login with a profile and `databricks auth token`.
+- The questions "Start the warehouse?" and "Start the cluster?".
+
+`npm run test:live` tests most of these items. See
+[test/README.md](test/README.md).
+
+## Themes and the keyboard
+
+The board uses the colors of your VS Code theme: light, dark and high
+contrast. Dataset A is blue and dataset B is orange on each chart, and the
+bars of the two datasets have different patterns. You do not need to see the
+difference between red and green.
+
+| Dark | Light | High contrast |
+|---|---|---|
+| ![Cards in a dark theme](docs/images/cards-identifier-date-dark.jpg) | ![Cards in a light theme](docs/images/cards-identifier-date-light.jpg) | ![Compare mode in a high contrast theme](docs/images/compare-high-contrast.jpg) |
+
+You can reach each control with the Tab key. Each chart has a table with the
+same numbers: select the table button of the card. A table row has a filter
+button, which does what a click on a bar does.
+
 ## More documentation
 
 | File | What it tells you |
 |---|---|
 | [docs/how-it-works.md](docs/how-it-works.md) | How the extension opens, saves and runs a notebook. Where each part is in the code. |
 | [test/README.md](test/README.md) | How to run the tests and the demo. What the fake Databricks server does. |
-| [docs/table-viz-design.md](docs/table-viz-design.md) | The plan for the "Visualize Table" feature. |
+| [docs/table-viz-design.md](docs/table-viz-design.md) | The plan for the "Visualize Table" feature, its decisions, and what is not verified. |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version. |

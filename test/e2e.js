@@ -127,6 +127,19 @@ async function mock(method, urlPath, body) {
 async function main(log) {
   const work = process.env.DBX_E2E_DIR;
   fs.cpSync(path.join(__dirname, '..', 'samples'), work, { recursive: true });
+
+  // 0. Which copy of the extension runs: the files of this folder, or the copy that test/run-vsix.sh installed from the .vsix file.
+  const extension = vscode.extensions.getExtension('local.dbx-notebook');
+  assert.ok(extension, 'the extension is installed');
+  if (process.env.DBX_E2E_EXPECT_PATH) {
+    assert.ok(extension.extensionPath.startsWith(process.env.DBX_E2E_EXPECT_PATH), `the installed copy runs, not ${extension.extensionPath}`);
+    log('runs the copy that was installed from the .vsix file');
+  }
+  await extension.activate();
+  // The table feature is a separate file. The start of the extension must not load it.
+  const loaded = (file) => Object.keys(require.cache).some((key) => key.startsWith(extension.extensionPath) && key.endsWith(path.join('dist', 'tableViz', file)));
+  assert.ok(!loaded('host.js') && !loaded('driver.js'), 'the start of the extension does not load the table feature');
+  log('the start of the extension does not load the table feature');
   const file = path.join(work, 'demo.py');
   const original = fs.readFileSync(file, 'utf8');
   const uri = vscode.Uri.file(file);

@@ -157,7 +157,11 @@ exports.main = async function main(log) {
     log('tableViz: a statement starts a stopped warehouse when the question is off');
 
     // 10. The SQL driver for clusters is in the built extension, and it loads in VS Code.
+    const extensionPath = vscode.extensions.getExtension('local.dbx-notebook').extensionPath;
+    const driverLoaded = () => Object.keys(require.cache).some((key) => key.startsWith(extensionPath) && key.endsWith(path.join('dist', 'tableViz', 'driver.js')));
+    assert.ok(!driverLoaded(), 'boards on a SQL warehouse do not load the driver');
     const driver = await api.session.loadDriver();
+    assert.ok(driverLoaded());
     assert.strictEqual(typeof driver.DBSQLClient, 'function');
     assert.strictEqual(typeof driver.DBSQLParameter, 'function');
     log('tableViz: the SQL driver for clusters loads in VS Code');
