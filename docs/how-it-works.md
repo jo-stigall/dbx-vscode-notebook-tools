@@ -14,7 +14,7 @@ tells you where its code is.
 | `src/kernel.js` | The kernel. Runs cells on the cluster and shows the results. |
 | `src/client.js` | The client. Finds the workspace, the login and the cluster. Sends REST requests. |
 | `package.json` | Tells VS Code the name of the extension, its commands and its settings. |
-| `src/tableViz/` | The "Visualize Table" feature, in TypeScript. See [table-viz-design.md](table-viz-design.md). |
+| `src/tableViz/` | The "Visualize Table" feature, in TypeScript. See [table-viz-design.md](table-viz-design.md). It uses `src/client.js` to find the workspace and the token. |
 | `scripts/build.mjs` | Builds `src/tableViz/` into the folder `dist/`. |
 | `scripts/package.py` | Builds the `.vsix` install file. |
 | `docs/` | This page. |

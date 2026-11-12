@@ -312,6 +312,7 @@ exports.run = async () => {
     await main(log);
     // The steps for the table visualization feature are in their own file.
     await require('./tableViz/integration/demo.cjs').main(log);
+    await require('./tableViz/integration/workspace.cjs').main(log);
     lines.push('PASS');
   } catch (e) {
     lines.push('FAIL ' + (e.stack || e));

@@ -62,6 +62,12 @@ export interface CardShellProps {
   hasChart: boolean;
   /** true while a request of the card runs. */
   loading: boolean;
+  /** 'queued': the query of the card waits for a free place on Databricks. */
+  progress?: 'queued' | 'running';
+  /** true if a request of the card was cancelled. */
+  cancelled?: boolean;
+  /** Set if the dataset is a sample: the percent of the rows that the queries read. */
+  samplePercent?: number;
   error?: RequestError;
   children?: ReactNode;
 }
@@ -73,6 +79,11 @@ export function CardShell(props: CardShellProps) {
       <header className="card-header">
         <h2>{column.name}</h2>
         <span className="type">{column.typeText}</span>
+        {props.samplePercent !== undefined && (
+          <span className="sampled" title="The queries read a sample of the rows. All counts are estimates.">
+            Sampled {props.samplePercent}%
+          </span>
+        )}
         <span className="spacer" />
         <div className="card-actions">
         {props.kinds.length > 1 && (
@@ -108,9 +119,10 @@ export function CardShell(props: CardShellProps) {
       </header>
 
       {props.error && <ErrorPanel error={props.error} />}
-      {props.loading && !props.error && (
+      {props.cancelled && !props.error && <p className="status">Cancelled. Click "Refresh" to run the queries again.</p>}
+      {props.loading && !props.error && !props.cancelled && (
         <p className="status" role="status">
-          Loading…
+          {props.progress === 'queued' ? 'Waiting for a free place on Databricks…' : 'Loading…'}
         </p>
       )}
       {props.children}

@@ -45,7 +45,7 @@ interface KindProps extends ColumnCardProps {
   stats: OverviewColumn;
   rowCount: number;
   /** The properties of the frame that do not depend on the results. */
-  shell: Pick<CardShellProps, 'column' | 'card' | 'kind' | 'detected' | 'kinds' | 'onChange' | 'onClose'>;
+  shell: Pick<CardShellProps, 'column' | 'card' | 'kind' | 'detected' | 'kinds' | 'onChange' | 'onClose' | 'samplePercent'>;
 }
 
 /**
@@ -57,7 +57,14 @@ function summarize(first: string[], ...states: Loadable<{ sql: string[]; approxi
   return {
     sql: [...first, ...states.flatMap((s) => (s.status === 'done' ? s.result.sql : []))],
     approximate: states.some((s) => s.status === 'done' && s.result.approximate),
-    error: states.map((s) => (s.status === 'error' ? s.error : undefined)).find((e) => e && !e.cancelled),
+    error: states.map((s) => (s.status === 'error' ? s.error : undefined)).find((e) => e),
+    cancelled: states.some((s) => s.status === 'cancelled'),
+    // "queued" if a request waits for a free place on Databricks and no request runs.
+    progress: states.some((s) => s.status === 'loading' && s.progress === 'running')
+      ? ('running' as const)
+      : states.some((s) => s.status === 'loading' && s.progress === 'queued')
+        ? ('queued' as const)
+        : undefined,
   };
 }
 
@@ -225,7 +232,7 @@ export function ColumnCard(props: ColumnCardProps) {
     ...props,
     stats,
     rowCount,
-    shell: { column, card, kind, detected, kinds, onChange: props.onChange, onClose: props.onClose },
+    shell: { column, card, kind, detected, kinds, onChange: props.onChange, onClose: props.onClose, samplePercent: props.dataset.sample?.percent },
   };
   switch (kind) {
     case 'continuous':

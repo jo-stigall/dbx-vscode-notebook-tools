@@ -135,16 +135,18 @@ I will pin exact versions when I install them.
 
 ## Questions for you
 
-Question 1 has an answer. For questions 2 and 6, milestone 2 uses my
-recommendation, because you gave no different answer. Questions 3, 4, 5 and
-7 are open, and no code depends on them yet.
+Questions 1 and 3 have answers. For questions 2 and 6, the code uses my
+recommendation, because you gave no different answer. Questions 4, 5 and 7
+are open, and no code depends on them yet.
 
 1. **Node.js: answered.** You said yes on 2026-11-12. Node.js 24 is
    installed with Homebrew.
 2. **Language.** The extension is plain JavaScript. I recommend TypeScript
    for `src/tableViz/` only, and no change to the existing files. Is a
    repository with two languages acceptable?
-3. **Login sequence.** The extension looks at settings, then variables, then
+3. **Login sequence: answered.** You said on 2026-11-12 to keep the existing
+   sequence. The text below is the question as I asked it.
+   **Login sequence.** The extension looks at settings, then variables, then
    the project file, then the profile. The brief puts profiles first. I
    recommend the existing sequence, with the `SecretStorage` token last.
 4. **Old VS Code.** I recommend that warehouses work on all versions, and
@@ -193,6 +195,42 @@ behaves in an esbuild bundle, and all live queries.
   "Show SQL" works in demo mode. It does not run that SQL.
 - The card tests draw each card as HTML text in Node.js. A screenshot of
   each card in each theme needs a browser tool (question 6).
+
+## Decisions in milestone 4
+
+- **REST client.** The feature has its own small REST client
+  (`host/http.ts`). It gets the workspace URL and the token from the
+  `Connection` class of the extension. I did not extend `Connection.api()`,
+  as the brief says to do, for two reasons: the notebook kernel depends on
+  its exact behaviour, and the tests of the brief (HTTP 401 and 429 through
+  the runner, with a local server) need a client that works without VS Code.
+- **Changes outside the feature folder.** `src/client.js` got named
+  profiles, a list of profiles, a token in the secret store, and "ask the
+  CLI again after a refused token". The connection of the notebooks does
+  not change. `test/client.test.js` covers the new parts.
+- **Profiles.** `@workspace` is the connection of the notebooks. A profile
+  that you select by name uses only the URL and the token of that profile,
+  not the environment variables.
+- **The selection is for the VS Code workspace**, not for each folder of a
+  workspace with more than one folder. The brief says "per workspace
+  folder". A board is not in a folder, so I found no good rule for which
+  folder to use.
+- **Version pinning is in the requests.** The board reads the Delta version
+  with the table details, then puts `VERSION AS OF` in each request. Thus
+  "Show SQL" shows the version, and the cache key has it.
+- **Refresh.** After "Refresh", each request tells the host one time not to
+  answer from its cache.
+- **The filter box and the sample control are in this milestone**, because
+  the question for a large table offers them. Click-to-filter chips come in
+  milestone 7. The Demo profile cannot use a filter until then.
+- **A sample in the Demo profile** reads a fixed part of the demo rows.
+- **Not from the docs.** I wrote the requests for the Unity Catalog API and
+  the warehouses API from memory. The brief did not list their pages, and I
+  did not read them. The fake workspace uses the same field names, so a
+  wrong name passes all tests. The live tests are the check.
+- **The view "Databricks Tables" is in the Explorer.** To filter it, click
+  in the view and type. This is the "find" feature of VS Code trees. It
+  filters the lines that are loaded.
 
 ## Proposals
 

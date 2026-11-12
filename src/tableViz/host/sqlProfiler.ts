@@ -73,6 +73,8 @@ export class SqlProfiler implements Profiler {
           return { ...base, approximate: false, ...parseFrequency(request, result) };
         case 'dateCounts':
           return { ...base, approximate: false, ...parseDateCounts(request, result) };
+        case 'validateFilter':
+          return { ...base, approximate: false, type: 'validateFilter' };
       }
     } catch (e) {
       if (e instanceof CancelledError || options.signal?.aborted) throw new CancelledError();

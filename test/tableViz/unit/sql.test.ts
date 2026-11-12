@@ -87,6 +87,11 @@ test('dateCounts', (t) => {
   snapshot(t, render({ type: 'dateCounts', dataset: full, columns: [{ name: 'select', typeText: 'date' }], grain: 'month' }, 'backtick'));
 });
 
+test('validateFilter', (t) => {
+  snapshot(t, render({ type: 'validateFilter', dataset: full }));
+  snapshot(t, render({ type: 'validateFilter', dataset: plain }));
+});
+
 test('a name never goes into the SQL text without backticks', () => {
   const evil = "x`; DROP TABLE t; --";
   const dataset: Dataset = { profile: 'p', table: { catalog: evil, schema: evil, name: evil } };

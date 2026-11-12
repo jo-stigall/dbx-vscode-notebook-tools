@@ -201,3 +201,23 @@ export function openCard(cards: Card[], column: string): Card[] {
   if (cards.some((c) => c.column === column)) return cards;
   return [{ column, pinned: false }, ...cards.filter((c) => c.pinned)];
 }
+
+/**
+ * Tell if a filter does not name a partition column of the table.
+ * A query with such a filter reads all partitions.
+ *
+ * @example
+ * missesPartition("region = 'EMEA'", ['order_date'])              // true
+ * missesPartition("order_date >= '2026-01-01'", ['order_date'])   // false
+ * missesPartition("region = 'EMEA'", [])                          // false: the table has no partitions
+ */
+export function missesPartition(filter: string | undefined, partitionColumns: string[]): boolean {
+  if (!filter?.trim() || partitionColumns.length === 0) return false;
+  const text = filter.toLowerCase();
+  return !partitionColumns.some((column) => {
+    const name = column.toLowerCase();
+    const at = text.indexOf(name);
+    // The name must be a full word: "date" is not in "update_date".
+    return at >= 0 && !/[\p{L}\p{N}_]/u.test(text[at - 1] ?? ' ') && !/[\p{L}\p{N}_]/u.test(text[at + name.length] ?? ' ');
+  });
+}

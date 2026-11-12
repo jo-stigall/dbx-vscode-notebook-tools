@@ -19,7 +19,9 @@
     "test:unit": "npm run build && node test/format.test.js && node test/client.test.js && LC_ALL=en_US.UTF-8 node --test \"test/tableViz/unit/*.test.ts\" \"dist/test/*.test.cjs\"",
     "test:e2e": "npm run build && test/run-e2e.sh",
     "test": "npm run typecheck && npm run test:unit && npm run test:e2e",
-    "package": "npm run build && python3 scripts/package.py"
+    "package": "npm run build && python3 scripts/package.py",
+    "test:live": "node --test --test-concurrency=1 \"test/tableViz/live/*.test.ts\"",
+    "live:setup": "node test/tableViz/live/setup.ts"
   },
   "activationEvents": [
     "onLanguage:python",
@@ -61,6 +63,40 @@
         "command": "dbxNotebook.tableViz.visualizeTable",
         "title": "Visualize Table",
         "category": "Databricks Notebook"
+      },
+      {
+        "command": "dbxNotebook.tableViz.visualizeTableUnderCursor",
+        "title": "Visualize Table Under Cursor",
+        "category": "Databricks Notebook"
+      },
+      {
+        "command": "dbxNotebook.tableViz.selectCompute",
+        "title": "Select Profile and Compute for Tables",
+        "category": "Databricks Notebook"
+      },
+      {
+        "command": "dbxNotebook.tableViz.refreshTables",
+        "title": "Refresh Tables",
+        "category": "Databricks Notebook",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.visualizeNode",
+        "title": "Visualize",
+        "category": "Databricks Notebook",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.addFavorite",
+        "title": "Add to Favorites",
+        "category": "Databricks Notebook",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.removeFavorite",
+        "title": "Remove from Favorites",
+        "category": "Databricks Notebook",
+        "icon": "$(star-full)"
       }
     ],
     "menus": {
@@ -94,6 +130,68 @@
         {
           "command": "dbxNotebook.resetContext",
           "when": "notebookType == dbx-notebook"
+        },
+        {
+          "command": "dbxNotebook.tableViz.visualizeNode",
+          "when": "false"
+        },
+        {
+          "command": "dbxNotebook.tableViz.addFavorite",
+          "when": "false"
+        },
+        {
+          "command": "dbxNotebook.tableViz.removeFavorite",
+          "when": "false"
+        },
+        {
+          "command": "dbxNotebook.tableViz.visualizeTableUnderCursor",
+          "when": "editorLangId == sql || editorLangId == python"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "dbxNotebook.tableViz.refreshTables",
+          "when": "view == dbxNotebook.tableViz.tables",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbxNotebook.tableViz.selectCompute",
+          "when": "view == dbxNotebook.tableViz.tables",
+          "group": "1_connection"
+        },
+        {
+          "command": "dbxNotebook.tableViz.visualizeTable",
+          "when": "view == dbxNotebook.tableViz.tables",
+          "group": "1_connection"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dbxNotebook.tableViz.visualizeNode",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbxNotebook.tableViz.addFavorite",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem == tableViz.table",
+          "group": "inline@2"
+        },
+        {
+          "command": "dbxNotebook.tableViz.removeFavorite",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem == tableViz.favorite",
+          "group": "inline@2"
+        },
+        {
+          "command": "dbxNotebook.tableViz.visualizeNode",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "group": "1_table@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "dbxNotebook.tableViz.visualizeTableUnderCursor",
+          "when": "editorLangId == sql || (editorLangId == python && !notebookEditorFocused)",
+          "group": "navigation@90"
         }
       ]
     },
@@ -138,8 +236,47 @@
           "minimum": 1,
           "maximum": 100,
           "markdownDescription": "The number of values in the bar chart of a category column in \"Visualize Table\". The chart shows the other values as one bar, \"Other\"."
+        },
+        "dbxNotebook.tableViz.warehouseId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The ID of the SQL warehouse that runs the queries of \"Visualize Table\". A warehouse that you select with \"Select Profile and Compute for Tables\" is used before this setting."
+        },
+        "dbxNotebook.tableViz.confirmComputeStart": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Ask before a query starts a stopped SQL warehouse. A warehouse that runs costs money."
+        },
+        "dbxNotebook.tableViz.maxConcurrentQueries": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 20,
+          "markdownDescription": "The largest number of queries that \"Visualize Table\" runs at the same time. The other queries wait."
+        },
+        "dbxNotebook.tableViz.queryTimeoutSeconds": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 10,
+          "markdownDescription": "The time limit of one query of \"Visualize Table\", in seconds. The extension cancels a query that runs longer."
+        },
+        "dbxNotebook.tableViz.largeTableWarningGB": {
+          "type": "number",
+          "default": 100,
+          "minimum": 0.001,
+          "markdownDescription": "\"Visualize Table\" asks before the first full scan of a table that is larger than this size, in GB."
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "dbxNotebook.tableViz.tables",
+          "name": "Databricks Tables",
+          "visibility": "collapsed",
+          "contextualTitle": "Databricks Tables"
+        }
+      ]
     }
   },
   "dependencies": {

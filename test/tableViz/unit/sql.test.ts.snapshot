@@ -298,3 +298,20 @@ DESCRIBE DETAIL IDENTIFIER(:tbl)
 -- :tbl = '\`główny\`.\`sales data\`.\`select\`\`from\`'
 DESCRIBE HISTORY IDENTIFIER(:tbl) LIMIT 1
 `;
+
+exports[`validateFilter 1`] = `
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT 1 AS \`ok\`
+FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+WHERE (
+  order_date >= '2026-01-01' AND region = 'EMEA'
+)
+LIMIT 0
+`;
+
+exports[`validateFilter 2`] = `
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT 1 AS \`ok\`
+FROM IDENTIFIER(:tbl)
+LIMIT 0
+`;

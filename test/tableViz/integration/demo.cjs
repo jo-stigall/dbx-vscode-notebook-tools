@@ -33,6 +33,10 @@ async function until(what, fn, timeout = 20000) {
  * @param {(message: string) => void} log  Call it after each step that passed.
  */
 exports.main = async function main(log) {
+  // Use the Demo profile. Without this, the feature uses the connection of the notebooks, which the other steps set.
+  const api = await vscode.commands.executeCommand('dbxNotebook.tableViz._api');
+  await api.session.select('Demo');
+
   // 1. The command opens a board panel, and the webview starts.
   const board = await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'demo.shop.orders_2026');
   assert.ok(board, 'the command returns the board');

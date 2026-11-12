@@ -1,13 +1,23 @@
 /** React hooks that the board uses. */
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { Request, ResultOf } from '../core/schema.ts';
-import { request, RequestError } from './rpc.ts';
+import { acquire, release, useRequests, type Progress, type RequestError } from './rpc.ts';
 
-/** The state of one request: it runs, it has a result, or it failed. */
-export type Loadable<T> = { status: 'loading' } | { status: 'done'; result: T } | { status: 'error'; error: RequestError };
+/**
+ * The state of one request: it runs, it has a result, it failed, or it was cancelled.
+ * While it runs, `progress` tells if the query waits for a free place on Databricks or runs.
+ */
+export type Loadable<T> =
+  | { status: 'loading'; progress?: Progress }
+  | { status: 'done'; result: T }
+  | { status: 'error'; error: RequestError }
+  | { status: 'cancelled' };
 
 /**
  * Send a request and get its state.
+ *
+ * When the component leaves the page or asks for a different thing, the
+ * hook releases the request. A request that no component wants is cancelled.
  *
  * @example
  * const details = useResult({ type: 'tableDetails', dataset });
@@ -16,19 +26,22 @@ export type Loadable<T> = { status: 'loading' } | { status: 'done'; result: T } 
  * @param req  The request. Pass undefined to send nothing; the state then stays "loading".
  */
 export function useResult<T extends Request>(req: T | undefined): Loadable<ResultOf<T['type']>> {
-  const key = req ? JSON.stringify(req) : '';
+  const { generation } = useRequests();
+  // The request as text, plus the number of the last refresh. The effect runs again only when one of them changes.
+  const key = (req ? JSON.stringify(req) : '') + '#' + generation;
   const [state, setState] = useState<{ key: string; value: Loadable<ResultOf<T['type']>> }>({ key, value: { status: 'loading' } });
   useEffect(() => {
     if (!req) return;
     let current = true;
-    request(req).then(
+    const onProgress = (progress: Progress) => current && setState({ key, value: { status: 'loading', progress } });
+    acquire(req, onProgress).then(
       (result) => current && setState({ key, value: { status: 'done', result } }),
-      (error: RequestError) => current && setState({ key, value: { status: 'error', error } })
+      (error: RequestError) => current && setState({ key, value: error.cancelled ? { status: 'cancelled' } : { status: 'error', error } })
     );
     return () => {
       current = false;
+      release(req, onProgress);
     };
-    // `key` is the request as text, so the effect runs again only when the request changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return state.key === key ? state.value : { status: 'loading' };

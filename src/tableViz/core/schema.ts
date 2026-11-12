@@ -131,6 +131,8 @@ export const requestSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('frequency'), dataset: datasetSchema, columns: oneColumn, top: z.number().int().min(1).max(1000) }),
   /** The number of rows in each day, week, month or year of a date column. */
   z.strictObject({ type: z.literal('dateCounts'), dataset: datasetSchema, columns: oneColumn, grain: grainSchema }),
+  /** Check that Databricks can read the filter of the dataset. The request reads no rows. */
+  z.strictObject({ type: z.literal('validateFilter'), dataset: datasetSchema }),
 ]);
 export type Request = z.infer<typeof requestSchema>;
 export type RequestOf<T extends Request['type']> = Extract<Request, { type: T }>;
@@ -216,6 +218,8 @@ export const resultSchema = z.discriminatedUnion('type', [
     /** One entry for each period that has rows, oldest first. `start` is the first day of the period, as YYYY-MM-DD. */
     buckets: z.array(z.strictObject({ start: z.string(), count: z.number() })),
   }),
+  /** The filter is valid. If it is not valid, the request fails with an error that has the text from Databricks. */
+  z.strictObject({ ...resultBase, type: z.literal('validateFilter') }),
 ]);
 export type Result = z.infer<typeof resultSchema>;
 export type ResultOf<T extends Result['type']> = Extract<Result, { type: T }>;
@@ -252,15 +256,19 @@ export const boardSettingsSchema = z.strictObject({
   defaultBins: z.number().int().min(5).max(200),
   /** The number of values in a category chart. */
   topValues: z.number().int().min(1).max(100),
+  /** The board asks before the first full scan of a table that is larger than this number of bytes. */
+  largeTableBytes: z.number().positive(),
 });
 export type BoardSettings = z.infer<typeof boardSettingsSchema>;
-export const DEFAULT_SETTINGS: BoardSettings = { defaultBins: 30, topValues: 20 };
+export const DEFAULT_SETTINGS: BoardSettings = { defaultBins: 30, topValues: 20, largeTableBytes: 100 * 1024 ** 3 };
 
 /** What the webview stores so that a board comes back after a window reload. It contains no data and no token. */
 export const boardStateSchema = z.strictObject({
   datasets: boardDatasetsSchema,
   ui: z.strictObject({ search: z.string(), sort: z.enum(['table', 'nulls', 'distinct']) }).optional(),
   cards: z.array(cardSchema).optional(),
+  /** true: the user chose to scan a table that is larger than the size limit. */
+  scanLarge: z.boolean().optional(),
 });
 export type BoardState = z.infer<typeof boardStateSchema>;
 

@@ -255,6 +255,16 @@ function dateCounts(request: RequestOf<'dateCounts'>, options: BuildOptions): St
 }
 
 /**
+ * The statement for "validateFilter": ask Databricks to read the filter, with `LIMIT 0` so that it reads no rows.
+ * If the filter is not valid, the statement fails, and the error text tells why.
+ */
+function validateFilter(request: RequestOf<'validateFilter'>, options: BuildOptions): Statement[] {
+  const parts = new Parts(options);
+  const sql = `SELECT 1 AS \`ok\`\n${parts.from(request.dataset)}${parts.where(request.dataset)}\nLIMIT 0`;
+  return [{ sql, params: parts.params }];
+}
+
+/**
  * Build the statements for a request.
  *
  * Most requests need one statement. "tableDetails" needs two.
@@ -273,6 +283,8 @@ export function buildStatements(request: Request, options: BuildOptions = {}): S
       return frequency(request, options);
     case 'dateCounts':
       return dateCounts(request, options);
+    case 'validateFilter':
+      return validateFilter(request, options);
   }
 }
 

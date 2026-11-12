@@ -9,7 +9,7 @@
  *
  *     ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code" test/client.test.js
  *
- * The script prints the number of tests that passed, for example "6 passed". It prints each failure
+ * The script prints the number of tests that passed, for example "10 passed". It prints each failure
  * and exits with code 1 if a test fails.
  */
 const assert = require('assert');
@@ -56,8 +56,12 @@ function newConnection(databrickscfg = '') {
   process.env.DATABRICKS_CONFIG_FILE = path.join(tmp, 'databrickscfg');
   fs.writeFileSync(process.env.DATABRICKS_CONFIG_FILE, databrickscfg);
   const stored = new Map();
+  const global = new Map();
+  const secrets = new Map();
   return new Connection({
     workspaceState: { get: (key) => stored.get(key), update: async (key, value) => void stored.set(key, value) },
+    globalState: { get: (key, fallback) => (global.has(key) ? global.get(key) : fallback), update: async (key, value) => void global.set(key, value) },
+    secrets: { get: async (key) => secrets.get(key), store: async (key, value) => void secrets.set(key, value) },
   });
 }
 
@@ -166,6 +170,55 @@ const tests = [
     await conn.context.workspaceState.update(conn.clusterKey(sales), 'cluster-for-sales');
     assert.strictEqual(conn.resolve(sales).clusterId, 'cluster-for-sales');
     assert.strictEqual(conn.resolve(hr).clusterId, 'cluster-from-file');
+  }],
+
+  ['lists the profiles of the configuration file', async () => {
+    const conn = newConnection(PROFILE_A + '[prod]\nhost = b.example.com\nauth_type = databricks-cli\n\n[broken]\ntoken = x\n');
+    assert.deepStrictEqual(conn.listProfiles(), [
+      { name: 'DEFAULT', host: 'https://a.example.com', auth: 'token' },
+      { name: 'prod', host: 'https://b.example.com', auth: 'databricks-cli' },
+    ]);
+    assert.deepStrictEqual(newConnection().listProfiles(), []);
+  }],
+
+  ['a named profile uses the URL and the token of that profile only', async () => {
+    const conn = newConnection(PROFILE_A + '[prod]\nhost = https://b.example.com\ntoken = token-for-b\n');
+    // The variables are for a third workspace. A profile that the user selected by name does not use them.
+    process.env.DATABRICKS_HOST = 'https://c.example.com';
+    process.env.DATABRICKS_TOKEN = 'token-for-c';
+    const r = conn.resolve(undefined, 'prod');
+    assert.deepStrictEqual([r.host, r.token], ['https://b.example.com', 'token-for-b']);
+    assert.strictEqual(await conn.getToken(undefined, { profile: 'prod' }), 'token-for-b');
+    // '@workspace' and no name give the connection of the notebook kernel.
+    assert.strictEqual(conn.resolve(undefined, '@workspace').host, 'https://c.example.com');
+    assert.strictEqual(conn.resolve(undefined).token, 'token-for-c');
+    // A profile that does not exist has no URL.
+    assert.strictEqual(conn.resolve(undefined, 'nope').host, '');
+  }],
+
+  ['keeps a typed token in the secret store, not in a file', async () => {
+    const conn = newConnection();
+    const name = await conn.storeToken('adb-9.example.com/', 'typed-token');
+    assert.strictEqual(name, '@token:https://adb-9.example.com');
+    assert.deepStrictEqual(conn.storedHosts(), ['https://adb-9.example.com']);
+    const r = conn.resolve(undefined, name);
+    assert.deepStrictEqual([r.host, r.token, r.secret], ['https://adb-9.example.com', '', true]);
+    assert.strictEqual(await conn.getToken(undefined, { profile: name }), 'typed-token');
+    await assert.rejects(conn.getToken(undefined, { profile: '@token:https://other.example.com' }), /No token is stored/);
+  }],
+
+  ['asks the Databricks CLI for a new token when the old one was refused', async () => {
+    // A replacement for the Databricks CLI: each call prints a token with the next number.
+    const counter = path.join(tmp, 'cli-calls');
+    const cli = path.join(tmp, 'fake-databricks');
+    fs.writeFileSync(counter, '');
+    fs.writeFileSync(cli, `#!/bin/sh\necho x >> "${counter}"\nn=$(wc -l < "${counter}" | tr -d ' ')\necho "{\\"access_token\\": \\"cli-token-$n\\", \\"expiry\\": \\"2099-01-01T00:00:00Z\\"}"\n`, { mode: 0o755 });
+    const conn = newConnection('[oauth]\nhost = https://d.example.com\nauth_type = databricks-cli\n');
+    state.settings = { cliPath: cli };
+    assert.strictEqual(await conn.getToken(undefined, { profile: 'oauth' }), 'cli-token-1');
+    assert.strictEqual(await conn.getToken(undefined, { profile: 'oauth' }), 'cli-token-1', 'the second call uses the stored token');
+    assert.strictEqual(await conn.getToken(undefined, { profile: 'oauth', fresh: true }), 'cli-token-2');
+    assert.strictEqual(await conn.getToken(undefined, { profile: 'oauth' }), 'cli-token-2');
   }],
 ];
 

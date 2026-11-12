@@ -87,3 +87,23 @@ export function parseTableName(text: string): TableName | undefined {
   if (parts.length !== 3) return undefined;
   return { catalog: parts[0] as string, schema: parts[1] as string, name: parts[2] as string };
 }
+
+/**
+ * Find a three-part table name at a position in a line of text.
+ *
+ * @example
+ * tableNameAt('SELECT * FROM main.sales.orders WHERE x = 1', 20)   // { catalog: 'main', schema: 'sales', name: 'orders' }
+ * tableNameAt('df = spark.table("main.sales.`my orders`")', 25)    // { catalog: 'main', schema: 'sales', name: 'my orders' }
+ * tableNameAt('SELECT 1', 3)                                       // undefined
+ *
+ * @param line  One line of a .sql or .py file.
+ * @param character  The position of the cursor in the line, from 0.
+ */
+export function tableNameAt(line: string, character: number): TableName | undefined {
+  const part = '(?:`(?:[^`]|``)+`|[\\p{L}\\p{N}_$]+)';
+  const pattern = new RegExp(`${part}\\.${part}\\.${part}`, 'gu');
+  for (const match of line.matchAll(pattern)) {
+    if (character >= match.index && character <= match.index + match[0].length) return parseTableName(match[0]);
+  }
+  return undefined;
+}

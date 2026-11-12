@@ -13,6 +13,8 @@
   },
   "include": [
     "unit/**/*.ts",
+    "fake/**/*.ts",
+    "live/**/*.ts",
     "harness/**/*.ts",
     "webview/**/*.ts",
     "webview/**/*.tsx",

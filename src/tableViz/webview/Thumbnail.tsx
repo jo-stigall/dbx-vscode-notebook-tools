@@ -51,6 +51,7 @@ function Bars({ bars, summary }: { bars: Bar[]; summary: string }) {
 /** Show the state of a request that has no result. Returns undefined if the request is done. */
 function pendingMark(state: Loadable<unknown>) {
   if (state.status === 'loading') return <span className="thumb-wait" aria-label="Loading" />;
+  if (state.status === 'cancelled') return <span className="thumb-none">Cancelled</span>;
   if (state.status === 'error') {
     return (
       <span className="thumb-error" title={state.error.message}>

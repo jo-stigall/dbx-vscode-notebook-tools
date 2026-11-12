@@ -22,7 +22,30 @@ const DAY_MS = 86_400_000;
 // This folder is checked without Node.js or browser types, so declare the one global function that it uses.
 declare const setTimeout: (callback: () => void, ms: number) => unknown;
 
-/** Find the demo table of a dataset. */
+/** Sampled copies of the demo tables. The key is the table name and the percent. */
+const samples = new Map<string, DemoTable>();
+
+/**
+ * Make a copy of a demo table that has about `percent` percent of the rows.
+ *
+ * The same rows are in the sample on each run: the function decides from the
+ * row number, with no random numbers.
+ */
+function sampleOf(table: DemoTable, percent: number): DemoTable {
+  const key = `${table.name.name}:${percent}`;
+  let sample = samples.get(key);
+  if (!sample) {
+    // Multiply the row number with a large odd number to mix its bits, then compare the last 5 digits with the percent.
+    const keep = (row: number) => (Math.imul(row + 1, 2654435761) >>> 0) % 100_000 < percent * 1000;
+    const rows: number[] = [];
+    for (let i = 0; i < table.rowCount; i++) if (keep(i)) rows.push(i);
+    sample = { ...table, rowCount: rows.length, columns: table.columns.map((c) => ({ ...c, values: rows.map((i) => c.values[i] ?? null) })) };
+    samples.set(key, sample);
+  }
+  return sample;
+}
+
+/** Find the demo table of a dataset. If the dataset has a sample, the result has only the sampled rows. */
 function tableOf(dataset: Dataset): DemoTable {
   const table = demoTable(dataset.table);
   if (!table) {
@@ -33,7 +56,7 @@ function tableOf(dataset: Dataset): DemoTable {
   if (dataset.filter?.trim()) {
     throw new ProfilerError('The Demo profile cannot use a filter yet.', { nextStep: 'Remove the filter.' });
   }
-  return table;
+  return dataset.sample && dataset.sample.percent < 100 ? sampleOf(table, dataset.sample.percent) : table;
 }
 
 /** Find a column of a demo table. */
@@ -104,11 +127,15 @@ export class DemoProfiler implements Profiler {
         return { ...base, ...this.frequency(request) };
       case 'dateCounts':
         return { ...base, ...this.dateCounts(request) };
+      case 'validateFilter':
+        tableOf(request.dataset); // throws if the table does not exist or the dataset has a filter
+        return { ...base, type: 'validateFilter' };
     }
   }
 
   private tableDetails(request: RequestOf<'tableDetails'>): Omit<ResultOf<'tableDetails'>, 'sql' | 'approximate' | 'asOf'> {
-    const table = tableOf(request.dataset);
+    // The facts of a table do not depend on the sample.
+    const table = tableOf({ ...request.dataset, sample: undefined });
     return {
       type: 'tableDetails',
       columns: table.columns.map((c) => ({ name: c.name, typeText: c.typeText, ...(c.partition ? { partition: true } : {}) })),

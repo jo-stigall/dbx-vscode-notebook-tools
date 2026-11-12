@@ -162,7 +162,19 @@ function activate(context) {
    * @returns {import('./src/tableViz/host/index.ts').TableVizApi}
    */
   let tableViz;
-  const loadTableViz = () => tableViz || (tableViz = require('./dist/tableViz/host.js').activate(context));
+  const loadTableViz = () => tableViz || (tableViz = require('./dist/tableViz/host.js').activate(context, conn));
+
+  // The view "Databricks Tables". This object gives the calls of VS Code to the feature, which loads when the view opens.
+  const treeChanged = new vscode.EventEmitter();
+  let treeConnected = false;
+  const tableTree = () => {
+    const tree = loadTableViz().tree;
+    if (!treeConnected) {
+      treeConnected = true;
+      context.subscriptions.push(tree.onDidChangeTreeData((node) => treeChanged.fire(node)));
+    }
+    return tree;
+  };
 
   context.subscriptions.push(
     kernel,
@@ -194,8 +206,22 @@ function activate(context) {
 
     vscode.commands.registerCommand('dbxNotebook.openAsNotebook', openAsNotebook),
 
-    // "Visualize Table": open a board that shows the columns of a table. See docs/table-viz-design.md.
+    // The commands of "Visualize Table". See docs/table-viz-design.md.
     vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeTable', (name) => loadTableViz().visualizeTable(name)),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeTableUnderCursor', () => loadTableViz().visualizeTableUnderCursor()),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeNode', (node) => loadTableViz().visualizeNode(node)),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.selectCompute', () => loadTableViz().selectCompute()),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.refreshTables', () => tableTree().refresh()),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.addFavorite', (node) => node && node.kind === 'table' && tableTree().addFavorite(node.table)),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.removeFavorite', (node) => node && node.kind === 'table' && tableTree().removeFavorite(node.table)),
+    // For tests: get the feature object.
+    vscode.commands.registerCommand('dbxNotebook.tableViz._api', () => loadTableViz()),
+    treeChanged,
+    vscode.window.registerTreeDataProvider('dbxNotebook.tableViz.tables', {
+      onDidChangeTreeData: treeChanged.event,
+      getTreeItem: (node) => tableTree().getTreeItem(node),
+      getChildren: (node) => tableTree().getChildren(node),
+    }),
 
     // After a window reload, VS Code gives each board panel back to the extension with the state that the panel stored.
     vscode.window.registerWebviewPanelSerializer('dbxNotebook.tableViz.board', {

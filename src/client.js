@@ -25,6 +25,36 @@ const CLUSTER_KEY = 'dbxNotebook.clusterId';
 const REQUEST_TIMEOUT_MS = 30000;
 
 /**
+ * The name of the connection that the notebook kernel uses: the settings, the
+ * environment variables, the project file and the default profile.
+ */
+const WORKSPACE_PROFILE = '@workspace';
+
+/** The start of the name of a connection whose token is in the secret store of VS Code. Example: '@token:https://adb-123.azuredatabricks.net'. */
+const TOKEN_PROFILE_PREFIX = '@token:';
+
+/** The start of the name under which the secret store of VS Code keeps a token. The workspace URL follows. */
+const SECRET_PREFIX = 'dbxNotebook.token:';
+
+/** The name under which VS Code stores the list of workspace URLs that have a token in the secret store. */
+const STORED_HOSTS_KEY = 'dbxNotebook.tokenHosts';
+
+/**
+ * Write a workspace URL in one form: with "https://" and without a "/" at the end.
+ *
+ * @example
+ * normalizeHost('adb-123.azuredatabricks.net/')   // 'https://adb-123.azuredatabricks.net'
+ *
+ * @param {string} [host]
+ * @returns {string}  Empty if `host` is empty.
+ */
+function normalizeHost(host) {
+  host = (host || '').trim().replace(/\/+$/, '');
+  if (host && !/^https?:\/\//.test(host)) host = 'https://' + host;
+  return host;
+}
+
+/**
  * Get the scheme, the name and the port of a workspace URL. Ignore the rest.
  *
  * @example
@@ -187,10 +217,15 @@ class Connection {
    * // }
    *
    * @param {vscode.Uri} [uri]  A file in the project. The function reads the settings and `.databricks/.databricks.env` of the folder that contains this file.
-   * @returns {{ host: string, token: string, clusterId: string, cliPath: string }}  A value is an empty string if the function did not find it.
+   * @param {string} [profile]  The connection to use. Omit it, or give '@workspace', for the connection of the notebook kernel (the description above).
+   *   A name such as 'DEFAULT' uses that profile of `~/.databrickscfg` for the URL and the token.
+   *   '@token:<URL>' uses that URL, and getToken() reads the token from the secret store of VS Code.
+   * @returns {{ host: string, token: string, clusterId: string, cliPath: string, secret?: boolean }}  A value is an empty string if the function did not find it. `secret` is true for a '@token:' connection.
    */
-  resolve(uri) {
+  resolve(uri, profile) {
     const cfg = vscode.workspace.getConfiguration('dbxNotebook', uri);
+    if (profile && profile !== WORKSPACE_PROFILE) return this.resolveProfile(uri, cfg, profile);
+
     const folder = uri && vscode.workspace.getWorkspaceFolder(uri);
     const fileEnv = folder
       ? readEnvFile(path.join(folder.uri.fsPath, '.databricks', '.databricks.env'))
@@ -198,14 +233,14 @@ class Connection {
     const env = { ...fileEnv, ...process.env };
     const profileName = cfg.get('profile') || env.DATABRICKS_CONFIG_PROFILE || 'DEFAULT';
     const cfgFile = env.DATABRICKS_CONFIG_FILE || path.join(os.homedir(), '.databrickscfg');
-    const profile = readIni(cfgFile)[profileName] || {};
+    const profileSection = readIni(cfgFile)[profileName] || {};
 
-    let host = cfg.get('host') || env.DATABRICKS_HOST || profile.host || '';
+    let host = cfg.get('host') || env.DATABRICKS_HOST || profileSection.host || '';
     host = host.replace(/\/+$/, '');
     if (host && !/^https?:\/\//.test(host)) host = 'https://' + host;
 
     // Do not send the token of a profile to a workspace that the profile is not for.
-    const profileToken = profile.token && origin(profile.host) === origin(host) ? profile.token : '';
+    const profileToken = profileSection.token && origin(profileSection.host) === origin(host) ? profileSection.token : '';
 
     return {
       host,
@@ -214,10 +249,78 @@ class Connection {
         this.context.workspaceState.get(this.clusterKey(uri)) ||
         cfg.get('clusterId') ||
         env.DATABRICKS_CLUSTER_ID ||
-        profile.cluster_id ||
+        profileSection.cluster_id ||
         '',
       cliPath: cfg.get('cliPath') || this.bundledCli() || 'databricks',
     };
+  }
+
+  /**
+   * Find the URL and the token of a named connection. See the `profile` parameter of resolve().
+   *
+   * A named profile uses the URL and the token of that profile only. It does
+   * not use DATABRICKS_HOST or DATABRICKS_TOKEN: the user selected the
+   * profile by its name.
+   */
+  resolveProfile(uri, cfg, profile) {
+    const clusterId = this.context.workspaceState.get(this.clusterKey(uri)) || cfg.get('clusterId') || '';
+    const cliPath = cfg.get('cliPath') || this.bundledCli() || 'databricks';
+    if (profile.startsWith(TOKEN_PROFILE_PREFIX)) {
+      return { host: normalizeHost(profile.slice(TOKEN_PROFILE_PREFIX.length)), token: '', clusterId, cliPath, secret: true };
+    }
+    const section = readIni(this.configFile())[profile] || {};
+    return { host: normalizeHost(section.host), token: section.token || '', clusterId: clusterId || section.cluster_id || '', cliPath };
+  }
+
+  /** @returns {string}  The path of the Databricks configuration file: DATABRICKS_CONFIG_FILE, or `~/.databrickscfg`. */
+  configFile() {
+    return process.env.DATABRICKS_CONFIG_FILE || path.join(os.homedir(), '.databrickscfg');
+  }
+
+  /**
+   * List the profiles in `~/.databrickscfg`.
+   *
+   * The function reads the file. It does not call Databricks, so it is fast
+   * and it works without a network.
+   *
+   * @example
+   * conn.listProfiles()
+   * // [
+   * //   { name: 'DEFAULT', host: 'https://adb-123.azuredatabricks.net', auth: 'token' },
+   * //   { name: 'prod',    host: 'https://adb-456.azuredatabricks.net', auth: 'databricks-cli' },
+   * // ]
+   *
+   * @returns {{ name: string, host: string, auth: string }[]}  `auth` is 'token' if the profile has a `token` line. If not, it is the `auth_type` of the profile, or 'databricks-cli'.
+   */
+  listProfiles() {
+    return Object.entries(readIni(this.configFile()))
+      .filter(([, section]) => section.host)
+      .map(([name, section]) => ({ name, host: normalizeHost(section.host), auth: section.token ? 'token' : section.auth_type || 'databricks-cli' }));
+  }
+
+  /**
+   * Keep a personal access token in the secret store of VS Code.
+   *
+   * VS Code encrypts the secret store with the keychain of the operating
+   * system. The token is not in a settings file. Use the connection name
+   * '@token:<URL>' to use the token.
+   *
+   * @param {string} host  The workspace URL.
+   * @param {string} token  The personal access token.
+   * @returns {Promise<string>}  The connection name, for example '@token:https://adb-123.azuredatabricks.net'.
+   */
+  async storeToken(host, token) {
+    host = normalizeHost(host);
+    await this.context.secrets.store(SECRET_PREFIX + host, token);
+    const hosts = new Set(this.context.globalState.get(STORED_HOSTS_KEY, []));
+    hosts.add(host);
+    await this.context.globalState.update(STORED_HOSTS_KEY, [...hosts]);
+    return TOKEN_PROFILE_PREFIX + host;
+  }
+
+  /** @returns {string[]}  The workspace URLs that have a token in the secret store. */
+  storedHosts() {
+    return this.context.globalState.get(STORED_HOSTS_KEY, []);
   }
 
   /**
@@ -240,12 +343,20 @@ class Connection {
    * keeps that token until one minute before it expires.
    *
    * @param {vscode.Uri} [uri]  A file in the project. See resolve().
+   * @param {{ profile?: string, fresh?: boolean }} [options]  `profile`: the connection to use; see resolve().
+   *   `fresh: true`: Databricks refused the last token, so do not use the stored token of the CLI; ask the CLI again.
    * @returns {Promise<string>}  The token.
    * @throws {Error}  If there is no personal access token and the CLI cannot give a token. The message tells you how to log in.
    */
-  async getToken(uri) {
-    const { host, token, cliPath } = this.resolve(uri);
+  async getToken(uri, options = {}) {
+    const { host, token, cliPath, secret } = this.resolve(uri, options.profile);
+    if (secret) {
+      const stored = await this.context.secrets.get(SECRET_PREFIX + host);
+      if (!stored) throw new Error(`No token is stored for ${host}. Select the profile again and type the token.`);
+      return stored;
+    }
     if (token) return token;
+    if (options.fresh) this.cliTokens.delete(host);
     const cached = this.cliTokens.get(host);
     if (cached && cached.expires > Date.now()) return cached.token;
 
@@ -357,4 +468,4 @@ class Connection {
   }
 }
 
-module.exports = { Connection };
+module.exports = { Connection, WORKSPACE_PROFILE, TOKEN_PROFILE_PREFIX };

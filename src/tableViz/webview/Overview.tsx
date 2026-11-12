@@ -6,10 +6,10 @@
  */
 import { useEffect, useState } from 'react';
 import { detectKind } from '../core/kinds.ts';
-import type { ColumnInfo, ColumnKind, Dataset, OverviewColumn } from '../core/schema.ts';
+import type { ColumnInfo, ColumnKind, Dataset, OverviewColumn, RequestOf } from '../core/schema.ts';
 import { KIND_LABELS } from './cards/CardShell.tsx';
 import { formatCount, formatPercent } from './format.ts';
-import { request, type RequestError } from './rpc.ts';
+import { acquire, release, useRequests, type RequestError } from './rpc.ts';
 import { Thumbnail } from './Thumbnail.tsx';
 
 /** The number of columns in one overview request. */
@@ -32,16 +32,24 @@ export interface OverviewState {
 
 const EMPTY: OverviewState = { stats: new Map(), approximate: false, sql: new Map() };
 
-/** Get the overview numbers of all columns, one batch at a time. */
+/**
+ * Get the overview numbers of all columns, one batch at a time.
+ *
+ * @param columns  The columns of the table. Pass undefined to send nothing, for example before the user permits the scan of a large table.
+ */
 export function useOverview(dataset: Dataset, columns: ColumnInfo[] | undefined): OverviewState {
-  const key = JSON.stringify([dataset, columns?.map((c) => [c.name, c.typeText])]);
+  const { generation } = useRequests();
+  const key = JSON.stringify([dataset, columns?.map((c) => [c.name, c.typeText]), generation]);
   const [state, setState] = useState<{ key: string; value: OverviewState }>({ key, value: EMPTY });
   useEffect(() => {
     if (!columns) return;
     let current = true;
+    const sent: RequestOf<'overview'>[] = [];
     for (let i = 0; i < columns.length; i += BATCH) {
       const batch = columns.slice(i, i + BATCH).map((c) => ({ name: c.name, typeText: c.typeText }));
-      request({ type: 'overview', dataset, columns: batch }).then(
+      const request: RequestOf<'overview'> = { type: 'overview', dataset, columns: batch };
+      sent.push(request);
+      acquire(request).then(
         (result) => {
           if (!current) return;
           setState((prev) => {
@@ -59,12 +67,13 @@ export function useOverview(dataset: Dataset, columns: ColumnInfo[] | undefined)
           });
         },
         (error: RequestError) => {
-          if (current) setState((prev) => ({ key, value: { ...(prev.key === key ? prev.value : EMPTY), error } }));
+          if (current && !error.cancelled) setState((prev) => ({ key, value: { ...(prev.key === key ? prev.value : EMPTY), error } }));
         }
       );
     }
     return () => {
       current = false;
+      sent.forEach((request) => release(request));
     };
     // `key` is the dataset and the columns as text.
     // eslint-disable-next-line react-hooks/exhaustive-deps

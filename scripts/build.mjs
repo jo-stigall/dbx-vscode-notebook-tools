@@ -60,6 +60,15 @@ await esbuild.build({
   loader: { '.css': 'empty', '.ttf': 'empty' },
 });
 
+// The fake Databricks workspace, for the test of the full extension in VS Code (test/tableViz/integration).
+await esbuild.build({
+  ...common,
+  entryPoints: ['test/tableViz/fake/workspace.ts'],
+  outfile: 'dist/test/fakeWorkspace.cjs',
+  platform: 'node',
+  format: 'cjs',
+});
+
 // The test page. The installed extension does not contain it.
 await esbuild.build({ ...browser, entryPoints: { harness: 'test/tableViz/harness/harness.ts' }, outdir: 'dist/harness' });
 mkdirSync('dist/harness', { recursive: true });

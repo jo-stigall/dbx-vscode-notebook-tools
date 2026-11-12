@@ -12,6 +12,7 @@
  * `theme` is dark (default), light or hc (high contrast).
  *
  * `cards` opens detail cards at the start. Example: `cards=amount,region`.
+ * `large=1` makes the board ask before it reads all rows of the table.
  * `kind=identifier` sets the kind of the first card, `astable=1` shows its
  * chart as a table, and `sql=1` shows the SQL of each card.
  */
@@ -34,7 +35,8 @@ const dispatcher = createDispatcher({
     const controller = new AbortController();
     return { signal: controller.signal, cancel: () => controller.abort() };
   },
-  onOther: () => post({ type: 'init', datasets, settings: DEFAULT_SETTINGS }),
+  // `large=1` sets the size limit to 1 MB, so that the demo table is "too large" and the board asks before it reads all rows.
+  onOther: () => post({ type: 'init', datasets, settings: { ...DEFAULT_SETTINGS, ...(params.get('large') === '1' ? { largeTableBytes: 1024 ** 2 } : {}) } }),
 });
 
 // The cards from the page URL go into the stored state, as if the board was open before a reload.

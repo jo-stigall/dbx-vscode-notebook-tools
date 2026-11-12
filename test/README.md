@@ -26,6 +26,9 @@ test files from the repository.
 | `mock_databricks.py` | The fake Databricks server. The test and the demo start it. | |
 | `tableViz/unit/` | Tests the pure code, the SQL and the demo data of "Visualize Table". | 1 second |
 | `tableViz/webview/` | Tests the content of each kind of detail card. | 1 second |
+| `tableViz/fake/` | A fake SQL warehouse and a fake workspace. They answer from the demo tables. | |
+| `tableViz/integration/workspace.cjs` | Tests "Visualize Table" in a VS Code window with the fake workspace. `e2e.js` runs it. | 5 seconds |
+| `tableViz/live/` | Tests on a real Databricks workspace. They run only if you set four variables. | |
 | `tableViz/integration/demo.cjs` | Tests "Visualize Table" in a VS Code window. `e2e.js` runs it. | 2 seconds |
 | `tableViz/harness/` | A page that shows a board in a normal browser. | |
 
@@ -78,7 +81,7 @@ in `tableViz/unit/` directly. It cannot run the `.tsx` file in
 The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 51
+ℹ pass 82
 ℹ fail 0
 ```
 
@@ -93,6 +96,13 @@ The tests make sure of these things:
   A table name or column name never goes into a statement without backticks.
 - Each kind of detail card shows the correct numbers, and each button has a
   name for a screen reader.
+- The warehouse runner asks for the state of a statement until it is done,
+  cancels it on request and after the time limit, gets a new token after
+  HTTP 401, and tries again after HTTP 429. A local server with a script
+  plays the role of Databricks.
+- The SQL profiler gives the same numbers as the demo profiler for each
+  request type. A fake warehouse answers its statements from the demo tables.
+- Browsing the catalog sends no SQL statement.
 
 If you change a SQL builder on purpose, write the snapshot file again and
 read the difference before you commit it:
@@ -135,11 +145,61 @@ ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
 ok   tableViz: a statistics request gives numbers and the SQL behind them
 ok   tableViz: a bad table name opens no board
 ok   tableViz: a missing table shows a plain error
+ok   tableViz: the tree lists catalogs, schemas and tables without SQL
+ok   tableViz: a board gets correct numbers from SQL statements on a warehouse
+ok   tableViz: the cache answers a repeated request, and refresh runs it again
+ok   tableViz: the tree keeps favorites and recent tables
+ok   tableViz: Visualize Table Under Cursor opens the table at the cursor
+ok   tableViz: a cancel stops the statement on the workspace
+ok   tableViz: an error from the workspace becomes a plain message
+ok   tableViz: a statement starts a stopped warehouse when the question is off
 PASS
 ```
 
 If a step fails, the script prints `FAIL` and the error. The file
 `.vscode-test/vscode.log` contains the messages from VS Code.
+
+## What the fake workspace does
+
+The tests of "Visualize Table" cannot run SQL: SQLite and other local
+databases do not know the Databricks functions. Thus the fake warehouse
+(`tableViz/fake/warehouse.ts`) does not run the SQL. It recognizes each
+statement that the extension builds, computes the same numbers from the demo
+tables, and returns them as the rows that Databricks returns.
+
+This shows that the builders, the runner and the parsers fit together. It
+does not show that Databricks accepts each statement. Only the live tests
+show that.
+
+One thing has no automatic test: the question "Start the warehouse?". It is
+a dialog that a test cannot click.
+
+## Test on a real workspace
+
+These tests are off by default. To run them, set four variables:
+
+| Variable | Value |
+|---|---|
+| `DATABRICKS_HOST` | The workspace URL. |
+| `DATABRICKS_TOKEN` | A personal access token. |
+| `TABLE_VIZ_TEST_WAREHOUSE_ID` | The ID of a SQL warehouse. |
+| `TABLE_VIZ_TEST_SCHEMA` | A schema that the tests can write to, as `catalog.schema`. |
+
+Load the demo tables into the schema one time. This script makes two tables
+and writes about 210,000 rows:
+
+```bash
+npm run live:setup
+```
+
+Then run the tests:
+
+```bash
+npm run test:live
+```
+
+Each test sends a request to the workspace and to the demo profiler, and
+expects the same numbers. No person has run the script or these tests yet.
 
 ## See a board in a browser
 
@@ -165,6 +225,7 @@ http://localhost:8791/index.html?cards=amount,region,order_date&sql=1
 ```
 
 `cards` opens detail cards at the start. `sql=1` shows the SQL of each card.
+`large=1` makes the board ask before it reads all rows.
 
 ## Try the extension
 

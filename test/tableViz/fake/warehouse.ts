@@ -116,6 +116,7 @@ export async function answerStatement(statement: Statement): Promise<QueryResult
     for (const v of r.values) rows.push([v.value, v.count, r.rowCount]);
     return rowsOf(['value', 'n', 'total'], rows.slice(0, limit));
   }
+  if (sql.startsWith('SELECT 1 AS `ok`')) return rowsOf(['ok'], []);
   const trunc = /date_trunc\('(DAY|WEEK|MONTH|YEAR)'/.exec(sql);
   if (trunc) {
     const r = await ask({ type: 'dateCounts', dataset, columns: [ref('c0')], grain: (trunc[1] as string).toLowerCase() as Grain });
