@@ -17,7 +17,7 @@ A .vsix file is a zip file that contains:
 
 Install the extension with one of these:
 
-    code --install-extension dbx-notebook-0.1.0.vsix
+    code --install-extension dbx-notebook-0.2.0.vsix
     VS Code command palette > "Extensions: Install from VSIX..."
 
 If you add a source file outside src/, add it to FILES. If you do not, the

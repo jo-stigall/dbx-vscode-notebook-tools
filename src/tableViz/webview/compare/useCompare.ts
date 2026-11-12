@@ -1,5 +1,5 @@
 /** React hooks for compare mode: the drift of each pair of columns, and results that need more than one request. */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { columnDrift, compareKind, type Ask, type CompareKind } from '../../core/compare.ts';
 import type { Drift } from '../../core/drift.ts';
 import type { ColumnPair } from '../../core/match.ts';
@@ -10,8 +10,20 @@ import { acquire, useRequests, type RequestError } from '../rpc.ts';
 /** Sends a request to the host. The requests of compare mode stay until the next "Refresh". */
 export const ask: Ask = (request) => acquire(request);
 
-/** The drift of one pair: not known yet, known, not compared, or failed. */
-export type DriftState = { status: 'loading' } | { status: 'done'; drift: Drift; kind: CompareKind } | { status: 'skip' } | { status: 'error'; error: RequestError };
+/**
+ * The drift of one pair: not known yet, known, not compared, or failed.
+ *
+ * If `stale` is true, the drift belongs to the datasets before the last
+ * change, and the new drift is not here yet. The page shows it dimmed.
+ */
+export type DriftState = { status: 'loading' } | { status: 'done'; drift: Drift; kind: CompareKind; stale?: boolean } | { status: 'skip' } | { status: 'error'; error: RequestError };
+
+/** Mark each drift as old. A state that has no drift becomes "loading". */
+function asStale(values: Map<string, DriftState>): Map<string, DriftState> {
+  const out = new Map<string, DriftState>();
+  for (const [name, value] of values) out.set(name, value.status === 'done' ? { ...value, stale: true } : { status: 'loading' });
+  return out;
+}
 
 /** The drift computations that run or are done, by their inputs as text. Two components that need the same drift share one computation. */
 const drifts = new Map<string, Promise<Drift | undefined>>();
@@ -21,6 +33,10 @@ const drifts = new Map<string, Promise<Drift | undefined>>();
  *
  * The hook starts the computation of a pair when the overview numbers of
  * its two columns are here. It never runs the same computation two times.
+ *
+ * When a dataset changes, the hook keeps the drift of each pair, with
+ * `stale: true`, until the new drift of that pair is here. The rows of the
+ * table then keep their sequence.
  *
  * @param asText  The names of the columns of A that the user chose to compare as text.
  * @returns Column name of A -> the state of its drift.
@@ -38,7 +54,7 @@ export function useDrifts(a: Dataset, b: Dataset, pairs: ColumnPair[], overviewA
   useEffect(() => {
     let current = true;
     const set = (name: string, value: DriftState) =>
-      current && setState((prev) => ({ base, values: new Map(prev.base === base ? prev.values : []).set(name, value) }));
+      current && setState((prev) => ({ base, values: new Map(prev.base === base ? prev.values : asStale(prev.values)).set(name, value) }));
     for (const pair of pairs) {
       const statsA = overviewA.stats.get(pair.a.name);
       const statsB = overviewB.stats.get(pair.b.name);
@@ -64,7 +80,7 @@ export function useDrifts(a: Dataset, b: Dataset, pairs: ColumnPair[], overviewA
       current = false;
     };
   }, [base, ready]);
-  return state.base === base ? state.values : new Map();
+  return useMemo(() => (state.base === base ? state.values : asStale(state.values)), [state, base]);
 }
 
 /** The state of a value that an async function computes. */

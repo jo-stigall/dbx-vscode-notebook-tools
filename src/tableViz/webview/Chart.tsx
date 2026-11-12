@@ -7,12 +7,12 @@
  * permits.
  */
 import { BarChart } from 'echarts/charts';
-import { AriaComponent, BrushComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
+import { AriaComponent, BrushComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import { useEffect, useRef } from 'react';
 
-echarts.use([BarChart, GridComponent, TooltipComponent, LegendComponent, BrushComponent, AriaComponent, CanvasRenderer]);
+echarts.use([BarChart, GridComponent, TooltipComponent, LegendComponent, BrushComponent, MarkLineComponent, AriaComponent, CanvasRenderer]);
 
 /** The settings of a chart, in the format of ECharts. options.ts makes them. */
 export type ChartOption = Parameters<echarts.ECharts['setOption']>[0];
@@ -37,6 +37,23 @@ export function chartPng(element: Element, background: string): string | undefin
 export function chartState(element: Element): { option: ChartOption; width: number; height: number } | undefined {
   const chart = instances.get(element);
   return chart ? { option: chart.getOption() as ChartOption, width: chart.getWidth(), height: chart.getHeight() } : undefined;
+}
+
+/**
+ * Describe the parts of a chart as text: the type of each axis, the id of
+ * each series, and which of them have a title or labels.
+ * Two charts with the same text differ only in their numbers.
+ *
+ * ECharts keeps a setting of the old chart if the new chart does not set
+ * it. Thus a chart that loses a part (for example, the labels on its bars)
+ * must have a different text, so that it is drawn new.
+ */
+function shapeOf(option: object): string {
+  type Part = { type?: string; id?: string; name?: string; label?: unknown };
+  const list = (value: unknown): Part[] => (Array.isArray(value) ? value : value ? [value] : []) as Part[];
+  const o = option as { xAxis?: unknown; yAxis?: unknown; series?: unknown; legend?: unknown; brush?: unknown };
+  const part = (items: Part[]) => items.map((item) => `${item.id ?? ''}:${item.type ?? ''}:${item.name ? 'title' : ''}:${item.label ? 'labels' : ''}`).join(',');
+  return [part(list(o.xAxis)), part(list(o.yAxis)), part(list(o.series)), o.legend ? 'legend' : '', o.brush ? 'brush' : ''].join('|');
 }
 
 export interface ChartProps {
@@ -99,12 +116,22 @@ export function Chart({ option, label, height, onSelect, range, horizontal }: Ch
   }, []);
 
   const selectable = onSelect !== undefined;
+  // The parts of the last chart: the types of its axes and the names of its series.
+  const shape = useRef('');
   useEffect(() => {
     const instance = chart.current;
     if (!instance) return;
     const brush = range && selectable ? { brush: { xAxisIndex: 0, brushMode: 'single', transformable: false, throttleType: 'debounce', throttleDelay: 0 } } : {};
-    // `true`: replace the old settings. Do not merge them with the new settings.
-    instance.setOption({ ...(option as object), ...brush }, true);
+    const next = { ...(option as object), ...brush };
+    const nextShape = shapeOf(next);
+    if (nextShape === shape.current) {
+      // The same kind of chart with new numbers: keep the bars and move them to their new heights.
+      instance.setOption(next, { replaceMerge: ['xAxis', 'yAxis', 'series'] });
+    } else {
+      // A different kind of chart, for example from one dataset to two: draw it new.
+      instance.setOption(next, true);
+    }
+    shape.current = nextShape;
     // Make a drag select a range. Without this, the user must first click a brush button, and the chart has none.
     if (range && selectable) instance.dispatchAction({ type: 'takeGlobalCursor', key: 'brush', brushOption: { brushType: 'lineX', brushMode: 'single' } });
   }, [option, range, selectable]);

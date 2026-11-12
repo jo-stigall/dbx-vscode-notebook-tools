@@ -18,9 +18,46 @@ import { chipForBins, chipForPeriods, chipForValue, fillPeriods, frequencyRows, 
 import { isNumeric, typeFamily } from '../../core/kinds.ts';
 import type { BinEdges, Card, Chip, ColumnInfo, Grain, OverviewColumn, ResultOf } from '../../core/schema.ts';
 import { Chart } from '../Chart.tsx';
+import { StatTiles, type Tile } from './CardShell.tsx';
 import { formatCount, formatNumber, formatPercent, formatStat, formatValue } from '../format.ts';
 import { barsOption } from '../options.ts';
 import type { Theme } from '../theme.ts';
+
+/** The height of the chart in the detailed view of a column, in pixels. */
+export const DETAIL_HEIGHT = 380;
+
+/** A chart with this number of bars or fewer has a label on each bar in the detailed view. */
+const MAX_LABELLED_BARS = 40;
+
+/**
+ * The parts of a card in their places.
+ *
+ * In a small card, the parts are below each other: controls, chart, tables.
+ * In the detailed view, the large numbers are at the top, the chart is on
+ * the left, and the tables are on the right.
+ */
+export function CardLayout(props: { detailed: boolean; tiles?: Tile[]; controls?: ReactNode; main: ReactNode; side?: ReactNode }) {
+  return (
+    <>
+      {props.detailed && props.tiles && <StatTiles tiles={props.tiles} />}
+      {props.controls}
+      {/* "single": the card has no chart now, so the tables use the full width. */}
+      <div className={props.main && props.side ? 'card-body' : 'card-body single'}>
+        {props.main && <div className="card-main">{props.main}</div>}
+        {props.side && <div className="card-side">{props.side}</div>}
+      </div>
+    </>
+  );
+}
+
+/** A block with the size of a chart, for the time that the chart loads. The page then does not jump when the chart arrives. */
+export function ChartWait({ detailed, children }: { detailed: boolean; children: ReactNode }) {
+  return (
+    <div className={`skeleton chart-wait${detailed ? ' tall' : ''}`} role="status">
+      {children}
+    </div>
+  );
+}
 
 /** A table with a name column and a value column. */
 function StatsTable({ rows }: { rows: [string, ReactNode][] }) {
@@ -109,12 +146,22 @@ export interface ContinuousViewProps {
   onBins: (bins: number) => void;
   /** The user selected bins of the histogram. The board adds the chip to the dataset. */
   onFilter?: (chip: Chip) => void;
+  /** The number of different values, from the overview. The detailed view shows it. */
+  distinct?: number;
 }
 
-/** A number column with many values: a histogram and a table of statistics. */
+/**
+ * A number column with many values: a histogram and a table of statistics.
+ *
+ * In the detailed view, the histogram has an axis of numbers, a line at the
+ * mean and a line at the median, and a count on each bar.
+ */
 export function ContinuousView(props: ContinuousViewProps) {
   const { column, stats, histogram, edges, card, onChange } = props;
+  const detailed = card.expanded === true;
   const approx = stats.approximate ? '≈ ' : '';
+  const median = stats.percentiles.find((p) => p.p === 0.5)?.value;
+  const nulls = stats.rowCount - stats.nonNull;
   const bars = histogram && edges ? histogramBars(histogram, edges) : undefined;
   const label = (bar: { role: string; from?: number; to?: number }) =>
     bar.role === 'below' ? `Below ${formatNumber(bar.to as number)}` : bar.role === 'above' ? `Above ${formatNumber(bar.from as number)}` : `${formatNumber(bar.from as number)} to ${formatNumber(bar.to as number)}`;
@@ -142,45 +189,85 @@ export function ContinuousView(props: ContinuousViewProps) {
     ['Max', stats.max === undefined ? '—' : formatValue(stats.max)],
   ];
 
+  // The detailed view: an axis of numbers below the bars, and lines for the mean and the median.
+  // The bars "below" and "above" are one bin wide each, so the axis starts and ends one bin further.
+  const width = edges ? (edges.hi - edges.lo) / edges.bins : 0;
+  const lo = edges && bars?.[0]?.role === 'below' ? edges.lo - width : edges?.lo;
+  const hi = edges && bars?.[bars.length - 1]?.role === 'above' ? edges.hi + width : edges?.hi;
+  const inRange = (value: number | undefined): value is number => value !== undefined && lo !== undefined && hi !== undefined && value >= lo && value <= hi;
+  const detail =
+    detailed && bars && lo !== undefined && hi !== undefined
+      ? {
+          categoryName: column.name,
+          countName: 'Rows',
+          barLabels: bars.length <= MAX_LABELLED_BARS ? bars.map((b) => (b.count > 0 ? formatCount(b.count) : '')) : undefined,
+          numeric: {
+            lo,
+            hi,
+            markers: [
+              ...(inRange(stats.mean) ? [{ value: stats.mean, label: `Mean ${formatNumber(stats.mean)}` }] : []),
+              ...(inRange(median) ? [{ value: median, label: `Median ${formatNumber(median)}` }] : []),
+            ],
+          },
+        }
+      : undefined;
+
+  const tiles: Tile[] = [
+    { label: 'Count', value: formatCount(stats.nonNull) },
+    { label: 'Nulls', value: formatCount(nulls), note: formatPercent(nulls, stats.rowCount) },
+    ...(props.distinct !== undefined ? [{ label: 'Distinct', value: formatCount(props.distinct) }] : []),
+    { label: 'Mean', value: stats.mean === undefined ? '—' : formatNumber(stats.mean) },
+    { label: 'Median', value: median === undefined ? '—' : approx + formatNumber(median) },
+    { label: 'Std. deviation', value: stats.stddev === undefined ? '—' : formatNumber(stats.stddev) },
+    { label: 'Min', value: stats.min === undefined ? '—' : formatValue(stats.min) },
+    { label: 'Max', value: stats.max === undefined ? '—' : formatValue(stats.max) },
+  ];
+
   return (
-    <>
-      <div className="controls">
-        <label>
-          Bins{' '}
-          <input type="range" min={5} max={200} value={props.bins} onChange={(e) => props.onBins(Number(e.target.value))} aria-valuetext={`${props.bins} bins`} />{' '}
-          <output>{props.bins}</output>
-        </label>
-        <label>
-          <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
-        </label>
-        <label title="Show the range from the 1st to the 99th percentile">
-          <input type="checkbox" checked={card.clip === true} onChange={(e) => onChange({ clip: e.target.checked })} /> Clip to 1%–99%
-        </label>
-      </div>
-      {stats.nonNull === 0 ? (
-        <p className="status">All rows are null.</p>
-      ) : !bars ? (
-        <p className="status" role="status">
-          Loading the histogram…
-        </p>
-      ) : card.asTable ? (
-        <CountTable head="Range" rows={bars.map((b) => ({ label: label(b), count: b.count }))} total={stats.nonNull} onRow={onSelect && ((i) => select(i, i))} canFilter={(i) => bars[i]?.role === 'bin'} />
-      ) : (
-        <Chart
-          onSelect={onSelect}
-          range
-          label={`Histogram of ${column.name} with ${bars.length} bars.`}
-          option={barsOption(props.theme, {
-            labels: bars.map((b) => (b.role === 'below' ? 'below' : b.role === 'above' ? 'above' : formatNumber(b.from as number))),
-            counts: bars.map((b) => b.count),
-            tips: bars.map((b) => `${label(b)}\n${formatCount(b.count)} rows (${formatPercent(b.count, stats.nonNull)})`),
-            logScale: card.logScale,
-            gap: 4,
-          })}
-        />
-      )}
-      <StatsTable rows={rows} />
-    </>
+    <CardLayout
+      detailed={detailed}
+      tiles={tiles}
+      controls={
+        <div className="controls">
+          <label>
+            Bins{' '}
+            <input type="range" min={5} max={200} value={props.bins} onChange={(e) => props.onBins(Number(e.target.value))} aria-valuetext={`${props.bins} bins`} />{' '}
+            <output>{props.bins}</output>
+          </label>
+          <label>
+            <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
+          </label>
+          <label title="Show the range from the 1st to the 99th percentile">
+            <input type="checkbox" checked={card.clip === true} onChange={(e) => onChange({ clip: e.target.checked })} /> Clip to 1%–99%
+          </label>
+        </div>
+      }
+      main={
+        stats.nonNull === 0 ? (
+          <p className="status">All rows are null.</p>
+        ) : !bars ? (
+          <ChartWait detailed={detailed}>Loading the histogram…</ChartWait>
+        ) : card.asTable ? (
+          <CountTable head="Range" rows={bars.map((b) => ({ label: label(b), count: b.count }))} total={stats.nonNull} onRow={onSelect && ((i) => select(i, i))} canFilter={(i) => bars[i]?.role === 'bin'} />
+        ) : (
+          <Chart
+            onSelect={onSelect}
+            range
+            height={detailed ? DETAIL_HEIGHT : undefined}
+            label={`Histogram of ${column.name} with ${bars.length} bars.`}
+            option={barsOption(props.theme, {
+              labels: bars.map((b) => (b.role === 'below' ? 'below' : b.role === 'above' ? 'above' : formatNumber(b.from as number))),
+              counts: bars.map((b) => b.count),
+              tips: bars.map((b) => `${label(b)}\n${formatCount(b.count)} rows (${formatPercent(b.count, stats.nonNull)})`),
+              logScale: card.logScale,
+              gap: 4,
+              detail,
+            })}
+          />
+        )
+      }
+      side={<StatsTable rows={rows} />}
+    />
   );
 }
 
@@ -254,44 +341,71 @@ export function ValuesView(props: ValuesViewProps) {
     if (chip) props.onFilter?.(chip);
   };
 
+  const detailed = card.expanded === true;
+  const top = frequency.values[0];
+  const tiles: Tile[] = [
+    { label: 'Rows', value: formatCount(frequency.rowCount) },
+    { label: 'Distinct values', value: formatCount(props.distinct ?? frequency.values.length) },
+    { label: 'Nulls', value: formatCount(frequency.nulls), note: formatPercent(frequency.nulls, frequency.rowCount) },
+    ...(top ? [{ label: 'Most frequent', value: top.value, note: formatPercent(top.count, frequency.rowCount) }] : []),
+  ];
+  // A horizontal chart needs space for the label of each bar. The detailed view gives each bar more space.
+  const height = kind === 'category' ? Math.max(detailed ? 200 : 120, (detailed ? 70 : 40) + chartRows.length * (detailed ? 28 : 20)) : detailed ? DETAIL_HEIGHT : undefined;
+
   return (
-    <>
-      {kind === 'category' && (
-        <div className="controls">
-          <label>
-            Sort by{' '}
-            <select value={sortBy} onChange={(e) => onChange({ sortBy: e.target.value as 'count' | 'label' })}>
-              <option value="count">Count</option>
-              <option value="label">Label</option>
-            </select>
-          </label>
-        </div>
-      )}
-      {!card.asTable && (
-        <Chart
-          onSelect={props.onFilter && ((i) => filter(chartRows[i]))}
-          horizontal={kind === 'category'}
-          label={`${kind === 'discrete' ? 'Rows for each value' : 'Most frequent values'} of ${column.name}, ${chartRows.length} bars.`}
-          option={barsOption(props.theme, {
-            labels: chartRows.map((r) => r.label),
-            counts: chartRows.map((r) => r.count),
-            tips: chartRows.map((r) => `${r.label}\n${formatCount(r.count)} rows (${formatPercent(r.count, frequency.rowCount)})`),
-            horizontal: kind === 'category',
-          })}
-          // A horizontal chart needs space for the label of each bar.
-          height={kind === 'category' ? Math.max(120, 40 + chartRows.length * 20) : undefined}
-        />
-      )}
-      <div className="controls">
-        <input type="search" placeholder="Search values" aria-label="Search values" value={search} onChange={(e) => setSearch(e.target.value)} />
-        {hidden > 0 && (
-          <span className="count">
-            The table shows the {formatCount(frequency.values.length)} most frequent of {formatCount(props.distinct as number)} values.
-          </span>
-        )}
-      </div>
-      <FrequencyTable rows={tableRows} total={frequency.rowCount} onRow={props.onFilter && filter} />
-    </>
+    <CardLayout
+      detailed={detailed}
+      tiles={tiles}
+      controls={
+        kind === 'category' && (
+          <div className="controls">
+            <label>
+              Sort by{' '}
+              <select value={sortBy} onChange={(e) => onChange({ sortBy: e.target.value as 'count' | 'label' })}>
+                <option value="count">Count</option>
+                <option value="label">Label</option>
+              </select>
+            </label>
+          </div>
+        )
+      }
+      main={
+        !card.asTable && (
+          <Chart
+            onSelect={props.onFilter && ((i) => filter(chartRows[i]))}
+            horizontal={kind === 'category'}
+            label={`${kind === 'discrete' ? 'Rows for each value' : 'Most frequent values'} of ${column.name}, ${chartRows.length} bars.`}
+            option={barsOption(props.theme, {
+              labels: chartRows.map((r) => r.label),
+              counts: chartRows.map((r) => r.count),
+              tips: chartRows.map((r) => `${r.label}\n${formatCount(r.count)} rows (${formatPercent(r.count, frequency.rowCount)})`),
+              horizontal: kind === 'category',
+              detail: detailed
+                ? {
+                    categoryName: column.name,
+                    countName: 'Rows',
+                    barLabels: chartRows.length <= MAX_LABELLED_BARS ? chartRows.map((r) => `${formatCount(r.count)} (${formatPercent(r.count, frequency.rowCount)})`) : undefined,
+                  }
+                : undefined,
+            })}
+            height={height}
+          />
+        )
+      }
+      side={
+        <>
+          <div className="controls">
+            <input type="search" placeholder="Search values" aria-label="Search values" value={search} onChange={(e) => setSearch(e.target.value)} />
+            {hidden > 0 && (
+              <span className="count">
+                The table shows the {formatCount(frequency.values.length)} most frequent of {formatCount(props.distinct as number)} values.
+              </span>
+            )}
+          </div>
+          <FrequencyTable rows={tableRows} total={frequency.rowCount} onRow={props.onFilter && filter} />
+        </>
+      }
+    />
   );
 }
 
@@ -324,46 +438,67 @@ export function IdentifierView(props: IdentifierViewProps) {
   const { onFilter } = props;
   const selectLengths = onFilter && lengthEdges ? (first: number, last: number) => onFilter(chipForBins(ref, lengthEdges, first, last, 'length')) : undefined;
 
+  const detailed = props.card.expanded === true;
+  const nulls = rowCount - stats.nonNull;
+  const tiles: Tile[] = [
+    { label: 'Rows', value: formatCount(rowCount) },
+    { label: 'Distinct values', value: (props.approximate ? '≈ ' : '') + formatCount(distinct) },
+    { label: 'Percent unique', value: formatPercent(Math.min(distinct, stats.nonNull), stats.nonNull) },
+    { label: 'Nulls', value: formatCount(nulls), note: formatPercent(nulls, rowCount) },
+  ];
+
   return (
-    <>
-      <StatsTable
-        rows={[
-          ['Distinct values', (props.approximate ? '≈ ' : '') + formatCount(distinct)],
-          ['Percent unique', formatPercent(Math.min(distinct, stats.nonNull), stats.nonNull)],
-          ['Nulls', `${formatCount(rowCount - stats.nonNull)} (${formatPercent(rowCount - stats.nonNull, rowCount)})`],
-        ]}
-      />
-      <h3>Most repeated values</h3>
-      {!frequency ? (
-        <p className="status" role="status">
-          Loading…
-        </p>
-      ) : repeated.length === 0 ? (
-        <p className="status">No value occurs more than one time.</p>
-      ) : (
-        <CountTable head="Value" rows={repeated.map((v) => ({ label: v.value, count: v.count }))} total={rowCount} onRow={onFilter && ((i) => onFilter({ op: 'eq', column: ref, value: (repeated[i] as { value: string }).value }))} />
-      )}
-      <h3>Length of the values</h3>
-      {!bars ? (
-        <p className="status" role="status">
-          Loading…
-        </p>
-      ) : props.card.asTable ? (
-        <CountTable head="Characters" rows={bars.map((b) => ({ label: lengthLabel(b.from as number, b.to as number), count: b.count }))} total={stats.nonNull} onRow={selectLengths && ((i) => selectLengths(i, i))} />
-      ) : (
-        <Chart
-          onSelect={selectLengths}
-          range
-          label={`Histogram of the number of characters in the values of ${column.name}.`}
-          option={barsOption(props.theme, {
-            labels: bars.map((b) => lengthLabel(b.from as number, b.to as number)),
-            counts: bars.map((b) => b.count),
-            tips: bars.map((b) => `${lengthLabel(b.from as number, b.to as number)} characters\n${formatCount(b.count)} rows`),
-            gap: 4,
-          })}
-        />
-      )}
-    </>
+    <CardLayout
+      detailed={detailed}
+      tiles={tiles}
+      main={
+        <>
+          <h3>Length of the values</h3>
+          {!bars ? (
+            <ChartWait detailed={detailed}>Loading…</ChartWait>
+          ) : props.card.asTable ? (
+            <CountTable head="Characters" rows={bars.map((b) => ({ label: lengthLabel(b.from as number, b.to as number), count: b.count }))} total={stats.nonNull} onRow={selectLengths && ((i) => selectLengths(i, i))} />
+          ) : (
+            <Chart
+              onSelect={selectLengths}
+              range
+              height={detailed ? DETAIL_HEIGHT - 60 : undefined}
+              label={`Histogram of the number of characters in the values of ${column.name}.`}
+              option={barsOption(props.theme, {
+                labels: bars.map((b) => lengthLabel(b.from as number, b.to as number)),
+                counts: bars.map((b) => b.count),
+                tips: bars.map((b) => `${lengthLabel(b.from as number, b.to as number)} characters\n${formatCount(b.count)} rows`),
+                gap: 4,
+                detail: detailed
+                  ? { categoryName: 'Number of characters', countName: 'Rows', barLabels: bars.length <= MAX_LABELLED_BARS ? bars.map((b) => (b.count > 0 ? formatCount(b.count) : '')) : undefined }
+                  : undefined,
+              })}
+            />
+          )}
+        </>
+      }
+      side={
+        <>
+          <StatsTable
+            rows={[
+              ['Distinct values', (props.approximate ? '≈ ' : '') + formatCount(distinct)],
+              ['Percent unique', formatPercent(Math.min(distinct, stats.nonNull), stats.nonNull)],
+              ['Nulls', `${formatCount(nulls)} (${formatPercent(nulls, rowCount)})`],
+            ]}
+          />
+          <h3>Most repeated values</h3>
+          {!frequency ? (
+            <p className="status" role="status">
+              Loading…
+            </p>
+          ) : repeated.length === 0 ? (
+            <p className="status">No value occurs more than one time.</p>
+          ) : (
+            <CountTable head="Value" rows={repeated.map((v) => ({ label: v.value, count: v.count }))} total={rowCount} onRow={onFilter && ((i) => onFilter({ op: 'eq', column: ref, value: (repeated[i] as { value: string }).value }))} />
+          )}
+        </>
+      }
+    />
   );
 }
 
@@ -398,55 +533,83 @@ export function DateView(props: DateViewProps) {
         }
       : undefined;
 
+  const detailed = card.expanded === true;
+  const nulls = rowCount - stats.nonNull;
+  const earliest = hasDates ? formatValue(stats.min as string) : '—';
+  const latest = hasDates ? formatValue(stats.max as string) : '—';
+  const span = hasDates ? `${formatCount(spanDays(stats.min as string, stats.max as string))} days` : '—';
+  const empty = filled?.empty === undefined ? '—' : formatCount(filled.empty);
+  const tiles: Tile[] = [
+    { label: 'Earliest', value: earliest },
+    { label: 'Latest', value: latest },
+    { label: 'Span', value: span },
+    { label: `Empty ${grain}s`, value: empty },
+    { label: 'Nulls', value: formatCount(nulls), note: formatPercent(nulls, rowCount) },
+  ];
+
   return (
-    <>
-      <div className="controls">
-        <label>
-          Period{' '}
-          <select value={grain} onChange={(e) => onChange({ grain: e.target.value as Grain })}>
-            {GRAINS.map((g) => (
-              <option key={g} value={g}>
-                {g[0]?.toUpperCase() + g.slice(1)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
-        </label>
-      </div>
-      {!hasDates ? (
-        <p className="status">All rows are null.</p>
-      ) : !filled ? (
-        <p className="status" role="status">
-          Loading…
-        </p>
-      ) : card.asTable ? (
-        <CountTable head={`Start of the ${grain}`} rows={filled.periods.map((p) => ({ label: p.start, count: p.count }))} total={stats.nonNull} onRow={select && ((i) => select(i, i))} />
-      ) : (
-        <Chart
-          onSelect={select}
-          range
-          label={`Rows of ${column.name} for each ${grain}, ${filled.periods.length} periods.`}
-          option={barsOption(props.theme, {
-            labels: filled.periods.map((p) => p.start),
-            counts: filled.periods.map((p) => p.count),
-            tips: filled.periods.map((p) => `${grain[0]?.toUpperCase() + grain.slice(1)} of ${p.start}\n${formatCount(p.count)} rows`),
-            logScale: card.logScale,
-            gap: 10,
-          })}
+    <CardLayout
+      detailed={detailed}
+      tiles={tiles}
+      controls={
+        <div className="controls">
+          <label>
+            Period{' '}
+            <select value={grain} onChange={(e) => onChange({ grain: e.target.value as Grain })}>
+              {GRAINS.map((g) => (
+                <option key={g} value={g}>
+                  {g[0]?.toUpperCase() + g.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
+          </label>
+        </div>
+      }
+      main={
+        !hasDates ? (
+          <p className="status">All rows are null.</p>
+        ) : !filled ? (
+          <ChartWait detailed={detailed}>Loading…</ChartWait>
+        ) : card.asTable ? (
+          <CountTable head={`Start of the ${grain}`} rows={filled.periods.map((p) => ({ label: p.start, count: p.count }))} total={stats.nonNull} onRow={select && ((i) => select(i, i))} />
+        ) : (
+          <Chart
+            onSelect={select}
+            range
+            height={detailed ? DETAIL_HEIGHT : undefined}
+            label={`Rows of ${column.name} for each ${grain}, ${filled.periods.length} periods.`}
+            option={barsOption(props.theme, {
+              labels: filled.periods.map((p) => p.start),
+              counts: filled.periods.map((p) => p.count),
+              tips: filled.periods.map((p) => `${grain[0]?.toUpperCase() + grain.slice(1)} of ${p.start}\n${formatCount(p.count)} rows`),
+              logScale: card.logScale,
+              gap: 10,
+              detail: detailed
+                ? {
+                    categoryName: `${column.name} (start of the ${grain})`,
+                    countName: 'Rows',
+                    barLabels: filled.periods.length <= MAX_LABELLED_BARS ? filled.periods.map((p) => (p.count > 0 ? formatCount(p.count) : '')) : undefined,
+                  }
+                : undefined,
+            })}
+          />
+        )
+      }
+      side={
+        <StatsTable
+          rows={[
+            ['Earliest', earliest],
+            ['Latest', latest],
+            ['Span', span],
+            [`Empty ${grain}s`, empty],
+            ['Nulls', `${formatCount(nulls)} (${formatPercent(nulls, rowCount)})`],
+          ]}
         />
-      )}
-      <StatsTable
-        rows={[
-          ['Earliest', hasDates ? formatValue(stats.min as string) : '—'],
-          ['Latest', hasDates ? formatValue(stats.max as string) : '—'],
-          ['Span', hasDates ? `${formatCount(spanDays(stats.min as string, stats.max as string))} days` : '—'],
-          [`Empty ${grain}s`, filled?.empty === undefined ? '—' : formatCount(filled.empty)],
-          ['Nulls', `${formatCount(rowCount - stats.nonNull)} (${formatPercent(rowCount - stats.nonNull, rowCount)})`],
-        ]}
-      />
-    </>
+      }
+    />
   );
 }
 

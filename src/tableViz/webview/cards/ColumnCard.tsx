@@ -9,7 +9,7 @@ import { chooseGrain, makeEdges } from '../../core/bins.ts';
 import { kindsFor } from '../../core/derive.ts';
 import { detectKind } from '../../core/kinds.ts';
 import type { BoardSettings, Card, Chip, ColumnInfo, ColumnKind, Dataset, OverviewColumn } from '../../core/schema.ts';
-import { useDebounced, useResult, type Loadable } from '../hooks.ts';
+import { fresh, useDebounced, useLast, useResult, type Loadable } from '../hooks.ts';
 import { useTheme } from '../theme.ts';
 import { CardShell, type CardShellProps } from './CardShell.tsx';
 import { ComplexView, ContinuousView, DateView, IdentifierView, ValuesView } from './views.tsx';
@@ -34,6 +34,10 @@ export interface ColumnCardProps {
   overviewApproximate: boolean;
   /** The SQL statements that gave the overview numbers of the column. Some cards show those numbers. */
   overviewSql: string[];
+  /** true if the overview numbers belong to an older request while a newer request runs. */
+  overviewStale?: boolean;
+  /** true if the overview failed or was cancelled. No new overview numbers arrive until "Refresh". */
+  overviewStopped?: boolean;
   card: Card;
   settings: BoardSettings;
   onChange: (patch: Partial<Card>) => void;
@@ -55,8 +59,10 @@ interface KindProps extends ColumnCardProps {
  *
  * @param first  SQL statements to put before the SQL of the results.
  */
-function summarize(first: string[], ...states: Loadable<{ sql: string[]; approximate: boolean }>[]) {
+function summarize(props: KindProps, first: string[], ...states: Loadable<{ sql: string[]; approximate: boolean }, unknown>[]) {
   return {
+    // The card shows the numbers of an older request while a newer request runs.
+    stale: props.overviewStale === true || states.some((s) => s.status === 'done' && s.stale === true),
     sql: [...first, ...states.flatMap((s) => (s.status === 'done' ? s.result.sql : []))],
     approximate: states.some((s) => s.status === 'done' && s.result.approximate),
     error: states.map((s) => (s.status === 'error' ? s.error : undefined)).find((e) => e),
@@ -84,23 +90,29 @@ function ContinuousCard(props: KindProps) {
   }, [settled]);
 
   const result = stats.status === 'done' ? stats.result : undefined;
+  // The edges come from the newest statistics only. While new statistics load, the card keeps
+  // the old histogram on the screen and does not ask for a histogram with the old edges.
+  const current = fresh(stats);
   const edges = useMemo(() => {
-    if (!result || result.nonNull === 0) return undefined;
-    const first = result.percentiles[0];
-    const last = result.percentiles[result.percentiles.length - 1];
-    const [lo, hi] = card.clip && first && last ? [first.value, last.value] : [Number(result.min), Number(result.max)];
+    if (!current || current.nonNull === 0) return undefined;
+    const first = current.percentiles[0];
+    const last = current.percentiles[current.percentiles.length - 1];
+    const [lo, hi] = card.clip && first && last ? [first.value, last.value] : [Number(current.min), Number(current.max)];
     return makeEdges(lo, hi, settled);
-  }, [result, card.clip, settled]);
+  }, [current, card.clip, settled]);
   const histogram = useResult(edges ? { type: 'histogram', dataset, columns: [ref], edges } : undefined);
+  const hasRows = result !== undefined && result.nonNull > 0;
 
   return (
-    <CardShell {...props.shell} {...summarize([], stats, ...(edges ? [histogram] : []))} hasChart loading={stats.status === 'loading'}>
+    <CardShell {...props.shell} {...summarize(props, [], stats, ...(hasRows ? [histogram] : []))} hasChart loading={stats.status === 'loading'}>
       {result && (
         <ContinuousView
           column={column}
           stats={result}
-          histogram={histogram.status === 'done' ? histogram.result : undefined}
-          edges={edges}
+          histogram={hasRows && histogram.status === 'done' ? histogram.result : undefined}
+          // The edges of the histogram that is on the screen. They can be older than the edges of the request that runs.
+          edges={histogram.status === 'done' ? histogram.request.edges : edges}
+          distinct={props.stats.distinct}
           bins={bins}
           card={card}
           theme={theme}
@@ -119,7 +131,7 @@ function ValuesCard(props: KindProps & { valuesKind: 'discrete' | 'category' }) 
   const top = valuesKind === 'discrete' ? DISCRETE_VALUES : TABLE_VALUES;
   const frequency = useResult({ type: 'frequency', dataset, columns: [{ name: column.name, typeText: column.typeText }], top });
   return (
-    <CardShell {...props.shell} {...summarize([], frequency)} hasChart loading={frequency.status === 'loading'}>
+    <CardShell {...props.shell} {...summarize(props, [], frequency)} hasChart loading={frequency.status === 'loading'}>
       {frequency.status === 'done' && (
         <ValuesView
           column={column}
@@ -143,7 +155,7 @@ function IdentifierCard(props: KindProps) {
   const ref = { name: column.name, typeText: column.typeText };
   const frequency = useResult({ type: 'frequency', dataset, columns: [ref], top: REPEATED_VALUES });
   const lengthStats = useResult({ type: 'numericStats', dataset, columns: [ref], measure: 'length' });
-  const lengthResult = lengthStats.status === 'done' ? lengthStats.result : undefined;
+  const lengthResult = fresh(lengthStats);
   const edges = useMemo(() => {
     if (!lengthResult || lengthResult.nonNull === 0) return undefined;
     // A length is a whole number. One bin for each length, if there are 30 different lengths or fewer.
@@ -152,6 +164,8 @@ function IdentifierCard(props: KindProps) {
     return makeEdges(min, max + 1, Math.min(LENGTH_BINS, max - min + 1));
   }, [lengthResult]);
   const lengths = useResult(edges ? { type: 'histogram', dataset, columns: [ref], edges, measure: 'length' } : undefined);
+  // If the newest statistics tell that all values are null, there is no histogram. Do not show the one of an older request.
+  const hasLengths = edges !== undefined || lengthResult === undefined;
 
   // The distinct count of the overview can be an estimate. "Compute exactly" asks for the exact count of this column.
   const exact = useResult(card.exact ? { type: 'overview', dataset, columns: [ref], exact: true } : undefined);
@@ -161,7 +175,7 @@ function IdentifierCard(props: KindProps) {
   return (
     <CardShell
       {...props.shell}
-      {...summarize(exactStats ? [] : props.overviewSql, frequency, lengthStats, ...(edges ? [lengths] : []), ...(card.exact ? [exact] : []))}
+      {...summarize(props, exactStats ? [] : props.overviewSql, frequency, lengthStats, ...(edges ? [lengths] : []), ...(card.exact ? [exact] : []))}
       approximate={approximate}
       hasChart
       loading={false}
@@ -172,8 +186,8 @@ function IdentifierCard(props: KindProps) {
         stats={exactStats ?? props.stats}
         approximate={approximate}
         frequency={frequency.status === 'done' ? frequency.result : undefined}
-        lengths={lengths.status === 'done' ? lengths.result : undefined}
-        lengthEdges={edges}
+        lengths={hasLengths && lengths.status === 'done' ? lengths.result : undefined}
+        lengthEdges={lengths.status === 'done' ? lengths.request.edges : edges}
         card={card}
         theme={theme}
         onFilter={props.onFilter}
@@ -189,7 +203,7 @@ function DateCard(props: KindProps) {
   const grain = card.grain ?? (hasDates ? chooseGrain(stats.min as string, stats.max as string) : 'day');
   const dateCounts = useResult(hasDates ? { type: 'dateCounts', dataset, columns: [{ name: column.name, typeText: column.typeText }], grain } : undefined);
   return (
-    <CardShell {...props.shell} {...summarize(props.overviewSql, ...(hasDates ? [dateCounts] : []))} hasChart loading={false}>
+    <CardShell {...props.shell} {...summarize(props, props.overviewSql, ...(hasDates ? [dateCounts] : []))} hasChart loading={false}>
       <DateView
         column={column}
         rowCount={props.rowCount}
@@ -206,7 +220,12 @@ function DateCard(props: KindProps) {
 }
 
 export function ColumnCard(props: ColumnCardProps) {
-  const { column, stats, rowCount, card } = props;
+  const { column, card } = props;
+  // While new overview numbers load, the card keeps the numbers that it had. The card then stays on the screen.
+  const numbers = useLast(props.stats && props.rowCount !== undefined ? { stats: props.stats, rowCount: props.rowCount } : undefined);
+  const stats = numbers?.stats;
+  const rowCount = numbers?.rowCount;
+  const overviewStale = props.overviewStale === true || (numbers !== undefined && !props.stats && !props.overviewStopped);
   const detected = stats ? detectKind(column.typeText, stats.distinct, stats.nonNull) : undefined;
   const kinds = useMemo(() => {
     const allowed = kindsFor(column.typeText);
@@ -237,6 +256,7 @@ export function ColumnCard(props: ColumnCardProps) {
     ...props,
     stats,
     rowCount,
+    overviewStale,
     shell: { column, card, kind, detected, kinds, onChange: props.onChange, onClose: props.onClose, samplePercent: props.dataset.sample?.percent },
   };
   switch (kind) {
@@ -252,7 +272,7 @@ export function ColumnCard(props: ColumnCardProps) {
       return <DateCard {...kindProps} />;
     case 'complex':
       return (
-        <CardShell {...kindProps.shell} sql={props.overviewSql} approximate={false} hasChart={false} loading={false}>
+        <CardShell {...kindProps.shell} sql={props.overviewSql} approximate={false} hasChart={false} loading={false} stale={overviewStale}>
           <ComplexView column={column} rowCount={rowCount} stats={stats} />
         </CardShell>
       );

@@ -186,20 +186,23 @@ export function kindsFor(typeText: string): ColumnKind[] {
 }
 
 /**
- * Open the card of a column on a board.
+ * Open the detailed view of a column on a board.
  *
- * The new card goes first. It replaces the cards that are not pinned.
+ * The new card goes first, as a detailed view. It replaces the cards that
+ * are not pinned. If the column has a small card, that card becomes the
+ * detailed view.
  *
  * @example
  * // 'region' is pinned, 'amount' is not. The user opens 'channel'.
  * openCard([{ column: 'amount', pinned: false }, { column: 'region', pinned: true }], 'channel')
- * // [{ column: 'channel', pinned: false }, { column: 'region', pinned: true }]
+ * // [{ column: 'channel', pinned: false, expanded: true }, { column: 'region', pinned: true }]
  *
- * @returns The new list of cards. The same list if the column has a card.
+ * @returns The new list of cards. The same list if the column has a detailed view.
  */
 export function openCard(cards: Card[], column: string): Card[] {
-  if (cards.some((c) => c.column === column)) return cards;
-  return [{ column, pinned: false }, ...cards.filter((c) => c.pinned)];
+  const existing = cards.find((c) => c.column === column);
+  if (existing) return existing.expanded ? cards : cards.map((c) => (c === existing ? { ...c, expanded: true } : c));
+  return [{ column, pinned: false, expanded: true }, ...cards.filter((c) => c.pinned)];
 }
 
 /**

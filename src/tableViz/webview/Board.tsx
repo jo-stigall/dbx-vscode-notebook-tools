@@ -18,7 +18,7 @@ import { useDrifts } from './compare/useCompare.ts';
 import { DatasetBar } from './DatasetBar.tsx';
 import { formatBytes, formatCount, formatTime } from './format.ts';
 import { useResult } from './hooks.ts';
-import { OverviewTable, overviewRows, useOverview, type Sort } from './Overview.tsx';
+import { EMPTY_OVERVIEW, OverviewTable, overviewRows, useOverview, type Sort } from './Overview.tsx';
 import { loadState, saveState, send } from './rpc.ts';
 
 /**
@@ -33,6 +33,9 @@ function profileLabel(profile: string): string {
   if (profile.startsWith('@token:')) return profile.slice(7).replace(/^https?:\/\//, '');
   return profile;
 }
+
+/** Tell if two datasets read the same table with the same login. */
+const sameTable = (x: Dataset, y: Dataset) => x.profile === y.profile && JSON.stringify(x.table) === JSON.stringify(y.table);
 
 /** One fact in the header, for example "Rows: 110,000". */
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
@@ -53,8 +56,10 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
   const [datasetB, setDatasetB] = useState<Dataset | undefined>(initial.b);
   const datasets = useMemo<BoardDatasets>(() => ({ a: dataset, ...(datasetB ? { b: datasetB } : {}) }), [dataset, datasetB]);
 
+  // While the details load again (after a new filter or "Refresh"), the board keeps the details that it had.
+  // The columns and the cards then stay on the screen. Details of a different table are never used.
   const details = useResult({ type: 'tableDetails', dataset });
-  const facts = details.status === 'done' ? details.result : undefined;
+  const facts = details.status === 'done' && sameTable(details.request.dataset, dataset) ? details.result : undefined;
   const columns = facts?.columns;
 
   // All queries read the Delta version that the table had when the board read its details.
@@ -69,7 +74,7 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
 
   // Compare mode: the same steps for dataset B. Each request names one dataset, so the answers for A stay when B changes.
   const detailsB = useResult(datasetB ? { type: 'tableDetails', dataset: datasetB } : undefined);
-  const factsB = datasetB && detailsB.status === 'done' ? detailsB.result : undefined;
+  const factsB = datasetB && detailsB.status === 'done' && sameTable(detailsB.request.dataset, datasetB) ? detailsB.result : undefined;
   const versionB = factsB?.version;
   const pinnedB = useMemo<Dataset | undefined>(
     () => (datasetB && versionB && !datasetB.version ? { ...datasetB, version: { kind: 'version', n: versionB } } : datasetB),
@@ -81,7 +86,8 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
     [columns, factsB, settings.matchColumnsCaseSensitive]
   );
   const [asText, setAsText] = useState<string[]>(saved?.asText ?? []);
-  const drifts = useDrifts(pinned, pinnedB ?? pinned, schema?.pairs ?? [], overview, overviewB, asText);
+  // The drift of the new datasets comes from the new numbers only, not from old numbers that are still on the screen.
+  const drifts = useDrifts(pinned, pinnedB ?? pinned, schema?.pairs ?? [], overview.stale ? EMPTY_OVERVIEW : overview, overviewB.stale ? EMPTY_OVERVIEW : overviewB, asText);
 
   const [search, setSearch] = useState(saved?.ui?.search ?? '');
   // In compare mode, the columns that changed most come first.
@@ -104,14 +110,19 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
   const pairRows = useMemo(() => (schema ? compareRows(schema, overview, overviewB, drifts, search, sort) : []), [schema, overview, overviewB, drifts, search, sort]);
   const open = useMemo(() => new Set(cards.map((c) => c.column)), [cards]);
 
-  // When the user opens a card, bring the cards into view.
+  // When the user opens a column, move the page to its card. `n` changes at each click, so a second click on the same column also moves the page.
   const cardsElement = useRef<HTMLDivElement>(null);
-  const firstCard = cards[0]?.column;
-  const mounted = useRef(false);
+  const [opened, setOpened] = useState<{ column: string; n: number }>();
+  const openColumn = (column: string) => {
+    setCards((list) => openCard(list, column));
+    setOpened((prev) => ({ column, n: (prev?.n ?? 0) + 1 }));
+  };
   useEffect(() => {
-    if (mounted.current && firstCard) cardsElement.current?.scrollIntoView({ block: 'nearest' });
-    mounted.current = true;
-  }, [firstCard]);
+    if (!opened) return;
+    const card = Array.from(cardsElement.current?.querySelectorAll<HTMLElement>('[data-card]') ?? []).find((el) => el.dataset.card === opened.column);
+    const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card?.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
+  }, [opened]);
 
   const name = displayTableName(dataset.table);
   if (details.status === 'error') {
@@ -189,6 +200,8 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
                   rowsA={overview.rowCount}
                   rowsB={overviewB.rowCount}
                   drift={drifts.get(pair.a.name) ?? { status: 'loading' }}
+                  overviewStale={overview.stale === true || overviewB.stale === true}
+                  overviewStopped={Boolean(overview.error || overview.cancelled || overviewB.error || overviewB.cancelled)}
                   card={card}
                   settings={settings}
                   onChange={setCard(card.column)}
@@ -207,7 +220,7 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
         )}
 
         {toolbar(pairRows.length, schema?.pairs.length, 'columns that A and B have')}
-        <CompareTable rows={pairRows} a={overview} b={overviewB} open={open} onOpen={(column) => setCards((list) => openCard(list, column))} />
+        <CompareTable rows={pairRows} a={overview} b={overviewB} open={open} onOpen={openColumn} />
       </main>
     );
   }
@@ -294,6 +307,8 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
                 rowCount={overview.rowCount}
                 overviewApproximate={overview.approximate}
                 overviewSql={overview.sql.get(column.name) ?? []}
+                overviewStale={overview.stale}
+                overviewStopped={Boolean(overview.error || overview.cancelled)}
                 card={card}
                 settings={settings}
                 onChange={setCard(card.column)}
@@ -306,7 +321,7 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
       )}
 
       {toolbar(rows.length, columns?.length, 'columns')}
-      <OverviewTable dataset={pinned} rows={rows} overview={overview} open={open} onOpen={(column) => setCards((list) => openCard(list, column))} />
+      <OverviewTable dataset={pinned} rows={rows} overview={overview} open={open} onOpen={openColumn} />
     </main>
   );
 }

@@ -300,6 +300,13 @@ export const cardSchema = z.strictObject({
   column: z.string(),
   /** true: the card stays on the board when you open a different column. */
   pinned: z.boolean(),
+  /**
+   * true: the card is the detailed view of the column. It uses the full
+   * width of the board, and its chart is larger and has axis titles, labels
+   * on the bars, and lines for the mean and the median.
+   * false: a small card, so that several cards fit side by side.
+   */
+  expanded: z.boolean().optional(),
   /** The kind that the user selected. Not set: the feature decides the kind. */
   kind: columnKindSchema.optional(),
   bins: z.number().int().min(5).max(200).optional(),

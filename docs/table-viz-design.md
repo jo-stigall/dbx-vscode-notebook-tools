@@ -349,6 +349,74 @@ behaves in an esbuild bundle, and all live queries.
   linter, and it builds the install file with `scripts/package.py`, not
   with `vsce` (question 5).
 
+## Decisions in version 0.2.0: the detailed view and a board that does not go empty
+
+- **A card has two sizes.** `expanded: true` in the settings of a card
+  makes the card the detailed view of its column. The field is optional, so
+  a saved view of version 0.1.0 is still valid; its cards are small.
+  `openCard()` gives a new card `expanded: true`. The pin button sets
+  `expanded: false`, because the purpose of a pin is to put cards side by
+  side.
+- **The detailed view adds no query.** The large numbers come from the
+  results that the small card also uses. Thus a detailed view costs the
+  same on Databricks as a small card.
+- **Old results stay while new results load.** `useResult()` gives the last
+  result with `stale: true` while the next request runs, together with the
+  request that the result answers. A component that makes a request from a
+  result (for example, the bins of a histogram from the statistics) uses
+  `fresh()`, which gives the result only if it is not old. Thus no request
+  is made from old numbers. A chart uses the bins of the request that its
+  result answers (`state.request.edges`), not the bins of the request that
+  runs.
+- **A and B change together.** In compare mode, the answer for A and the
+  answer for B arrive at different times. `useMatched()` in
+  `CompareCard.tsx` keeps the last pair of answers that have the same bins
+  (or the same period) until the new pair is complete. A chart never shows
+  A with new bins next to B with old bins.
+- **The board keeps the table details while they load again.** After a new
+  filter or "Refresh", the columns and the cards stay on the screen, and
+  the requests for the new numbers start immediately with the Delta version
+  that the board knows. Before, the board waited for the new table details
+  first. The cost: if the table got a new version in that short time, the
+  board sends the requests a second time with the new version, and the
+  first requests are cancelled. The numbers on the screen are then correct;
+  only some queries started for nothing. Details of a different table are
+  never used (`sameTable()` in `Board.tsx`).
+- **The overview shows the old numbers until the first new batch arrives**
+  (`stale` in `OverviewState`). The thumbnails use the dataset that the
+  numbers of the row belong to (`OverviewState.dataset`), so they send no
+  request that mixes the new filter with old numbers. In a table with more
+  than 25 columns, a row of a later batch shows "…" until its batch arrives,
+  as before; a card of such a column keeps its numbers (`useLast()`).
+- **A drift score is computed from new numbers only.** While an overview is
+  old, `useDrifts()` gets an empty overview. It keeps the old score of each
+  pair, marked `stale`, until the new score of that pair is here. The rows
+  of the table thus keep their sequence, and an old score shows dimmed.
+- **Charts move with fixed ids.** Each axis and each series of a chart has a
+  fixed id. `Chart.tsx` compares the "shape" of the new chart (axis types,
+  series ids, and which parts have a title or labels) with the shape of the
+  old chart. Same shape: `setOption` with `replaceMerge`, and ECharts moves
+  the bars. Different shape: the chart is drawn new. The shape has the
+  titles and labels because ECharts keeps a setting of the old chart that
+  the new chart does not set; without that, a card that goes from detailed
+  to small kept its bar labels.
+- **The axis of numbers of a histogram is a second axis.** The bars stay on
+  the category axis, so a click and a drag still give the positions of the
+  bars. The second axis has the type "value" and the range of the bins. The
+  lines for the mean and the median belong to an empty series on that
+  axis, so they are at their exact positions. The bars "below" and "above"
+  of a clipped histogram are one bin wide each, so the axis starts and ends
+  one bin further.
+- **Motion obeys the operating system.** With "reduce motion" set, the
+  stylesheet turns all animations and transitions off, the charts get
+  `animation: false`, and the page moves to a card without a smooth scroll.
+- **Not seen with my eyes:** the smoothness of the animations. The browser
+  pane of the test page was hidden during the work, and a hidden page
+  paints no frames. I checked the states (the classes `stale` and
+  `expanded`, `aria-busy`, the numbers before and after a filter) with
+  scripts in the page, and the layout in screenshots. The tests in VS Code
+  do not look at the page of a board.
+
 ## Proposals
 
 These are ideas. None is built.

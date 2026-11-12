@@ -64,7 +64,7 @@ Without the extension, VS Code shows this file as text. With the extension:
 3. Install it in VS Code:
 
    ```bash
-   code --install-extension dbx-notebook-0.1.0.vsix
+   code --install-extension dbx-notebook-0.2.0.vsix
    ```
 
 A computer that only installs the `.vsix` file does not need Node.js. To try
@@ -250,10 +250,20 @@ The view reads the catalog with the REST API. It never starts a warehouse.
 
 ### Use the board
 
-![Detail cards for a number column and a column with few values](docs/images/cards-number-discrete-dark.jpg)
+![The detailed view of a number column: large numbers, a histogram with labels, and a table of statistics](docs/images/detail-number-dark.jpg)
 
-Click the name of a column to open its detail card. The card shows a chart
-and a table that fit the column:
+Click the row of a column to open its detailed view. The detailed view uses
+the full width of the board. It shows:
+
+- **A row of large numbers:** the facts that you look for first. For a
+  number column, these are the count, the nulls, the distinct count, the
+  mean, the median, the standard deviation, the minimum and the maximum.
+- **A large chart** with a title on each axis and a number on each bar. The
+  histogram of a number column also has a line at the mean and a line at
+  the median.
+- **The tables of the column,** next to the chart.
+
+The chart and the tables fit the column:
 
 | Column | The card shows |
 |---|---|
@@ -263,9 +273,23 @@ and a table that fit the column:
 | A date | The number of rows in each day, week, month or year. |
 
 On each card you can change how the feature reads the column (for example, a
-postal code is a category, not a number), show the chart as a table, show the
-SQL behind the numbers, and pin the card so that it stays next to the next
-card that you open.
+postal code is a category, not a number), show the chart as a table, and
+show the SQL behind the numbers.
+
+To look at two or more columns together, pin a card. A pinned card becomes
+small and stays on the board when you open the next column. Small cards sit
+side by side:
+
+![Small cards for a number column and a column with few values](docs/images/cards-number-discrete-dark.jpg)
+
+The button with the screen icon changes a card from small to detailed and
+back.
+
+While a query runs, the board keeps the old numbers on the screen and shows
+them dimmed. A thin line moves along the top of a card that waits for new
+numbers. When the new numbers arrive, the bars of a chart move to their new
+heights. If your operating system is set to "reduce motion", the board
+shows no animation.
 
 Above the cards:
 

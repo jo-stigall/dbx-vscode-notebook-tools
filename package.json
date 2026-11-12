@@ -2,7 +2,7 @@
   "name": "dbx-notebook",
   "displayName": "Databricks Source Notebooks",
   "description": "Open Databricks .py source notebooks in the native notebook UI and run cells on a cluster.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "local",
   "license": "UNLICENSED",
   "private": true,

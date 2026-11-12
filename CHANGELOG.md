@@ -3,6 +3,35 @@
 **Summary:** This file lists what changed in each version of the extension,
 newest first.
 
+## 0.2.0 (2026-11-12)
+
+### Added
+
+- **The detailed view of a column.** A click on the row of a column opens a
+  view that uses the full width of the board: a row of large numbers (for
+  example count, nulls, mean and median), a large chart with a title on
+  each axis and a number on each bar, and the tables of the column next to
+  the chart. The histogram of a number column has a line at the mean and a
+  line at the median. Compare mode has the same view, with the drift score
+  at the top.
+- **A button on each card** that changes the card from small to detailed and
+  back.
+
+### Changed
+
+- **The board keeps the old numbers on the screen while a query runs.**
+  Before, the cards and the table became empty after each new filter and
+  each "Refresh". Now the old numbers stay, dimmed, until the new numbers
+  arrive, and a thin line at the top of a card shows that a query runs.
+- **Charts move.** When the numbers change, the bars move to their new
+  heights. A new card and a new filter chip fade in. The page moves to the
+  card that you opened. The board shows no animation if your operating
+  system is set to "reduce motion".
+- **A new card opens as the detailed view.** A pinned card becomes small, so
+  that pinned cards still sit side by side.
+- **The full row of the overview opens the column,** not only the name.
+- A saved view of version 0.1.0 opens as before. Its cards are small.
+
 ## 0.1.0 (2026-11-12)
 
 ### Added

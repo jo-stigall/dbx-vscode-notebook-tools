@@ -16,6 +16,9 @@
  * `large=1` makes the board ask before it reads all rows of the table.
  * `kind=identifier` sets the kind of the first card, `astable=1` shows its
  * chart as a table, and `sql=1` shows the SQL of each card.
+ * `detail=1` shows the first card as the detailed view of its column.
+ * `delay=800` makes each answer arrive 800 ms late, so that a person can see
+ * how the page looks while it loads.
  */
 import { parseTableName } from '../../../src/tableViz/core/names.ts';
 import { createDispatcher } from '../../../src/tableViz/core/profiler.ts';
@@ -32,7 +35,11 @@ const datasets: BoardDatasets = { a: { profile: 'Demo', table }, ...(tableB ? { 
 let approved = params.get('confirm') !== '1';
 const sent: unknown[] = [];
 const profiler = new DemoProfiler();
-const post = (message: ToWebview) => window.postMessage(message, '*');
+const delay = Number(params.get('delay')) || 0;
+const post = (message: ToWebview) => {
+  if (delay > 0 && message.type !== 'init') setTimeout(() => window.postMessage(message, '*'), delay);
+  else window.postMessage(message, '*');
+};
 const dispatcher = createDispatcher({
   profilerFor: () => profiler,
   post,
@@ -60,7 +67,8 @@ const cards: Card[] = (params.get('cards') ?? '')
   .filter(Boolean)
   .map((column, i) => ({
     column,
-    pinned: true,
+    pinned: !(i === 0 && params.get('detail') === '1'),
+    ...(i === 0 && params.get('detail') === '1' ? { expanded: true } : {}),
     ...(i === 0 && kind.success ? { kind: kind.data } : {}),
     ...(i === 0 && params.get('astable') === '1' ? { asTable: true } : {}),
     ...(params.get('sql') === '1' ? { showSql: true } : {}),

@@ -69,8 +69,38 @@ export interface CardShellProps {
   cancelled?: boolean;
   /** Set if the dataset is a sample: the percent of the rows that the queries read. */
   samplePercent?: number;
+  /** true if the card shows the numbers of an older request while a newer request runs. The card then shows them dimmed. */
+  stale?: boolean;
   error?: RequestError;
   children?: ReactNode;
+}
+
+/** One number in the row of large numbers at the top of a detailed view. */
+export interface Tile {
+  label: string;
+  value: ReactNode;
+  /** A second, smaller line. Example: the percent that belongs to a count. */
+  note?: string;
+}
+
+/**
+ * The row of large numbers at the top of a detailed view: the facts that a
+ * person looks for first, such as the count, the nulls and the mean.
+ */
+export function StatTiles({ tiles }: { tiles: Tile[] }) {
+  return (
+    <dl className="tiles">
+      {tiles.map((tile) => (
+        <div className="tile" key={tile.label}>
+          <dt>{tile.label}</dt>
+          <dd>
+            {tile.value}
+            {tile.note && <span className="tile-note">{tile.note}</span>}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 export function CardShell(props: CardShellProps) {
@@ -82,8 +112,18 @@ export function CardShell(props: CardShellProps) {
     if (section.current) action(section.current);
     if (menu.current) menu.current.open = false;
   };
+  const detailed = card.expanded === true;
+  // A request runs: the first one of the card, or a newer one while the card shows older numbers.
+  const busy = (props.loading || props.stale === true) && !props.error && !props.cancelled;
   return (
-    <section className="card" aria-label={`Column ${column.name}`} ref={section}>
+    <section
+      className={`card${detailed ? ' expanded' : ''}${props.stale ? ' stale' : ''}`}
+      aria-label={`Column ${column.name}`}
+      aria-busy={busy}
+      data-card={column.name}
+      ref={section}
+    >
+      {busy && <div className="busy-bar" aria-hidden="true" />}
       <header className="card-header">
         <h2>{column.name}</h2>
         <span className="type">{column.typeText}</span>
@@ -146,10 +186,16 @@ export function CardShell(props: CardShellProps) {
         </details>
         <IconButton icon="code" label={card.showSql ? 'Hide SQL' : 'Show SQL'} pressed={card.showSql === true} onClick={() => onChange({ showSql: !card.showSql })} />
         <IconButton
+          icon={detailed ? 'screen-normal' : 'screen-full'}
+          label={detailed ? 'Show as a small card' : 'Show the detailed view'}
+          onClick={() => onChange({ expanded: !detailed })}
+        />
+        <IconButton
           icon={card.pinned ? 'pinned' : 'pin'}
           label={card.pinned ? 'Unpin the card' : 'Pin the card to the board'}
           pressed={card.pinned}
-          onClick={() => onChange({ pinned: !card.pinned })}
+          // A pinned card becomes small, so that it fits next to the detailed view of the next column.
+          onClick={() => onChange(card.pinned ? { pinned: false } : { pinned: true, expanded: false })}
         />
         <IconButton icon="close" label="Close the card" onClick={props.onClose} />
         </div>
@@ -158,11 +204,11 @@ export function CardShell(props: CardShellProps) {
       {props.error && <ErrorPanel error={props.error} />}
       {props.cancelled && !props.error && <p className="status">Cancelled. Click "Refresh" to run the queries again.</p>}
       {props.loading && !props.error && !props.cancelled && (
-        <p className="status" role="status">
+        <div className="skeleton card-wait" role="status">
           {props.progress === 'queued' ? 'Waiting for a free place on Databricks…' : 'Loading…'}
-        </p>
+        </div>
       )}
-      {props.children}
+      <div className="card-content">{props.children}</div>
 
       {props.approximate && (
         <p className="approx-note">

@@ -4,7 +4,7 @@
  * The page asks for the numbers of 25 columns at a time, so that one scan of
  * the table serves many columns. Each row fills in when its numbers arrive.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { detectKind } from '../core/kinds.ts';
 import type { ColumnInfo, ColumnKind, Dataset, OverviewColumn, RequestOf } from '../core/schema.ts';
 import { KIND_LABELS } from './cards/CardShell.tsx';
@@ -28,12 +28,28 @@ export interface OverviewState {
   /** Column name -> the SQL statements that gave the overview numbers of the column. */
   sql: Map<string, string[]>;
   error?: RequestError;
+  /** true if the user cancelled a request of the overview. No more numbers arrive until "Refresh". */
+  cancelled?: boolean;
+  /** The dataset that the numbers belong to. Not set before the first numbers arrive. */
+  dataset?: Dataset;
+  /**
+   * true if the numbers belong to an older dataset while the numbers of the
+   * new dataset load. The page shows them dimmed. Do not compute new results
+   * from them.
+   */
+  stale?: boolean;
 }
 
-const EMPTY: OverviewState = { stats: new Map(), approximate: false, sql: new Map() };
+/** An overview with no numbers. */
+export const EMPTY_OVERVIEW: OverviewState = { stats: new Map(), approximate: false, sql: new Map() };
+const EMPTY = EMPTY_OVERVIEW;
 
 /**
  * Get the overview numbers of all columns, one batch at a time.
+ *
+ * When the dataset changes (for example, the user adds a filter), the hook
+ * gives the numbers of the old dataset with `stale: true` until the first
+ * numbers of the new dataset arrive. The table then does not go empty.
  *
  * @param columns  The columns of the table. Pass undefined to send nothing, for example before the user permits the scan of a large table.
  */
@@ -62,12 +78,12 @@ export function useOverview(dataset: Dataset, columns: ColumnInfo[] | undefined)
             }
             return {
               key,
-              value: { ...old, stats, sql, rowCount: result.rowCount, approximate: old.approximate || result.approximate, asOf: old.asOf ?? result.asOf },
+              value: { ...old, dataset, stats, sql, rowCount: result.rowCount, approximate: old.approximate || result.approximate, asOf: old.asOf ?? result.asOf },
             };
           });
         },
         (error: RequestError) => {
-          if (current && !error.cancelled) setState((prev) => ({ key, value: { ...(prev.key === key ? prev.value : EMPTY), error } }));
+          if (current) setState((prev) => ({ key, value: { ...(prev.key === key ? prev.value : EMPTY), ...(error.cancelled ? { cancelled: true } : { error }) } }));
         }
       );
     }
@@ -77,7 +93,26 @@ export function useOverview(dataset: Dataset, columns: ColumnInfo[] | undefined)
     };
     // `key` is the dataset and the columns as text.
   }, [key]);
-  return state.key === key ? state.value : EMPTY;
+
+  const value = state.key === key ? state.value : EMPTY;
+  // The last overview that had numbers, to show while the next one loads.
+  const last = useRef<OverviewState | undefined>(undefined);
+  if (value.rowCount !== undefined) last.current = value;
+  else if (value.error || value.cancelled || !columns) last.current = undefined; // Do not show old numbers below an error, or after "Cancel".
+  if (value.rowCount === undefined && last.current) return { ...last.current, stale: true };
+  return value;
+}
+
+/**
+ * Make the click function of a table row: it opens the column.
+ *
+ * A person who selects the name of a column with the mouse, to copy it,
+ * also makes a click. That click opens nothing.
+ */
+export function rowClick(onOpen: (column: string) => void, column: string): () => void {
+  return () => {
+    if (!window.getSelection()?.toString()) onOpen(column);
+  };
 }
 
 /** A small bar that shows a part of a total. The text next to it gives the same number. */
@@ -135,7 +170,7 @@ export interface OverviewTableProps {
 export function OverviewTable({ dataset, rows, overview, open, onOpen }: OverviewTableProps) {
   const approx = overview.approximate ? '≈ ' : '';
   return (
-    <table className="columns">
+    <table className={overview.stale ? 'columns stale' : 'columns'} aria-busy={overview.stale === true}>
       <thead>
         <tr>
           <th scope="col">Column</th>
@@ -152,9 +187,10 @@ export function OverviewTable({ dataset, rows, overview, open, onOpen }: Overvie
       </thead>
       <tbody>
         {rows.map(({ column, stats, nulls, kind }) => (
-          <tr key={column.name} className={open.has(column.name) ? 'selected' : undefined}>
+          // A click at any place in the row opens the column. The button in the row is for the keyboard; its click also arrives here.
+          <tr key={column.name} className={open.has(column.name) ? 'selected' : undefined} onClick={rowClick(onOpen, column.name)}>
             <th scope="row" className="name">
-              <button type="button" className="link" aria-expanded={open.has(column.name)} onClick={() => onOpen(column.name)}>
+              <button type="button" className="link" aria-expanded={open.has(column.name)} title="Show the detailed view of this column">
                 {column.name}
               </button>
               {column.partition && (
@@ -176,7 +212,8 @@ export function OverviewTable({ dataset, rows, overview, open, onOpen }: Overvie
             </td>
             <td className="num">{!stats ? '…' : stats.distinct === undefined ? '—' : approx + formatCount(stats.distinct)}</td>
             <td>
-              <Thumbnail dataset={dataset} column={column} stats={stats} kind={kind} />
+              {/* The thumbnail asks for the dataset that the numbers of the row belong to. */}
+              <Thumbnail dataset={overview.dataset ?? dataset} column={column} stats={stats} kind={kind} />
             </td>
           </tr>
         ))}

@@ -14,7 +14,7 @@ import { comparedValues, type ComparedValue } from '../../core/compare.ts';
 import { chipForBins, chipForPeriods, chipForValue, sharedPeriods, spanDays } from '../../core/derive.ts';
 import type { Drift } from '../../core/drift.ts';
 import type { BinEdges, Card, Chip, ColumnRef, Grain, OverviewColumn, ResultOf } from '../../core/schema.ts';
-import { RowFilter } from '../cards/views.tsx';
+import { CardLayout, ChartWait, DETAIL_HEIGHT, RowFilter } from '../cards/views.tsx';
 import { Chart } from '../Chart.tsx';
 import { formatCount, formatNumber, formatPercent, formatStat, formatValue } from '../format.ts';
 import { barsOption, compareBarsOption } from '../options.ts';
@@ -93,17 +93,31 @@ export interface PairViewProps {
   range?: boolean;
   /** Returns false for a row that cannot be a filter, for example "Other". */
   canFilter?: (index: number) => boolean;
+  /** The title of the axis that has the bars, in the detailed view. Example: the name of the column. */
+  categoryName?: string;
 }
 
-/** A chart of A and B for the same rows, or the same numbers as a table. */
-export function PairView({ rows, totalA, totalB, head, label, card, theme, horizontal, onSelect, range, canFilter }: PairViewProps) {
+/** A chart with this number of rows or fewer has a label on each bar in the detailed view. Each row has two bars. */
+const MAX_LABELLED_ROWS = 12;
+
+/**
+ * A chart of A and B for the same rows, or the same numbers as a table.
+ *
+ * In the detailed view (`card.expanded`), the chart is larger, the axes
+ * have titles, and a chart with few bars has a number on each bar.
+ */
+export function PairView({ rows, totalA, totalB, head, label, card, theme, horizontal, onSelect, range, canFilter, categoryName }: PairViewProps) {
   const share = (count: number, total: number) => (total === 0 ? 0 : (count / total) * 100);
   const percent = !card.rawCounts;
+  const detailed = card.expanded === true;
   const a = rows.map((r) => (percent ? share(r.a, totalA) : r.a));
   const b = rows.map((r) => (percent ? share(r.b, totalB) : r.b));
   const axisFormat = percent ? (value: number) => `${formatNumber(value)}%` : undefined;
   const tips = rows.map((r) => `${r.label}\nA: ${formatCount(r.a)} rows (${formatPercent(r.a, totalA)})\nB: ${formatCount(r.b)} rows (${formatPercent(r.b, totalB)})`);
-  const height = horizontal ? Math.max(140, 60 + rows.length * 26) : undefined;
+  const height = horizontal ? Math.max(detailed ? 220 : 140, (detailed ? 80 : 60) + rows.length * (detailed ? 36 : 26)) : detailed ? DETAIL_HEIGHT : undefined;
+  const detail = detailed ? { categoryName, countName: percent ? 'Percent of the rows of the dataset' : 'Rows' } : undefined;
+  const barLabel = (value: number) => (value === 0 ? '' : percent ? `${value.toFixed(1)}%` : formatCount(value));
+  const labelled = detailed && rows.length <= MAX_LABELLED_ROWS;
 
   if (card.asTable) {
     return (
@@ -163,7 +177,18 @@ export function PairView({ rows, totalA, totalB, head, label, card, theme, horiz
           horizontal={horizontal}
           label={`${label} Dataset ${name}.`}
           height={height}
-          option={barsOption(theme, { labels: rows.map((r) => r.label), counts: values, tips, logScale: card.logScale, horizontal, gap: 10, color: name === 'A' ? theme.a : theme.b, max: card.logScale ? undefined : max, axisFormat })}
+          option={barsOption(theme, {
+            labels: rows.map((r) => r.label),
+            counts: values,
+            tips,
+            logScale: card.logScale,
+            horizontal,
+            gap: 10,
+            color: name === 'A' ? theme.a : theme.b,
+            max: card.logScale ? undefined : max,
+            axisFormat,
+            detail: detail && { ...detail, barLabels: labelled ? values.map(barLabel) : undefined },
+          })}
         />
       </div>
     );
@@ -174,7 +199,29 @@ export function PairView({ rows, totalA, totalB, head, label, card, theme, horiz
       </div>
     );
   }
-  return <Chart onSelect={onSelect} range={range} horizontal={horizontal} label={`${label} Dataset A and dataset B.`} height={height} option={compareBarsOption(theme, { labels: rows.map((r) => r.label), a, b, tips, nameA: 'A', nameB: 'B', logScale: card.logScale, horizontal, axisFormat })} />;
+  return (
+    <Chart
+      onSelect={onSelect}
+      range={range}
+      horizontal={horizontal}
+      label={`${label} Dataset A and dataset B.`}
+      height={height}
+      option={compareBarsOption(theme, {
+        labels: rows.map((r) => r.label),
+        a,
+        b,
+        tips,
+        nameA: 'A',
+        nameB: 'B',
+        logScale: card.logScale,
+        horizontal,
+        axisFormat,
+        detail,
+        labelsA: labelled ? a.map(barLabel) : undefined,
+        labelsB: labelled ? b.map(barLabel) : undefined,
+      })}
+    />
+  );
 }
 
 /** The controls that each compare card has: percent or counts, one chart or two. */
@@ -298,30 +345,46 @@ export function ContinuousCompareView(props: ContinuousCompareViewProps) {
     ...PERCENTILE_LABELS.map((label, i) => ({ label: (statsA.approximate || statsB.approximate ? '≈ ' : '') + label, a: statsA.percentiles[i]?.value, b: statsB.percentiles[i]?.value })),
     { label: 'Max', a: num(statsA.max), b: num(statsB.max) },
   ];
+  const detailed = card.expanded === true;
   return (
-    <>
-      <CompareControls card={card} onChange={onChange}>
-        <label>
-          Bins <input type="range" min={5} max={200} value={props.bins} onChange={(e) => props.onBins(Number(e.target.value))} aria-valuetext={`${props.bins} bins`} /> <output>{props.bins}</output>
-        </label>
-        <label>
-          <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
-        </label>
-        <label title="Show the range from the 1st to the 99th percentile of A and B">
-          <input type="checkbox" checked={card.clip === true} onChange={(e) => onChange({ clip: e.target.checked })} /> Clip to 1%–99%
-        </label>
-      </CompareControls>
-      {statsA.nonNull === 0 && statsB.nonNull === 0 ? (
-        <p className="status">All rows are null in A and B.</p>
-      ) : !rows ? (
-        <p className="status" role="status">
-          Loading the histograms…
-        </p>
-      ) : (
-        <PairView rows={rows} totalA={statsA.nonNull} totalB={statsB.nonNull} head="Range" label={`Histogram of ${props.name} with the same ${edges?.bins} bins for A and B.`} card={card} theme={props.theme} onSelect={select} range canFilter={(i) => !rows?.[i]?.muted} />
-      )}
-      <CompareStatsTable rows={stats} />
-    </>
+    <CardLayout
+      detailed={detailed}
+      controls={
+        <CompareControls card={card} onChange={onChange}>
+          <label>
+            Bins <input type="range" min={5} max={200} value={props.bins} onChange={(e) => props.onBins(Number(e.target.value))} aria-valuetext={`${props.bins} bins`} /> <output>{props.bins}</output>
+          </label>
+          <label>
+            <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
+          </label>
+          <label title="Show the range from the 1st to the 99th percentile of A and B">
+            <input type="checkbox" checked={card.clip === true} onChange={(e) => onChange({ clip: e.target.checked })} /> Clip to 1%–99%
+          </label>
+        </CompareControls>
+      }
+      main={
+        statsA.nonNull === 0 && statsB.nonNull === 0 ? (
+          <p className="status">All rows are null in A and B.</p>
+        ) : !rows ? (
+          <ChartWait detailed={detailed}>Loading the histograms…</ChartWait>
+        ) : (
+          <PairView
+            rows={rows}
+            totalA={statsA.nonNull}
+            totalB={statsB.nonNull}
+            head="Range"
+            label={`Histogram of ${props.name} with the same ${edges?.bins} bins for A and B.`}
+            card={card}
+            theme={props.theme}
+            onSelect={select}
+            range
+            canFilter={(i) => !rows?.[i]?.muted}
+            categoryName={props.name}
+          />
+        )
+      }
+      side={<CompareStatsTable rows={stats} />}
+    />
   );
 }
 
@@ -355,23 +418,41 @@ export function ValuesCompareView({ name, a, b, topValues, card, theme, onChange
       if (value && value.role !== 'other') onFilter((column) => chipForValue(column, value.role, value.label));
     });
   return (
-    <>
-      <CompareControls card={card} onChange={onChange} />
-      {!card.asTable && (
-        <PairView rows={chart} totalA={a.rowCount} totalB={b.rowCount} head="Value" label={`The most frequent values of ${name}, ${chart.length} bars.`} card={card} theme={theme} horizontal onSelect={selectIn(comparedValues(a, b, topValues))} />
-      )}
-      <div className="controls">
-        <input type="search" placeholder="Search values" aria-label="Search values" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <label>
-          Sort by{' '}
-          <select value={card.sortBy ?? 'count'} onChange={(e) => onChange({ sortBy: e.target.value as 'count' | 'label' })}>
-            <option value="count">Larger share</option>
-            <option value="label">Size of the difference</option>
-          </select>
-        </label>
-      </div>
-      <PairView rows={table.map(toRow)} totalA={a.rowCount} totalB={b.rowCount} head="Value" label="" card={{ ...card, asTable: true }} theme={theme} onSelect={selectIn(table)} canFilter={(i) => table[i]?.role !== 'other'} />
-    </>
+    <CardLayout
+      detailed={card.expanded === true}
+      controls={<CompareControls card={card} onChange={onChange} />}
+      main={
+        !card.asTable && (
+          <PairView
+            rows={chart}
+            totalA={a.rowCount}
+            totalB={b.rowCount}
+            head="Value"
+            label={`The most frequent values of ${name}, ${chart.length} bars.`}
+            card={card}
+            theme={theme}
+            horizontal
+            onSelect={selectIn(comparedValues(a, b, topValues))}
+            categoryName={name}
+          />
+        )
+      }
+      side={
+        <>
+          <div className="controls">
+            <input type="search" placeholder="Search values" aria-label="Search values" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <label>
+              Sort by{' '}
+              <select value={card.sortBy ?? 'count'} onChange={(e) => onChange({ sortBy: e.target.value as 'count' | 'label' })}>
+                <option value="count">Larger share</option>
+                <option value="label">Size of the difference</option>
+              </select>
+            </label>
+          </div>
+          <PairView rows={table.map(toRow)} totalA={a.rowCount} totalB={b.rowCount} head="Value" label="" card={{ ...card, asTable: true }} theme={theme} onSelect={selectIn(table)} canFilter={(i) => table[i]?.role !== 'other'} />
+        </>
+      }
+    />
   );
 }
 
@@ -384,7 +465,10 @@ export interface DateCompareViewProps {
   /** Not set while they load. */
   countsA: ResultOf<'dateCounts'> | undefined;
   countsB: ResultOf<'dateCounts'> | undefined;
+  /** The period that the user selected. */
   grain: Grain;
+  /** The period of `countsA` and `countsB`. It is different from `grain` while the counts of a new period load. Default: `grain`. */
+  shownGrain?: Grain;
   card: Card;
   theme: Theme;
   onChange: (patch: Partial<Card>) => void;
@@ -393,8 +477,9 @@ export interface DateCompareViewProps {
 }
 
 /** A date column in A and B: the rows of each period on one axis, and the first and last date of each dataset. */
-export function DateCompareView({ name, statsA, statsB, countsA, countsB, grain, card, theme, onChange, onFilter }: DateCompareViewProps) {
-  const shared = countsA && countsB ? sharedPeriods(countsA.buckets, countsB.buckets, grain) : undefined;
+export function DateCompareView({ name, statsA, statsB, countsA, countsB, grain, shownGrain = grain, card, theme, onChange, onFilter }: DateCompareViewProps) {
+  const shared = countsA && countsB ? sharedPeriods(countsA.buckets, countsB.buckets, shownGrain) : undefined;
+  const detailed = card.expanded === true;
   const span = (stats: OverviewColumn) => (stats.min !== undefined && stats.max !== undefined ? spanDays(stats.min, stats.max) : undefined);
   const day = (text: string | undefined) => (text === undefined ? undefined : text.slice(0, 10));
   const select =
@@ -402,51 +487,57 @@ export function DateCompareView({ name, statsA, statsB, countsA, countsB, grain,
       ? (first: number, last: number) => {
           const from = shared.starts[Math.max(0, first)];
           const to = shared.starts[Math.min(shared.starts.length - 1, last)];
-          if (from && to) onFilter((column) => chipForPeriods(column, from, to, grain));
+          if (from && to) onFilter((column) => chipForPeriods(column, from, to, shownGrain));
         }
       : undefined;
   return (
-    <>
-      <CompareControls card={card} onChange={onChange}>
-        <label>
-          Period{' '}
-          <select value={grain} onChange={(e) => onChange({ grain: e.target.value as Grain })}>
-            {GRAINS.map((g) => (
-              <option key={g} value={g}>
-                {g[0]?.toUpperCase() + g.slice(1)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
-        </label>
-      </CompareControls>
-      {!shared ? (
-        <p className="status" role="status">
-          Loading…
-        </p>
-      ) : (
-        <PairView
-          rows={shared.starts.map((start, i) => ({ label: start, a: shared.a[i] ?? 0, b: shared.b[i] ?? 0 }))}
-          totalA={statsA.nonNull}
-          totalB={statsB.nonNull}
-          head={`Start of the ${grain}`}
-          label={`Rows of ${name} for each ${grain}, ${shared.starts.length} periods.`}
-          card={card}
-          theme={theme}
-          onSelect={select}
-          range
+    <CardLayout
+      detailed={detailed}
+      controls={
+        <CompareControls card={card} onChange={onChange}>
+          <label>
+            Period{' '}
+            <select value={grain} onChange={(e) => onChange({ grain: e.target.value as Grain })}>
+              {GRAINS.map((g) => (
+                <option key={g} value={g}>
+                  {g[0]?.toUpperCase() + g.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <input type="checkbox" checked={card.logScale === true} onChange={(e) => onChange({ logScale: e.target.checked })} /> Log scale
+          </label>
+        </CompareControls>
+      }
+      main={
+        !shared ? (
+          <ChartWait detailed={detailed}>Loading…</ChartWait>
+        ) : (
+          <PairView
+            rows={shared.starts.map((start, i) => ({ label: start, a: shared.a[i] ?? 0, b: shared.b[i] ?? 0 }))}
+            totalA={statsA.nonNull}
+            totalB={statsB.nonNull}
+            head={`Start of the ${shownGrain}`}
+            label={`Rows of ${name} for each ${shownGrain}, ${shared.starts.length} periods.`}
+            card={card}
+            theme={theme}
+            onSelect={select}
+            range
+            categoryName={`${name} (start of the ${shownGrain})`}
+          />
+        )
+      }
+      side={
+        <CompareStatsTable
+          rows={[
+            { label: 'Earliest', a: day(statsA.min), b: day(statsB.min) },
+            { label: 'Latest', a: day(statsA.max), b: day(statsB.max) },
+            { label: 'Span in days', a: span(statsA), b: span(statsB), count: true },
+          ]}
         />
-      )}
-      <CompareStatsTable
-        rows={[
-          { label: 'Earliest', a: day(statsA.min), b: day(statsB.min) },
-          { label: 'Latest', a: day(statsA.max), b: day(statsB.max) },
-          { label: 'Span in days', a: span(statsA), b: span(statsB), count: true },
-        ]}
-      />
-    </>
+      }
+    />
   );
 }
 

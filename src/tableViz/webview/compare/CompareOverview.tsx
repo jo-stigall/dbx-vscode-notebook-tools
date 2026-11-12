@@ -7,7 +7,7 @@
  */
 import type { SchemaComparison } from '../../core/match.ts';
 import { formatCount, formatPercent, formatStat } from '../format.ts';
-import type { OverviewState, Sort } from '../Overview.tsx';
+import { rowClick, type OverviewState, type Sort } from '../Overview.tsx';
 import type { DriftState } from './useCompare.ts';
 
 /**
@@ -122,13 +122,13 @@ function DriftCell({ state }: { state: DriftState }) {
   if (state.status === 'error') return <span className="muted" title={state.error.message}>Failed</span>;
   const { score } = state.drift;
   return (
-    <>
+    <span className={state.stale ? 'stale' : undefined}>
       {formatScore(score)}{' '}
       <svg className="share" width="40" height="6" viewBox="0 0 40 6" aria-hidden="true">
         <rect className="share-track" width="40" height="6" />
         <rect className="drift-fill" width={score > 0 ? Math.max(score * 40, 1) : 0} height="6" />
       </svg>
-    </>
+    </span>
   );
 }
 
@@ -147,7 +147,7 @@ export function CompareTable({ rows, a, b, open, onOpen }: CompareTableProps) {
   const count = (n: number | undefined, pending: boolean) => (n === undefined ? (pending ? '…' : '—') : approx + formatCount(n));
   const mean = (n: number | undefined) => (n === undefined ? '—' : formatStat(n));
   return (
-    <table className="columns compare">
+    <table className={a.stale || b.stale ? 'columns compare stale' : 'columns compare'} aria-busy={a.stale === true || b.stale === true}>
       <thead>
         <tr>
           <th scope="col">Column</th>
@@ -177,9 +177,10 @@ export function CompareTable({ rows, a, b, open, onOpen }: CompareTableProps) {
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={row.name} className={open.has(row.name) ? 'selected' : undefined}>
+          // A click at any place in the row opens the column. The button in the row is for the keyboard; its click also arrives here.
+          <tr key={row.name} className={open.has(row.name) ? 'selected' : undefined} onClick={rowClick(onOpen, row.name)}>
             <th scope="row" className="name">
-              <button type="button" className="link" aria-expanded={open.has(row.name)} onClick={() => onOpen(row.name)}>
+              <button type="button" className="link" aria-expanded={open.has(row.name)} title="Show the detailed view of this column">
                 {row.name}
               </button>
             </th>

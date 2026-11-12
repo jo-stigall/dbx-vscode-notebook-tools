@@ -222,7 +222,11 @@ test('kindsFor and openCard', async () => {
   }
 
   const cards = [{ column: 'amount', pinned: false }, { column: 'region', pinned: true }];
-  assert.deepEqual(openCard(cards, 'channel'), [{ column: 'channel', pinned: false }, { column: 'region', pinned: true }]);
-  assert.equal(openCard(cards, 'amount'), cards, 'a column that has a card changes nothing');
-  assert.deepEqual(openCard([], 'x'), [{ column: 'x', pinned: false }]);
+  // A new card is the detailed view of the column. It replaces the cards that are not pinned.
+  assert.deepEqual(openCard(cards, 'channel'), [{ column: 'channel', pinned: false, expanded: true }, { column: 'region', pinned: true }]);
+  assert.deepEqual(openCard([], 'x'), [{ column: 'x', pinned: false, expanded: true }]);
+  // A column that has a small card: the card becomes the detailed view, in its place.
+  assert.deepEqual(openCard(cards, 'region'), [{ column: 'amount', pinned: false }, { column: 'region', pinned: true, expanded: true }]);
+  const detailed = [{ column: 'amount', pinned: false, expanded: true }];
+  assert.equal(openCard(detailed, 'amount'), detailed, 'a column that has a detailed view changes nothing');
 });

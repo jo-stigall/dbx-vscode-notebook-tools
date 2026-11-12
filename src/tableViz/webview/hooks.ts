@@ -5,11 +5,19 @@ import { acquire, release, useRequests, type Progress, type RequestError } from 
 
 /**
  * The state of one request: it runs, it has a result, it failed, or it was cancelled.
- * While it runs, `progress` tells if the query waits for a free place on Databricks or runs.
+ *
+ * While it runs, `progress` tells if the query waits for a free place on
+ * Databricks or runs.
+ *
+ * A result has the request that it answers. If `stale` is true, a newer
+ * request runs now, and the result is the answer to the request before it.
+ * The page shows the old numbers, dimmed, until the new numbers arrive. Thus
+ * a chart does not go away and come back each time the user moves a slider
+ * or adds a filter.
  */
-export type Loadable<T> =
+export type Loadable<T, R = Request> =
   | { status: 'loading'; progress?: Progress }
-  | { status: 'done'; result: T }
+  | { status: 'done'; result: T; request: R; stale?: boolean }
   | { status: 'error'; error: RequestError }
   | { status: 'cancelled' };
 
@@ -19,31 +27,73 @@ export type Loadable<T> =
  * When the component leaves the page or asks for a different thing, the
  * hook releases the request. A request that no component wants is cancelled.
  *
+ * While a new request runs, the hook gives the last result with
+ * `stale: true`. Use `state.request` to know which request a result answers.
+ *
  * @example
  * const details = useResult({ type: 'tableDetails', dataset });
  * if (details.status === 'done') details.result.columns
  *
- * @param req  The request. Pass undefined to send nothing; the state then stays "loading".
+ * @param req  The request. Pass undefined to send nothing; the state is then the last result (stale), or "loading" if there is none.
  */
-export function useResult<T extends Request>(req: T | undefined): Loadable<ResultOf<T['type']>> {
+export function useResult<T extends Request>(req: T | undefined): Loadable<ResultOf<T['type']>, T> {
+  type State = Loadable<ResultOf<T['type']>, T>;
   const { generation } = useRequests();
   // The request as text, plus the number of the last refresh. The effect runs again only when one of them changes.
   const key = (req ? JSON.stringify(req) : '') + '#' + generation;
-  const [state, setState] = useState<{ key: string; value: Loadable<ResultOf<T['type']>> }>({ key, value: { status: 'loading' } });
+  const [state, setState] = useState<{ key: string; value: State }>({ key, value: { status: 'loading' } });
+  // The last result that arrived, to show while the next request runs.
+  const last = useRef<{ result: ResultOf<T['type']>; request: T } | undefined>(undefined);
   useEffect(() => {
     if (!req) return;
     let current = true;
     const onProgress = (progress: Progress) => current && setState({ key, value: { status: 'loading', progress } });
     acquire(req, onProgress).then(
-      (result) => current && setState({ key, value: { status: 'done', result } }),
-      (error: RequestError) => current && setState({ key, value: error.cancelled ? { status: 'cancelled' } : { status: 'error', error } })
+      (result) => {
+        if (!current) return;
+        last.current = { result, request: req };
+        setState({ key, value: { status: 'done', result, request: req } });
+      },
+      (error: RequestError) => {
+        if (!current) return;
+        last.current = undefined; // Do not show old numbers below an error.
+        setState({ key, value: error.cancelled ? { status: 'cancelled' } : { status: 'error', error } });
+      }
     );
     return () => {
       current = false;
       release(req, onProgress);
     };
   }, [key]);
-  return state.key === key ? state.value : { status: 'loading' };
+
+  const value: State = state.key === key ? state.value : { status: 'loading' };
+  if (value.status === 'loading' && last.current) return { status: 'done', ...last.current, stale: true };
+  return value;
+}
+
+/**
+ * Get the result of a state only if it answers the newest request.
+ *
+ * Use it for a result that the next request is made from. Example: the
+ * edges of a histogram come from the statistics of the column. While new
+ * statistics load, the card must not ask for a histogram with the old edges.
+ */
+export function fresh<T>(state: Loadable<T, unknown>): T | undefined {
+  return state.status === 'done' && !state.stale ? state.result : undefined;
+}
+
+/**
+ * Get the last value that was not undefined.
+ *
+ * A card uses it to keep its numbers on the screen while newer numbers load.
+ *
+ * @example
+ * const numbers = useLast(stats);   // `stats` while it is set; the last `stats` while it is undefined
+ */
+export function useLast<T>(value: T | undefined): T | undefined {
+  const last = useRef(value);
+  if (value !== undefined) last.current = value;
+  return last.current;
 }
 
 /**

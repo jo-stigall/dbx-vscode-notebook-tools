@@ -24,6 +24,8 @@ import { ComplexView, ContinuousView, DateView, IdentifierView, ValuesView } fro
 import { CompareTable, compareRows, SchemaPanel } from '../../../src/tableViz/webview/compare/CompareOverview.tsx';
 import type { DriftState } from '../../../src/tableViz/webview/compare/useCompare.ts';
 import { ContinuousCompareView, DateCompareView, DriftLine, formatPoints, ValuesCompareView } from '../../../src/tableViz/webview/compare/views.tsx';
+import { barsOption, compareBarsOption } from '../../../src/tableViz/webview/options.ts';
+import { RequestError } from '../../../src/tableViz/webview/rpc.ts';
 import { FALLBACK_THEME as theme } from '../../../src/tableViz/webview/theme.ts';
 
 const dataset: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
@@ -231,6 +233,96 @@ test('card frame: buttons, kind override, SQL and the estimate note', async () =
   assert.ok(!plain.includes('Show the chart as a table') && !plain.includes('Kind of column'));
 });
 
+// ---- The detailed view of a column ----
+
+test('detailed view of a number: large numbers at the top, and the small card has none', async () => {
+  const { column, stats: overview } = await tableFacts();
+  const amount = column('amount');
+  const ref = { name: 'amount', typeText: amount.typeText };
+  const stats = await ask({ type: 'numericStats', dataset, columns: [ref] });
+  const edges = makeEdges(Number(stats.min), Number(stats.max), 30);
+  const histogram = await ask({ type: 'histogram', dataset, columns: [ref], edges });
+  const props = { column: amount, stats, histogram, edges, bins: 30, theme, onChange: noop, onBins: noop, distinct: overview('amount').distinct };
+
+  const detailed = renderToStaticMarkup(<ContinuousView {...props} card={card({ expanded: true })} />);
+  assert.ok(detailed.includes('class="tiles"'), 'the detailed view has the row of large numbers');
+  const text = textOf(<ContinuousView {...props} card={card({ expanded: true })} />);
+  for (const part of ['Count 110,000', 'Nulls 0 0%', 'Distinct 18,526', 'Mean 63', 'Median 49.26', 'Std. deviation 50.41', 'Min 2.33', 'Max 1202.88']) {
+    assert.ok(text.includes(part), `"${part}" in: ${text}`);
+  }
+  // The table of statistics stays, next to the chart.
+  assert.ok(text.includes('99th percentile 253.25'));
+  assert.match(detailed, /class="card-main">.*class="card-side">/s);
+
+  const small = renderToStaticMarkup(<ContinuousView {...props} card={card()} />);
+  assert.ok(!small.includes('class="tiles"'), 'a small card has no row of large numbers');
+});
+
+test('detailed view of the other kinds: the facts that a person looks for first', async () => {
+  const { column, stats, rowCount } = await tableFacts();
+  const frequency = await ask({ type: 'frequency', dataset, columns: [{ name: 'region', typeText: 'string' }], top: 200 });
+  const values = textOf(<ValuesView column={column('region')} kind="category" frequency={frequency} distinct={stats('region').distinct} topValues={20} card={card({ expanded: true })} theme={theme} onChange={noop} />);
+  for (const part of ['Rows 110,000', 'Distinct values 4', 'Most frequent AMER 39.7%']) assert.ok(values.includes(part), `"${part}" in: ${values}`);
+
+  const dates = textOf(<DateView column={column('order_date')} rowCount={rowCount} stats={stats('order_date')} dateCounts={undefined} grain="week" card={card({ expanded: true })} theme={theme} onChange={noop} />);
+  for (const part of ['Earliest 2026-01-01', 'Latest 2026-12-31', 'Span 364 days']) assert.ok(dates.includes(part), `"${part}" in: ${dates}`);
+  // While the chart loads, a block with the height of the chart holds its place.
+  assert.ok(renderToStaticMarkup(<DateView column={column('order_date')} rowCount={rowCount} stats={stats('order_date')} dateCounts={undefined} grain="week" card={card({ expanded: true })} theme={theme} onChange={noop} />).includes('skeleton chart-wait tall'));
+
+  const ids = textOf(<IdentifierView column={column('order_id')} rowCount={rowCount} stats={stats('order_id')} approximate={false} frequency={undefined} lengths={undefined} lengthEdges={undefined} card={card({ expanded: true })} theme={theme} />);
+  for (const part of ['Rows 110,000', 'Distinct values 110,000', 'Percent unique 100%']) assert.ok(ids.includes(part), `"${part}" in: ${ids}`);
+});
+
+test('chart of the detailed view: axis titles, bar labels, and lines for the mean and the median', () => {
+  type Axis = { id: string; type: string; name?: string; min?: number; max?: number };
+  type Series = { id: string; label?: { show: boolean; formatter: (item: { dataIndex: number }) => string }; markLine?: { data: { xAxis: number; name: string }[] } };
+  const input = { labels: ['0', '10', '20'], counts: [5, 0, 7], tips: ['a', 'b', 'c'] };
+
+  const small = barsOption(theme, input) as { xAxis: Axis; yAxis: Axis; series: Series[] };
+  assert.equal(small.xAxis.name, undefined);
+  assert.equal(small.yAxis.name, undefined);
+  assert.deepEqual(small.series.map((s) => s.id), ['a']);
+  assert.equal(small.series[0]?.label, undefined);
+
+  const detail = { categoryName: 'amount', countName: 'Rows', barLabels: ['5', '', '7'], numeric: { lo: 0, hi: 30, markers: [{ value: 12.5, label: 'Mean 12.5' }, { value: 11, label: 'Median 11' }] } };
+  const large = barsOption(theme, { ...input, detail }) as unknown as { xAxis: Axis[]; yAxis: Axis; series: Series[] };
+  // The second horizontal axis is an axis of numbers with the range of the bins. It has the title.
+  assert.deepEqual(large.xAxis.map((axis) => [axis.id, axis.type]), [['x', 'category'], ['x2', 'value']]);
+  assert.deepEqual([large.xAxis[1]?.min, large.xAxis[1]?.max, large.xAxis[1]?.name], [0, 30, 'amount']);
+  assert.equal(large.yAxis.name, 'Rows');
+  assert.equal(large.series[0]?.label?.formatter({ dataIndex: 2 }), '7');
+  assert.deepEqual(large.series[1]?.markLine?.data.map((line) => [line.xAxis, line.name]), [[12.5, 'Mean 12.5'], [11, 'Median 11']]);
+
+  // A horizontal chart (category values) has no axis of numbers for the bars, and no title next to the value labels.
+  const horizontal = barsOption(theme, { ...input, horizontal: true, detail }) as { xAxis: Axis; yAxis: Axis; series: Series[] };
+  assert.equal(horizontal.xAxis.name, 'Rows');
+  assert.equal(horizontal.yAxis.name, undefined);
+  assert.deepEqual(horizontal.series.map((s) => s.id), ['a']);
+
+  // Two datasets: a label on each bar of A and of B.
+  const pair = compareBarsOption(theme, { labels: ['x'], a: [40], b: [60], tips: ['t'], nameA: 'A', nameB: 'B', detail: { countName: 'Percent' }, labelsA: ['40.0%'], labelsB: ['60.0%'] }) as { series: Series[] };
+  assert.deepEqual(pair.series.map((s) => s.label?.formatter({ dataIndex: 0 })), ['40.0%', '60.0%']);
+});
+
+test('card frame: the detailed view, and old numbers while new numbers load', async () => {
+  const { column } = await tableFacts();
+  const base: CardShellProps = { column: column('amount'), card: card(), kind: 'continuous', detected: 'continuous', kinds: ['continuous'], onChange: noop, onClose: noop, sql: [], approximate: false, hasChart: true, loading: false };
+
+  const small = renderToStaticMarkup(<CardShell {...base} />);
+  assert.ok(small.includes('class="card"') && small.includes('aria-label="Show the detailed view"') && small.includes('aria-busy="false"'));
+  assert.ok(small.includes('data-card="amount"'), 'the board finds the card of a column by this attribute');
+
+  const detailed = renderToStaticMarkup(<CardShell {...base} card={card({ expanded: true })} />);
+  assert.ok(detailed.includes('class="card expanded"') && detailed.includes('aria-label="Show as a small card"'));
+
+  // Old numbers stay on the card, dimmed, and a line shows that a query runs.
+  const stale = renderToStaticMarkup(<CardShell {...base} stale>old numbers</CardShell>);
+  assert.ok(stale.includes('class="card stale"') && stale.includes('aria-busy="true"') && stale.includes('busy-bar') && stale.includes('old numbers'));
+  // An error stops the line.
+  const failed = renderToStaticMarkup(<CardShell {...base} stale error={new RequestError('No access')} />);
+  assert.ok(!failed.includes('busy-bar') && failed.includes('No access'));
+});
+
 // ---- Compare mode ----
 
 const datasetA: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2025' } };
@@ -337,4 +429,24 @@ test('compare card of a date: one axis for A and B', async () => {
   // A has rows in 2025 only, B in 2026 only.
   assert.ok(text.includes(`2025-01-01 ${countsA.buckets[0]?.count.toLocaleString('en-US')}`) && text.includes('2026-01-01 0 0%'), text);
   assert.ok(text.includes('Earliest 2025-01-01 2026-01-01') && text.includes('Latest 2025-12-31 2026-12-31'), text);
+});
+
+test('detailed compare card: a larger chart with the same numbers, and the table next to it', async () => {
+  const pair = matchColumns([{ name: 'channel', typeText: 'string' }], [{ name: 'channel', typeText: 'string' }]).pairs[0];
+  assert.ok(pair);
+  const { a, b } = await comparedFrequency(askDemo, datasetA, dataset, pair, 200);
+  const html = renderToStaticMarkup(<ValuesCompareView name="channel" a={a} b={b} topValues={20} card={card({ expanded: true })} theme={theme} onChange={noop} />);
+  assert.match(html, /class="card-main">.*class="chart".*class="card-side">/s);
+  assert.ok(textOf(<ValuesCompareView name="channel" a={a} b={b} topValues={20} card={card({ expanded: true })} theme={theme} onChange={noop} />).includes('web 59,630 59.6% 60,352 54.9% -4.8 pp'));
+  // As a table, the card has no chart, and the table uses the full width.
+  assert.ok(renderToStaticMarkup(<ValuesCompareView name="channel" a={a} b={b} topValues={20} card={card({ expanded: true, asTable: true })} theme={theme} onChange={noop} />).includes('class="card-body single"'));
+});
+
+test('compare: a drift score of the datasets before the last change is marked as old', async () => {
+  const { schema, a, b, drifts } = await comparison();
+  const old = new Map([...drifts].map(([name, state]): [string, DriftState] => [name, state.status === 'done' ? { ...state, stale: true } : state]));
+  const html = renderToStaticMarkup(<CompareTable rows={compareRows(schema, a, b, old, '', 'drift')} a={{ ...a, stale: true }} b={b} open={new Set()} onOpen={noop} />);
+  assert.ok(html.includes('class="columns compare stale"') && html.includes('aria-busy="true"') && html.includes('<span class="stale">'));
+  // The rows keep the sequence of the old scores.
+  assert.deepEqual(compareRows(schema, a, b, old, '', 'drift').map((r) => r.name), compareRows(schema, a, b, drifts, '', 'drift').map((r) => r.name));
 });

@@ -265,11 +265,16 @@ Then open one of these addresses:
 http://localhost:8791/index.html?theme=dark
 http://localhost:8791/index.html?theme=light&table=demo.shop.orders_2025
 http://localhost:8791/index.html?theme=hc
+http://localhost:8791/index.html?cards=amount&detail=1
+http://localhost:8791/index.html?cards=amount&detail=1&delay=1500
 http://localhost:8791/index.html?cards=amount,region,order_date&sql=1
 http://localhost:8791/index.html?table=demo.shop.orders_2025&b=demo.shop.orders_2026&cards=amount,channel
 ```
 
 `cards` opens detail cards at the start. `sql=1` shows the SQL of each card.
+`detail=1` shows the first card as the detailed view of its column.
+`delay=1500` makes each answer arrive 1.5 seconds late, so that you can see
+how the page looks while it loads.
 `large=1` makes the board ask before it reads all rows. `b` names a second
 table: the board then compares the two tables. `confirm=1` shows the
 question that a saved view asks before it runs.
