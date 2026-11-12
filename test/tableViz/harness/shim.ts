@@ -10,16 +10,21 @@
  *     index.html?table=demo.shop.orders_2025&theme=light
  *
  * `theme` is dark (default), light or hc (high contrast).
+ *
+ * `cards` opens detail cards at the start. Example: `cards=amount,region`.
+ * `kind=identifier` sets the kind of the first card, `astable=1` shows its
+ * chart as a table, and `sql=1` shows the SQL of each card.
  */
 import { parseTableName } from '../../../src/tableViz/core/names.ts';
 import { createDispatcher } from '../../../src/tableViz/core/profiler.ts';
-import type { ToWebview } from '../../../src/tableViz/core/schema.ts';
+import { columnKindSchema, DEFAULT_SETTINGS, type BoardDatasets, type Card, type ToWebview } from '../../../src/tableViz/core/schema.ts';
 import { DemoProfiler } from '../../../src/tableViz/demo/demoProfiler.ts';
 
 const params = new URLSearchParams(location.search);
 const table = parseTableName(params.get('table') ?? '') ?? { catalog: 'demo', schema: 'shop', name: 'orders_2026' };
 document.documentElement.dataset.theme = params.get('theme') ?? 'dark';
 
+const datasets: BoardDatasets = { a: { profile: 'Demo', table } };
 const profiler = new DemoProfiler();
 const post = (message: ToWebview) => window.postMessage(message, '*');
 const dispatcher = createDispatcher({
@@ -29,10 +34,22 @@ const dispatcher = createDispatcher({
     const controller = new AbortController();
     return { signal: controller.signal, cancel: () => controller.abort() };
   },
-  onOther: () => post({ type: 'init', datasets: { a: { profile: 'Demo', table } } }),
+  onOther: () => post({ type: 'init', datasets, settings: DEFAULT_SETTINGS }),
 });
 
-let state: unknown;
+// The cards from the page URL go into the stored state, as if the board was open before a reload.
+const kind = columnKindSchema.safeParse(params.get('kind'));
+const cards: Card[] = (params.get('cards') ?? '')
+  .split(',')
+  .filter(Boolean)
+  .map((column, i) => ({
+    column,
+    pinned: true,
+    ...(i === 0 && kind.success ? { kind: kind.data } : {}),
+    ...(i === 0 && params.get('astable') === '1' ? { asTable: true } : {}),
+    ...(params.get('sql') === '1' ? { showSql: true } : {}),
+  }));
+let state: unknown = { datasets, cards };
 Object.assign(window, {
   acquireVsCodeApi: () => ({
     postMessage: (message: unknown) => void dispatcher.handle(message),

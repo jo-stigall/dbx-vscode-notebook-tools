@@ -9,6 +9,7 @@ import {
   boardStateSchema,
   toWebviewSchema,
   type BoardDatasets,
+  type BoardSettings,
   type BoardState,
   type Request,
   type Result,
@@ -50,14 +51,14 @@ interface Pending {
 }
 const pending = new Map<string, Pending>();
 let lastId = 0;
-let onInit: ((datasets: BoardDatasets) => void) | undefined;
+let onInit: ((datasets: BoardDatasets, settings: BoardSettings) => void) | undefined;
 
 window.addEventListener('message', (event: MessageEvent) => {
   const parsed = toWebviewSchema.safeParse(event.data);
   if (!parsed.success) return; // Ignore a message that does not have a known shape.
   const message = parsed.data;
   if (message.type === 'init') {
-    onInit?.(message.datasets);
+    onInit?.(message.datasets, message.settings);
     return;
   }
   const waiter = pending.get(message.id);
@@ -71,9 +72,9 @@ window.addEventListener('message', (event: MessageEvent) => {
 /**
  * Tell the host that the webview started. The host answers with the datasets of the board.
  *
- * @param callback  Gets the datasets.
+ * @param callback  Gets the datasets and the settings of the feature.
  */
-export function start(callback: (datasets: BoardDatasets) => void): void {
+export function start(callback: (datasets: BoardDatasets, settings: BoardSettings) => void): void {
   onInit = callback;
   vscode.postMessage({ type: 'ready' });
 }

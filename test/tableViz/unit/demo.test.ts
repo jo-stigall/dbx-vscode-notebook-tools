@@ -280,3 +280,63 @@ test('dispatcher: cancel stops a request that runs', async () => {
   await pending;
   assert.deepEqual(second.sent, [{ type: 'cancelled', id: 'r2' }]);
 });
+
+test('numericStats: equal to a direct computation', async () => {
+  const { percentileOf } = await import('../../../src/tableViz/demo/demoProfiler.ts');
+  assert.equal(percentileOf([10, 20, 30, 40], 0.5), 25);
+  assert.equal(percentileOf([10, 20, 30, 40], 0), 10);
+  assert.equal(percentileOf([10, 20, 30, 40], 1), 40);
+  assert.equal(percentileOf([7], 0.99), 7);
+
+  for (const columnName of ['amount', 'discount_pct', 'quantity', 'weight_kg']) {
+    const c = column(t26, columnName);
+    const numbers = (c.values.filter((v) => v !== null) as number[]).map((v) => (c.family === 'decimal' ? v / 100 : v)).sort((a, b) => a - b);
+    const r = (await profiler.profile({ type: 'numericStats', dataset: dataset('orders_2026'), columns: [ref(t26, columnName)] })) as ResultOf<'numericStats'>;
+    assert.ok(resultSchema.safeParse(r).success);
+    assert.equal(r.rowCount, 110_000);
+    assert.equal(r.nonNull, numbers.length, columnName);
+    assert.equal(r.zeros, numbers.filter((x) => x === 0).length, columnName);
+    assert.equal(r.negatives, 0);
+    assert.equal(Number(r.min), numbers[0], columnName);
+    assert.equal(Number(r.max), numbers[numbers.length - 1], columnName);
+    const mean = numbers.reduce((a, b) => a + b, 0) / numbers.length;
+    assert.ok(Math.abs((r.mean as number) - mean) < 1e-9 * Math.abs(mean), columnName);
+    const variance = numbers.reduce((a, x) => a + (x - mean) ** 2, 0) / (numbers.length - 1);
+    assert.ok(Math.abs((r.stddev as number) - Math.sqrt(variance)) < 1e-9 * Math.sqrt(variance), columnName);
+    assert.deepEqual(r.percentiles.map((x) => x.p), [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]);
+    // The median is between the two middle values.
+    const median = r.percentiles[3]?.value as number;
+    assert.ok(median >= (numbers[Math.floor((numbers.length - 1) / 2)] as number) && median <= (numbers[Math.ceil((numbers.length - 1) / 2)] as number), columnName);
+    // The percentiles do not decrease.
+    for (let i = 1; i < r.percentiles.length; i++) assert.ok((r.percentiles[i]?.value as number) >= (r.percentiles[i - 1]?.value as number));
+  }
+  // A decimal keeps its digits in min and max.
+  const amount = (await profiler.profile({ type: 'numericStats', dataset: dataset('orders_2026'), columns: [ref(t26, 'amount')] })) as ResultOf<'numericStats'>;
+  assert.match(amount.min as string, /^\d+\.\d{2}$/);
+});
+
+test('numericStats and histogram can measure the length of the values', async () => {
+  const stats = (await profiler.profile({ type: 'numericStats', dataset: dataset('orders_2026'), columns: [ref(t26, 'customer_id')], measure: 'length' })) as ResultOf<'numericStats'>;
+  assert.equal(stats.min, '6'); // 'C' and five digits
+  assert.equal(stats.max, '6');
+  assert.equal(stats.stddev, 0);
+  const coupon = (await profiler.profile({ type: 'numericStats', dataset: dataset('orders_2025'), columns: [ref(t25, 'coupon_code')], measure: 'length' })) as ResultOf<'numericStats'>;
+  assert.equal(coupon.nonNull, column(t25, 'coupon_code').values.filter((v) => v !== null).length);
+  assert.equal(coupon.min, '7'); // 'SAVE' and three digits
+  const h = (await profiler.profile({
+    type: 'histogram',
+    dataset: dataset('orders_2026'),
+    columns: [ref(t26, 'order_id')],
+    edges: makeEdges(10, 10, 30),
+    measure: 'length',
+  })) as ResultOf<'histogram'>;
+  assert.deepEqual(h.counts, [110_000]);
+  await assert.rejects(profiler.profile({ type: 'numericStats', dataset: dataset('orders_2026'), columns: [ref(t26, 'items')], measure: 'length' }), ProfilerError);
+  await assert.rejects(profiler.profile({ type: 'numericStats', dataset: dataset('orders_2026'), columns: [ref(t26, 'region')] }), ProfilerError);
+});
+
+test('each result contains the SQL of its request', async () => {
+  const r = await profiler.profile({ type: 'frequency', dataset: dataset('orders_2026'), columns: [ref(t26, 'region')], top: 20 });
+  assert.equal(r.sql.length, 1);
+  assert.match(r.sql[0] as string, /^-- :c0 = '`region`'\n-- :tbl = '`demo`.`shop`.`orders_2026`'\n-- :limit = 21\nSELECT/);
+});

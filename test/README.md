@@ -24,7 +24,8 @@ test files from the repository.
 | `run-e2e.sh` + `e2e.js` | Tests the full extension in a VS Code window. | 30 seconds |
 | `demo.sh` | Opens a VS Code window so that you can try the extension. | Until you close the window |
 | `mock_databricks.py` | The fake Databricks server. The test and the demo start it. | |
-| `tableViz/unit/` | Tests the pure code and the demo data of "Visualize Table". | 1 second |
+| `tableViz/unit/` | Tests the pure code, the SQL and the demo data of "Visualize Table". | 1 second |
+| `tableViz/webview/` | Tests the content of each kind of detail card. | 1 second |
 | `tableViz/integration/demo.cjs` | Tests "Visualize Table" in a VS Code window. `e2e.js` runs it. | 2 seconds |
 | `tableViz/harness/` | A page that shows a board in a normal browser. | |
 
@@ -68,14 +69,16 @@ The tests make sure that the extension obeys these rules:
 ## Test the code of "Visualize Table"
 
 ```bash
-node --test "test/tableViz/unit/*.test.ts"
+npm run test:unit
 ```
 
-Node.js runs the TypeScript files directly. The last lines of the output give
-the number of tests that passed and failed:
+This command also runs the two tests above. Node.js runs the TypeScript files
+in `tableViz/unit/` directly. It cannot run the `.tsx` file in
+`tableViz/webview/`, so the command converts that file with esbuild first.
+The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 23
+ℹ pass 51
 ℹ fail 0
 ```
 
@@ -86,6 +89,17 @@ The tests make sure of these things:
 - Each number from the demo profiler is equal to a direct count of the rows.
 - Each value goes in exactly one histogram bin.
 - The host refuses a message from the webview that has the wrong shape.
+- Each SQL statement is equal to the text in `tableViz/unit/sql.test.ts.snapshot`.
+  A table name or column name never goes into a statement without backticks.
+- Each kind of detail card shows the correct numbers, and each button has a
+  name for a screen reader.
+
+If you change a SQL builder on purpose, write the snapshot file again and
+read the difference before you commit it:
+
+```bash
+node --test --test-update-snapshots "test/tableViz/unit/sql.test.ts"
+```
 
 ## Test the full extension
 
@@ -118,6 +132,7 @@ ok   writes new cells in Databricks format
 ok   reopening as text sticks
 ok   tableViz: Visualize Table opens a board
 ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
+ok   tableViz: a statistics request gives numbers and the SQL behind them
 ok   tableViz: a bad table name opens no board
 ok   tableViz: a missing table shows a plain error
 PASS
@@ -146,7 +161,10 @@ Then open one of these addresses:
 http://localhost:8791/index.html?theme=dark
 http://localhost:8791/index.html?theme=light&table=demo.shop.orders_2025
 http://localhost:8791/index.html?theme=hc
+http://localhost:8791/index.html?cards=amount,region,order_date&sql=1
 ```
+
+`cards` opens detail cards at the start. `sql=1` shows the SQL of each card.
 
 ## Try the extension
 

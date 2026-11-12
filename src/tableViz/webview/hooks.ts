@@ -60,3 +60,22 @@ export function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
   }, [seen]);
   return [ref, seen];
 }
+
+/**
+ * Get a value that changes only after the input was stable for some time.
+ *
+ * The bins slider uses this hook. The card then asks for a new histogram
+ * when the user stops, not for each step of the slider.
+ *
+ * @example
+ * const [bins, setBins] = useState(30);
+ * const settled = useDebounced(bins, 300);   // follows `bins` 300 ms later
+ */
+export function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}

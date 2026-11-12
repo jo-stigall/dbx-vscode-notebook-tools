@@ -62,6 +62,25 @@ exports.main = async function main(log) {
   assert.ok(!exchanges.some((x) => x.response && x.response.type === 'error'), 'no request failed');
   log('tableViz: the overview of demo.shop.orders_2026 has the correct numbers');
 
+  // 2b. A detail card asks for statistics. Send the same request that the card sends, and check the answer and its SQL.
+  const dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
+  await board.dispatcher.handle({
+    type: 'request',
+    id: 'test-stats',
+    request: { type: 'numericStats', dataset, columns: [{ name: 'amount', typeText: 'decimal(10,2)' }] },
+  });
+  const stats = exchanges.find((x) => x.id === 'test-stats').response.result;
+  assert.strictEqual(stats.nonNull, 110000);
+  assert.strictEqual(stats.min, '2.33');
+  assert.ok(Math.abs(stats.percentiles.find((p) => p.p === 0.5).value - 49.26) < 0.01, 'the median of amount');
+  assert.strictEqual(stats.sql.length, 1);
+  assert.ok(stats.sql[0].includes("-- :tbl = '`demo`.`shop`.`orders_2026`'") && stats.sql[0].includes('approx_percentile('), 'the result has the SQL of the request');
+  // A message that is not a known request gets no answer and runs nothing.
+  const count = exchanges.length;
+  await board.dispatcher.handle({ type: 'request', id: 'bad', request: { type: 'runSql', sql: 'DROP TABLE x' } });
+  assert.strictEqual(exchanges.length, count);
+  log('tableViz: a statistics request gives numbers and the SQL behind them');
+
   // 3. A name that is not a three-part name opens no board.
   const tabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview).length;
   const before = tabs();

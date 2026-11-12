@@ -1,0 +1,300 @@
+exports[`dateCounts 1`] = `
+-- :c0 = '\`order_ts\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  CAST(CAST(date_trunc('WEEK', IDENTIFIER(:c0)) AS DATE) AS STRING) AS \`start\`,
+  count(*) AS \`n\`
+FROM IDENTIFIER(:tbl)
+WHERE IDENTIFIER(:c0) IS NOT NULL
+GROUP BY 1
+ORDER BY 1
+`;
+
+exports[`dateCounts 2`] = `
+SELECT
+  CAST(CAST(date_trunc('MONTH', \`select\`) AS DATE) AS STRING) AS \`start\`,
+  count(*) AS \`n\`
+FROM \`main\`.\`sales\`.\`orders\` VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+WHERE (
+  order_date >= '2026-01-01' AND region = 'EMEA'
+) AND \`select\` IS NOT NULL
+GROUP BY 1
+ORDER BY 1
+`;
+
+exports[`frequency 1`] = `
+-- :c0 = '\`region\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+-- :limit = 21
+SELECT \`value\`, \`n\`, sum(\`n\`) OVER () AS \`total\`
+FROM (
+  SELECT CAST(IDENTIFIER(:c0) AS STRING) AS \`value\`, count(*) AS \`n\`
+  FROM IDENTIFIER(:tbl)
+  GROUP BY 1
+)
+ORDER BY CASE WHEN \`value\` IS NULL THEN 0 ELSE 1 END, \`n\` DESC, \`value\`
+LIMIT :limit
+`;
+
+exports[`frequency 2`] = `
+-- :c0 = '\`unit price\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+-- :limit = 51
+SELECT \`value\`, \`n\`, sum(\`n\`) OVER () AS \`total\`
+FROM (
+  SELECT CAST(IDENTIFIER(:c0) AS STRING) AS \`value\`, count(*) AS \`n\`
+  FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+  WHERE (
+    order_date >= '2026-01-01' AND region = 'EMEA'
+  )
+  GROUP BY 1
+)
+ORDER BY CASE WHEN \`value\` IS NULL THEN 0 ELSE 1 END, \`n\` DESC, \`value\`
+LIMIT :limit
+`;
+
+exports[`histogram 1`] = `
+-- :c0 = '\`amount\`'
+-- :lo = 0.5
+-- :hi = 5000
+-- :bins = 30
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) = :hi THEN :bins ELSE width_bucket(CAST(IDENTIFIER(:c0) AS DOUBLE), :lo, :hi, :bins) END AS \`bucket\`,
+  count(*) AS \`n\`
+FROM IDENTIFIER(:tbl)
+WHERE CAST(IDENTIFIER(:c0) AS DOUBLE) IS NOT NULL
+GROUP BY 1
+`;
+
+exports[`histogram 2`] = `
+-- :c0 = '\`amount\`'
+-- :lo = -10
+-- :hi = 1e+21
+-- :bins = 200
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) = :hi THEN :bins ELSE width_bucket(CAST(IDENTIFIER(:c0) AS DOUBLE), :lo, :hi, :bins) END AS \`bucket\`,
+  count(*) AS \`n\`
+FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+WHERE (
+  order_date >= '2026-01-01' AND region = 'EMEA'
+) AND CAST(IDENTIFIER(:c0) AS DOUBLE) IS NOT NULL
+GROUP BY 1
+`;
+
+exports[`histogram 3`] = `
+-- :lo = 1
+-- :hi = 40
+-- :bins = 10
+SELECT
+  CASE WHEN CAST(length(CAST(\`we\`\`ird\` AS STRING)) AS DOUBLE) = :hi THEN :bins ELSE width_bucket(CAST(length(CAST(\`we\`\`ird\` AS STRING)) AS DOUBLE), :lo, :hi, :bins) END AS \`bucket\`,
+  count(*) AS \`n\`
+FROM \`główny\`.\`sales data\`.\`select\`\`from\`
+WHERE CAST(length(CAST(\`we\`\`ird\` AS STRING)) AS DOUBLE) IS NOT NULL
+GROUP BY 1
+`;
+
+exports[`numericStats 1`] = `
+-- :c0 = '\`amount\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT \`n\`, \`nn\`, \`zeros\`, \`negatives\`, \`min\`, \`max\`, \`mean\`, \`stddev\`, \`p\`[0] AS \`p0\`, \`p\`[1] AS \`p1\`, \`p\`[2] AS \`p2\`, \`p\`[3] AS \`p3\`, \`p\`[4] AS \`p4\`, \`p\`[5] AS \`p5\`, \`p\`[6] AS \`p6\`
+FROM (
+  SELECT
+    count(*) AS \`n\`,
+    count(IDENTIFIER(:c0)) AS \`nn\`,
+    count_if(IDENTIFIER(:c0) = 0) AS \`zeros\`,
+    count_if(IDENTIFIER(:c0) < 0) AS \`negatives\`,
+    CAST(min(IDENTIFIER(:c0)) AS STRING) AS \`min\`,
+    CAST(max(IDENTIFIER(:c0)) AS STRING) AS \`max\`,
+    avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`mean\`,
+    stddev(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`stddev\`,
+    approx_percentile(CAST(IDENTIFIER(:c0) AS DOUBLE), array(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)) AS \`p\`
+  FROM IDENTIFIER(:tbl)
+)
+`;
+
+exports[`numericStats 2`] = `
+-- :c0 = '\`amount\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT \`n\`, \`nn\`, \`zeros\`, \`negatives\`, \`min\`, \`max\`, \`mean\`, \`stddev\`, \`p\`[0] AS \`p0\`, \`p\`[1] AS \`p1\`, \`p\`[2] AS \`p2\`, \`p\`[3] AS \`p3\`, \`p\`[4] AS \`p4\`, \`p\`[5] AS \`p5\`, \`p\`[6] AS \`p6\`
+FROM (
+  SELECT
+    count(*) AS \`n\`,
+    count(IDENTIFIER(:c0)) AS \`nn\`,
+    count_if(IDENTIFIER(:c0) = 0) AS \`zeros\`,
+    count_if(IDENTIFIER(:c0) < 0) AS \`negatives\`,
+    CAST(min(IDENTIFIER(:c0)) AS STRING) AS \`min\`,
+    CAST(max(IDENTIFIER(:c0)) AS STRING) AS \`max\`,
+    avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`mean\`,
+    stddev(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`stddev\`,
+    percentile(CAST(IDENTIFIER(:c0) AS DOUBLE), array(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)) AS \`p\`
+  FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+  WHERE (
+    order_date >= '2026-01-01' AND region = 'EMEA'
+  )
+)
+`;
+
+exports[`numericStats 3`] = `
+-- :c0 = '\`we\`\`ird\`'
+-- :tbl = '\`główny\`.\`sales data\`.\`select\`\`from\`'
+SELECT \`n\`, \`nn\`, \`zeros\`, \`negatives\`, \`min\`, \`max\`, \`mean\`, \`stddev\`, \`p\`[0] AS \`p0\`, \`p\`[1] AS \`p1\`, \`p\`[2] AS \`p2\`, \`p\`[3] AS \`p3\`, \`p\`[4] AS \`p4\`, \`p\`[5] AS \`p5\`, \`p\`[6] AS \`p6\`
+FROM (
+  SELECT
+    count(*) AS \`n\`,
+    count(length(CAST(IDENTIFIER(:c0) AS STRING))) AS \`nn\`,
+    count_if(length(CAST(IDENTIFIER(:c0) AS STRING)) = 0) AS \`zeros\`,
+    count_if(length(CAST(IDENTIFIER(:c0) AS STRING)) < 0) AS \`negatives\`,
+    CAST(min(length(CAST(IDENTIFIER(:c0) AS STRING))) AS STRING) AS \`min\`,
+    CAST(max(length(CAST(IDENTIFIER(:c0) AS STRING))) AS STRING) AS \`max\`,
+    avg(CAST(length(CAST(IDENTIFIER(:c0) AS STRING)) AS DOUBLE)) AS \`mean\`,
+    stddev(CAST(length(CAST(IDENTIFIER(:c0) AS STRING)) AS DOUBLE)) AS \`stddev\`,
+    approx_percentile(CAST(length(CAST(IDENTIFIER(:c0) AS STRING)) AS DOUBLE), array(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)) AS \`p\`
+  FROM IDENTIFIER(:tbl)
+)
+`;
+
+exports[`overview: difficult names 1`] = `
+-- :c0 = '\`unit price\`'
+-- :c1 = '\`we\`\`ird\`'
+-- :c2 = '\`zamówienie\`'
+-- :c3 = '\`select\`'
+-- :tbl = '\`główny\`.\`sales data\`.\`select\`\`from\`'
+SELECT
+  count(*) AS \`n\`,
+  count(IDENTIFIER(:c0)) AS \`c0_nn\`,
+  approx_count_distinct(IDENTIFIER(:c0)) AS \`c0_d\`,
+  CAST(min(IDENTIFIER(:c0)) AS STRING) AS \`c0_min\`,
+  CAST(max(IDENTIFIER(:c0)) AS STRING) AS \`c0_max\`,
+  avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`c0_avg\`,
+  count(IDENTIFIER(:c1)) AS \`c1_nn\`,
+  approx_count_distinct(IDENTIFIER(:c1)) AS \`c1_d\`,
+  count(IDENTIFIER(:c2)) AS \`c2_nn\`,
+  approx_count_distinct(IDENTIFIER(:c2)) AS \`c2_d\`,
+  CAST(min(IDENTIFIER(:c2)) AS STRING) AS \`c2_min\`,
+  CAST(max(IDENTIFIER(:c2)) AS STRING) AS \`c2_max\`,
+  avg(CAST(IDENTIFIER(:c2) AS DOUBLE)) AS \`c2_avg\`,
+  count(IDENTIFIER(:c3)) AS \`c3_nn\`,
+  approx_count_distinct(IDENTIFIER(:c3)) AS \`c3_d\`,
+  CAST(min(IDENTIFIER(:c3)) AS STRING) AS \`c3_min\`,
+  CAST(max(IDENTIFIER(:c3)) AS STRING) AS \`c3_max\`
+FROM IDENTIFIER(:tbl)
+`;
+
+exports[`overview: difficult names 2`] = `
+SELECT
+  count(*) AS \`n\`,
+  count(\`unit price\`) AS \`c0_nn\`,
+  approx_count_distinct(\`unit price\`) AS \`c0_d\`,
+  CAST(min(\`unit price\`) AS STRING) AS \`c0_min\`,
+  CAST(max(\`unit price\`) AS STRING) AS \`c0_max\`,
+  avg(CAST(\`unit price\` AS DOUBLE)) AS \`c0_avg\`,
+  count(\`we\`\`ird\`) AS \`c1_nn\`,
+  approx_count_distinct(\`we\`\`ird\`) AS \`c1_d\`,
+  count(\`zamówienie\`) AS \`c2_nn\`,
+  approx_count_distinct(\`zamówienie\`) AS \`c2_d\`,
+  CAST(min(\`zamówienie\`) AS STRING) AS \`c2_min\`,
+  CAST(max(\`zamówienie\`) AS STRING) AS \`c2_max\`,
+  avg(CAST(\`zamówienie\` AS DOUBLE)) AS \`c2_avg\`,
+  count(\`select\`) AS \`c3_nn\`,
+  approx_count_distinct(\`select\`) AS \`c3_d\`,
+  CAST(min(\`select\`) AS STRING) AS \`c3_min\`,
+  CAST(max(\`select\`) AS STRING) AS \`c3_max\`
+FROM \`główny\`.\`sales data\`.\`select\`\`from\`
+`;
+
+exports[`overview: filter, version and sample 1`] = `
+-- :c0 = '\`amount\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  count(*) AS \`n\`,
+  count(IDENTIFIER(:c0)) AS \`c0_nn\`,
+  approx_count_distinct(IDENTIFIER(:c0)) AS \`c0_d\`,
+  CAST(min(IDENTIFIER(:c0)) AS STRING) AS \`c0_min\`,
+  CAST(max(IDENTIFIER(:c0)) AS STRING) AS \`c0_max\`,
+  avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`c0_avg\`
+FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (12.5 PERCENT)
+WHERE (
+  order_date >= '2026-01-01' AND region = 'EMEA'
+)
+`;
+
+exports[`overview: filter, version and sample 2`] = `
+-- :c0 = '\`amount\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  count(*) AS \`n\`,
+  count(IDENTIFIER(:c0)) AS \`c0_nn\`,
+  approx_count_distinct(IDENTIFIER(:c0)) AS \`c0_d\`,
+  CAST(min(IDENTIFIER(:c0)) AS STRING) AS \`c0_min\`,
+  CAST(max(IDENTIFIER(:c0)) AS STRING) AS \`c0_max\`,
+  avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`c0_avg\`
+FROM IDENTIFIER(:tbl) TIMESTAMP AS OF '2026-11-01T02:05:00Z'
+`;
+
+exports[`overview: one statement for all column types 1`] = `
+-- :c0 = '\`order_id\`'
+-- :c1 = '\`amount\`'
+-- :c2 = '\`region\`'
+-- :c3 = '\`is_gift\`'
+-- :c4 = '\`order_date\`'
+-- :c5 = '\`order_ts\`'
+-- :c6 = '\`items\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  count(*) AS \`n\`,
+  count(IDENTIFIER(:c0)) AS \`c0_nn\`,
+  approx_count_distinct(IDENTIFIER(:c0)) AS \`c0_d\`,
+  CAST(min(IDENTIFIER(:c0)) AS STRING) AS \`c0_min\`,
+  CAST(max(IDENTIFIER(:c0)) AS STRING) AS \`c0_max\`,
+  avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`c0_avg\`,
+  count(IDENTIFIER(:c1)) AS \`c1_nn\`,
+  approx_count_distinct(IDENTIFIER(:c1)) AS \`c1_d\`,
+  CAST(min(IDENTIFIER(:c1)) AS STRING) AS \`c1_min\`,
+  CAST(max(IDENTIFIER(:c1)) AS STRING) AS \`c1_max\`,
+  avg(CAST(IDENTIFIER(:c1) AS DOUBLE)) AS \`c1_avg\`,
+  count(IDENTIFIER(:c2)) AS \`c2_nn\`,
+  approx_count_distinct(IDENTIFIER(:c2)) AS \`c2_d\`,
+  count(IDENTIFIER(:c3)) AS \`c3_nn\`,
+  approx_count_distinct(IDENTIFIER(:c3)) AS \`c3_d\`,
+  count(IDENTIFIER(:c4)) AS \`c4_nn\`,
+  approx_count_distinct(IDENTIFIER(:c4)) AS \`c4_d\`,
+  CAST(min(IDENTIFIER(:c4)) AS STRING) AS \`c4_min\`,
+  CAST(max(IDENTIFIER(:c4)) AS STRING) AS \`c4_max\`,
+  count(IDENTIFIER(:c5)) AS \`c5_nn\`,
+  approx_count_distinct(IDENTIFIER(:c5)) AS \`c5_d\`,
+  CAST(min(IDENTIFIER(:c5)) AS STRING) AS \`c5_min\`,
+  CAST(max(IDENTIFIER(:c5)) AS STRING) AS \`c5_max\`,
+  count(IDENTIFIER(:c6)) AS \`c6_nn\`
+FROM IDENTIFIER(:tbl)
+`;
+
+exports[`overview: one statement for all column types 2`] = `
+-- :c0 = '\`amount\`'
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+SELECT
+  count(*) AS \`n\`,
+  count(IDENTIFIER(:c0)) AS \`c0_nn\`,
+  count(DISTINCT IDENTIFIER(:c0)) AS \`c0_d\`,
+  CAST(min(IDENTIFIER(:c0)) AS STRING) AS \`c0_min\`,
+  CAST(max(IDENTIFIER(:c0)) AS STRING) AS \`c0_max\`,
+  avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS \`c0_avg\`
+FROM IDENTIFIER(:tbl)
+`;
+
+exports[`tableDetails 1`] = `
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+DESCRIBE DETAIL IDENTIFIER(:tbl)
+;
+-- :tbl = '\`main\`.\`sales\`.\`orders\`'
+DESCRIBE HISTORY IDENTIFIER(:tbl) LIMIT 1
+`;
+
+exports[`tableDetails 2`] = `
+-- :tbl = '\`główny\`.\`sales data\`.\`select\`\`from\`'
+DESCRIBE DETAIL IDENTIFIER(:tbl)
+;
+-- :tbl = '\`główny\`.\`sales data\`.\`select\`\`from\`'
+DESCRIBE HISTORY IDENTIFIER(:tbl) LIMIT 1
+`;

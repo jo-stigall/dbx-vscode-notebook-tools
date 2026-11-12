@@ -16,7 +16,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p src/tableViz/tsconfig.core.json && tsc -p src/tableViz/tsconfig.host.json && tsc -p src/tableViz/tsconfig.webview.json && tsc -p test/tableViz/tsconfig.json",
-    "test:unit": "node test/format.test.js && node test/client.test.js && node --test \"test/tableViz/unit/*.test.ts\"",
+    "test:unit": "npm run build && node test/format.test.js && node test/client.test.js && LC_ALL=en_US.UTF-8 node --test \"test/tableViz/unit/*.test.ts\" \"dist/test/*.test.cjs\"",
     "test:e2e": "npm run build && test/run-e2e.sh",
     "test": "npm run typecheck && npm run test:unit && npm run test:e2e",
     "package": "npm run build && python3 scripts/package.py"
@@ -124,11 +124,27 @@
           "type": "string",
           "default": "",
           "description": "Path to the Databricks CLI, used for OAuth login when no token is configured. Defaults to the CLI bundled with the Databricks extension, then 'databricks' on PATH."
+        },
+        "dbxNotebook.tableViz.defaultBins": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 200,
+          "markdownDescription": "The number of bins of a new histogram in \"Visualize Table\". You can change the number on each card."
+        },
+        "dbxNotebook.tableViz.topValues": {
+          "type": "integer",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "The number of values in the bar chart of a category column in \"Visualize Table\". The chart shows the other values as one bar, \"Other\"."
         }
       }
     }
   },
   "dependencies": {
+    "@vscode/codicons": "0.0.46-24",
+    "echarts": "6.1.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "zod": "4.6.7"

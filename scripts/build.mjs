@@ -10,6 +10,7 @@
  *     dist/tableViz/webview.js    the code that runs in the webview
  *     dist/tableViz/webview.css   the styles of the webview
  *     dist/harness/               a test page that shows the webview in a browser, with demo data
+ *     dist/test/                  the tests of the webview components, as files that Node.js can run
  *
  * The rest of the extension (extension.js and src/*.js) needs no build.
  */
@@ -38,9 +39,26 @@ const browser = {
   minify: true,
   // The new JSX form of React 17 and later. Without it, each .tsx file must import React.
   jsx: 'automatic',
+  // The icon font of @vscode/codicons becomes a file next to the style sheet.
+  loader: { '.ttf': 'file' },
+  assetNames: '[name]',
   define: { 'process.env.NODE_ENV': '"production"' },
 };
 await esbuild.build({ ...browser, entryPoints: { webview: 'src/tableViz/webview/main.tsx' }, outdir: 'dist/tableViz' });
+
+// The tests of the webview components. Node.js cannot run .tsx files, so esbuild converts them.
+await esbuild.build({
+  ...common,
+  entryPoints: ['test/tableViz/webview/cards.test.tsx'],
+  outdir: 'dist/test',
+  outExtension: { '.js': '.cjs' },
+  platform: 'node',
+  // react-dom/server is a CommonJS package that loads Node.js modules with require().
+  format: 'cjs',
+  jsx: 'automatic',
+  define: { 'process.env.NODE_ENV': '"production"' },
+  loader: { '.css': 'empty', '.ttf': 'empty' },
+});
 
 // The test page. The installed extension does not contain it.
 await esbuild.build({ ...browser, entryPoints: { harness: 'test/tableViz/harness/harness.ts' }, outdir: 'dist/harness' });

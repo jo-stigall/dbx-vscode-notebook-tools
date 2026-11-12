@@ -144,3 +144,85 @@ test('message checks accept good messages and refuse bad ones', () => {
   for (const request of bad) assert.equal(requestSchema.safeParse(request).success, false, JSON.stringify(request));
   assert.equal(toHostSchema.safeParse({ type: 'request', request: { type: 'tableDetails', dataset } }).success, false); // no id
 });
+
+test('frequencyRows: shares, cumulative shares, Other and null', async () => {
+  const { frequencyRows } = await import('../../../src/tableViz/core/derive.ts');
+  const result = {
+    type: 'frequency' as const,
+    sql: [],
+    approximate: false,
+    asOf: '',
+    rowCount: 100,
+    nulls: 5,
+    values: [
+      { value: 'web', count: 60 },
+      { value: 'store', count: 30 },
+      { value: 'phone', count: 4 },
+      { value: 'fax', count: 1 },
+    ],
+  };
+  assert.deepEqual(frequencyRows(result, { limit: 2 }), [
+    { label: 'web', role: 'value', count: 60, share: 0.6, cumulative: 0.6 },
+    { label: 'store', role: 'value', count: 30, share: 0.3, cumulative: 0.9 },
+    { label: 'Other', role: 'other', count: 5, share: 0.05 },
+    { label: '(null)', role: 'null', count: 5, share: 0.05 },
+  ]);
+  // All rows together are the full table.
+  for (const limit of [1, 2, 3, 4, undefined]) {
+    assert.equal(frequencyRows(result, { limit }).reduce((a, r) => a + r.count, 0), 100);
+  }
+  assert.deepEqual(frequencyRows(result, { sortBy: 'label' }).map((r) => r.label), ['fax', 'phone', 'store', 'web', '(null)']);
+  assert.equal(result.values[0]?.value, 'web', 'the function does not change the result');
+  const numbers = { ...result, nulls: 0, rowCount: 3, values: [{ value: '10', count: 1 }, { value: '9', count: 1 }, { value: '-2', count: 1 }] };
+  assert.deepEqual(frequencyRows(numbers, { sortBy: 'label', numeric: true }).map((r) => r.label), ['-2', '9', '10']);
+  assert.deepEqual(frequencyRows({ ...result, rowCount: 0, nulls: 0, values: [] }), []);
+});
+
+test('histogramBars: bins, below and above', async () => {
+  const { histogramBars } = await import('../../../src/tableViz/core/derive.ts');
+  const base = { type: 'histogram' as const, sql: [], approximate: false, asOf: '' };
+  assert.deepEqual(histogramBars({ ...base, counts: [5, 9], below: 0, above: 2 }, { lo: 0, hi: 10, bins: 2 }), [
+    { role: 'bin', from: 0, to: 5, count: 5 },
+    { role: 'bin', from: 5, to: 10, count: 9 },
+    { role: 'above', from: 10, count: 2 },
+  ]);
+  assert.equal(histogramBars({ ...base, counts: [1], below: 3, above: 0 }, { lo: 0, hi: 1, bins: 1 })[0]?.role, 'below');
+});
+
+test('fillPeriods: periods without rows, for each grain', async () => {
+  const { fillPeriods, spanDays, MAX_PERIODS } = await import('../../../src/tableViz/core/derive.ts');
+  assert.deepEqual(fillPeriods([{ start: '2026-01-01', count: 4 }, { start: '2026-03-01', count: 7 }], 'month'), {
+    periods: [
+      { start: '2026-01-01', count: 4 },
+      { start: '2026-02-01', count: 0 },
+      { start: '2026-03-01', count: 7 },
+    ],
+    empty: 1,
+  });
+  assert.equal(fillPeriods([{ start: '2026-02-27', count: 1 }, { start: '2026-03-02', count: 1 }], 'day').periods.length, 4);
+  assert.equal(fillPeriods([{ start: '2025-12-29', count: 1 }, { start: '2026-01-19', count: 1 }], 'week').empty, 2);
+  assert.equal(fillPeriods([{ start: '2020-01-01', count: 1 }, { start: '2026-01-01', count: 1 }], 'year').empty, 5);
+  assert.deepEqual(fillPeriods([], 'day'), { periods: [], empty: 0 });
+  // Too many periods: the function returns the buckets as they are.
+  const far = [{ start: '1900-01-01', count: 1 }, { start: '2026-01-01', count: 1 }];
+  assert.deepEqual(fillPeriods(far, 'day'), { periods: far, empty: undefined });
+  assert.ok(fillPeriods(far, 'month').periods.length < MAX_PERIODS);
+  assert.equal(spanDays('2026-01-01', '2026-12-31T23:59:59.000Z'), 364);
+});
+
+test('kindsFor and openCard', async () => {
+  const { kindsFor, openCard } = await import('../../../src/tableViz/core/derive.ts');
+  assert.deepEqual(kindsFor('int'), ['continuous', 'discrete', 'category', 'identifier']);
+  assert.deepEqual(kindsFor('string'), ['category', 'identifier']);
+  assert.deepEqual(kindsFor('timestamp'), ['date', 'category']);
+  assert.deepEqual(kindsFor('array<string>'), ['complex']);
+  // Each type permits the kind that detectKind() can select for it.
+  for (const [type, distinct] of [['int', 5], ['int', 500], ['bigint', 1000], ['double', 500], ['string', 5], ['string', 99_999], ['boolean', 2], ['date', 30], ['map<string,int>', undefined]] as const) {
+    assert.ok(kindsFor(type).includes(detectKind(type, distinct, 1000)), type);
+  }
+
+  const cards = [{ column: 'amount', pinned: false }, { column: 'region', pinned: true }];
+  assert.deepEqual(openCard(cards, 'channel'), [{ column: 'channel', pinned: false }, { column: 'region', pinned: true }]);
+  assert.equal(openCard(cards, 'amount'), cards, 'a column that has a card changes nothing');
+  assert.deepEqual(openCard([], 'x'), [{ column: 'x', pinned: false }]);
+});

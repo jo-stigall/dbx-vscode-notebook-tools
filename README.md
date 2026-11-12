@@ -138,6 +138,21 @@ The command "Databricks Notebook: Visualize Table" opens a page that shows
 each column of a table: its type, how many rows are null, how many different
 values it has, and a small chart of its values.
 
+Click the name of a column to open its detail card. The card shows a chart
+and a table that fit the column:
+
+| Column | The card shows |
+|---|---|
+| A number with many values | A histogram, and the mean, the median and other statistics. |
+| A number with few values, or a category | One bar for each value, and a table of the values with their counts. |
+| An ID | The number of different values, the values that repeat, and the lengths of the values. |
+| A date | The number of rows in each day, week, month or year. |
+
+On each card you can change how the feature reads the column (for example, a
+postal code is a category, not a number), show the chart as a table, show the
+SQL behind the numbers, and pin the card so that it stays next to the next
+card that you open.
+
 This part is not complete. It shows two demo tables only,
 `demo.shop.orders_2025` and `demo.shop.orders_2026`. It does not connect to
 your workspace yet. [docs/table-viz-design.md](docs/table-viz-design.md) has
@@ -163,6 +178,8 @@ the plan.
 | `dbxNotebook.profile` | empty | The name of your profile in `~/.databrickscfg`. Empty uses `DEFAULT`. |
 | `dbxNotebook.clusterId` | empty | The ID of your cluster. Example: `0101-123456-abcdefgh`. |
 | `dbxNotebook.cliPath` | empty | The path of the `databricks` command. Empty uses the one from the official extension. |
+| `dbxNotebook.tableViz.defaultBins` | 30 | The number of bins of a new histogram in "Visualize Table". From 5 to 200. |
+| `dbxNotebook.tableViz.topValues` | 20 | The number of values in the bar chart of a category column. From 1 to 100. |
 
 ## Limits
 

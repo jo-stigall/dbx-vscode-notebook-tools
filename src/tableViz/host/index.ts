@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import { displayTableName, parseTableName } from '../core/names.ts';
 import { ProfilerError, type Profiler } from '../core/profiler.ts';
-import { boardStateSchema, type BoardDatasets } from '../core/schema.ts';
+import { boardSettingsSchema, boardStateSchema, DEFAULT_SETTINGS, type BoardDatasets, type BoardSettings } from '../core/schema.ts';
 import { DemoProfiler } from '../demo/demoProfiler.ts';
 import { Board, VIEW_TYPE } from './board.ts';
 
@@ -46,7 +46,13 @@ export function activate(context: vscode.ExtensionContext): TableVizApi {
       nextStep: 'This version shows the demo tables only. Open demo.shop.orders_2026.',
     });
   };
-  const deps = { extensionUri: context.extensionUri, profilerFor, log };
+  /** Read "dbxNotebook.tableViz.*" from the VS Code settings. Use the defaults if a value is not valid. */
+  const settings = (): BoardSettings => {
+    const config = vscode.workspace.getConfiguration('dbxNotebook.tableViz');
+    const parsed = boardSettingsSchema.safeParse({ defaultBins: config.get('defaultBins'), topValues: config.get('topValues') });
+    return parsed.success ? parsed.data : DEFAULT_SETTINGS;
+  };
+  const deps = { extensionUri: context.extensionUri, profilerFor, settings, log };
 
   return {
     async visualizeTable(name) {

@@ -32,7 +32,11 @@ export type TableName = z.infer<typeof tableNameSchema>;
 /** A Delta version of a table: a version number or a time. */
 export const datasetVersionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('version'), n: z.string().regex(/^\d+$/) }),
-  z.strictObject({ kind: z.literal('timestamp'), ts: z.string().min(1) }),
+  // The builders write this text into the SQL statement, so the schema permits only the characters of a date and a time.
+  z.strictObject({
+    kind: z.literal('timestamp'),
+    ts: z.string().regex(/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?)?(Z|[+-]\d{2}:?\d{2})?$/),
+  }),
 ]);
 export type DatasetVersion = z.infer<typeof datasetVersionSchema>;
 
@@ -50,7 +54,7 @@ export const datasetSchema = z.strictObject({
   filter: z.string().optional(),
   version: datasetVersionSchema.optional(),
   /** When set, queries read this percent of the rows, and counts are estimates. */
-  sample: z.strictObject({ percent: z.number().gt(0).lte(100) }).optional(),
+  sample: z.strictObject({ percent: z.number().gte(0.01).lte(100) }).optional(),
 });
 export type Dataset = z.infer<typeof datasetSchema>;
 
@@ -85,6 +89,17 @@ export type Grain = z.infer<typeof grainSchema>;
 const oneColumn = z.tuple([columnRefSchema]);
 
 /**
+ * What a request measures in a column: the value, or the number of
+ * characters of the value as text. The card of an identifier column shows a
+ * histogram of the lengths.
+ */
+export const measureSchema = z.enum(['value', 'length']);
+export type Measure = z.infer<typeof measureSchema>;
+
+/** The percentiles in the statistics of a number column. */
+export const PERCENTILES = [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99] as const;
+
+/**
  * A question about a dataset. Each request type becomes one aggregate query.
  *
  * `columns` is a list in each request, so that a later version can add
@@ -94,9 +109,24 @@ export const requestSchema = z.discriminatedUnion('type', [
   /** The columns of the table, its size, its last change and its partition columns. */
   z.strictObject({ type: z.literal('tableDetails'), dataset: datasetSchema }),
   /** The row count, plus the null count, distinct count, min, max and mean of each column. */
-  z.strictObject({ type: z.literal('overview'), dataset: datasetSchema, columns: z.array(columnRefSchema).min(1).max(50) }),
+  z.strictObject({
+    type: z.literal('overview'),
+    dataset: datasetSchema,
+    columns: z.array(columnRefSchema).min(1).max(50),
+    /** true: count the different values exactly. This is slower. */
+    exact: z.boolean().optional(),
+  }),
+  /** The count, the mean, the percentiles and other statistics of a number column. */
+  z.strictObject({
+    type: z.literal('numericStats'),
+    dataset: datasetSchema,
+    columns: oneColumn,
+    measure: measureSchema.optional(),
+    /** true: compute the percentiles exactly. This is slower. */
+    exact: z.boolean().optional(),
+  }),
   /** The number of rows in each bin of a number column. */
-  z.strictObject({ type: z.literal('histogram'), dataset: datasetSchema, columns: oneColumn, edges: binEdgesSchema }),
+  z.strictObject({ type: z.literal('histogram'), dataset: datasetSchema, columns: oneColumn, edges: binEdgesSchema, measure: measureSchema.optional() }),
   /** The most frequent values of a column and their counts. */
   z.strictObject({ type: z.literal('frequency'), dataset: datasetSchema, columns: oneColumn, top: z.number().int().min(1).max(1000) }),
   /** The number of rows in each day, week, month or year of a date column. */
@@ -145,6 +175,23 @@ export const resultSchema = z.discriminatedUnion('type', [
   z.strictObject({ ...resultBase, type: z.literal('overview'), rowCount: z.number(), columns: z.array(overviewColumnSchema) }),
   z.strictObject({
     ...resultBase,
+    type: z.literal('numericStats'),
+    /** All rows of the dataset, nulls included. */
+    rowCount: z.number(),
+    nonNull: z.number(),
+    zeros: z.number(),
+    negatives: z.number(),
+    /** min, max, mean and stddev are not set if all rows are null. */
+    min: z.string().optional(),
+    max: z.string().optional(),
+    mean: z.number().optional(),
+    /** The sample standard deviation. Not set if the column has fewer than two values. */
+    stddev: z.number().optional(),
+    /** One entry for each number in PERCENTILES. Example: { p: 0.5, value: 49.4 } is the median. */
+    percentiles: z.array(z.strictObject({ p: z.number(), value: z.number() })),
+  }),
+  z.strictObject({
+    ...resultBase,
     type: z.literal('histogram'),
     /** One count for each bin. */
     counts: z.array(z.number()),
@@ -177,10 +224,43 @@ export type ResultOf<T extends Result['type']> = Extract<Result, { type: T }>;
 export const boardDatasetsSchema = z.strictObject({ a: datasetSchema, b: datasetSchema.optional() });
 export type BoardDatasets = z.infer<typeof boardDatasetsSchema>;
 
+/** The settings of one detail card. A setting that is not set uses its default. */
+export const cardSchema = z.strictObject({
+  /** The name of the column that the card shows. */
+  column: z.string(),
+  /** true: the card stays on the board when you open a different column. */
+  pinned: z.boolean(),
+  /** The kind that the user selected. Not set: the feature decides the kind. */
+  kind: columnKindSchema.optional(),
+  bins: z.number().int().min(5).max(200).optional(),
+  logScale: z.boolean().optional(),
+  /** true: the histogram shows the range from the 1st to the 99th percentile. */
+  clip: z.boolean().optional(),
+  grain: grainSchema.optional(),
+  sortBy: z.enum(['count', 'label']).optional(),
+  /** true: the card shows the numbers of its chart as a table. */
+  asTable: z.boolean().optional(),
+  showSql: z.boolean().optional(),
+  /** true: the card asked for exact numbers. */
+  exact: z.boolean().optional(),
+});
+export type Card = z.infer<typeof cardSchema>;
+
+/** The settings of the feature that the webview needs. They come from the VS Code settings. */
+export const boardSettingsSchema = z.strictObject({
+  /** The number of bins of a new histogram. */
+  defaultBins: z.number().int().min(5).max(200),
+  /** The number of values in a category chart. */
+  topValues: z.number().int().min(1).max(100),
+});
+export type BoardSettings = z.infer<typeof boardSettingsSchema>;
+export const DEFAULT_SETTINGS: BoardSettings = { defaultBins: 30, topValues: 20 };
+
 /** What the webview stores so that a board comes back after a window reload. It contains no data and no token. */
 export const boardStateSchema = z.strictObject({
   datasets: boardDatasetsSchema,
   ui: z.strictObject({ search: z.string(), sort: z.enum(['table', 'nulls', 'distinct']) }).optional(),
+  cards: z.array(cardSchema).optional(),
 });
 export type BoardState = z.infer<typeof boardStateSchema>;
 
@@ -198,7 +278,7 @@ export type ToHost = z.infer<typeof toHostSchema>;
 /** A message from the extension host to the webview. */
 export const toWebviewSchema = z.discriminatedUnion('type', [
   /** The answer to "ready": the datasets that the board shows. */
-  z.strictObject({ type: z.literal('init'), datasets: boardDatasetsSchema }),
+  z.strictObject({ type: z.literal('init'), datasets: boardDatasetsSchema, settings: boardSettingsSchema }),
   z.strictObject({ type: z.literal('result'), id: z.string(), result: resultSchema }),
   z.strictObject({ type: z.literal('progress'), id: z.string(), state: z.enum(['queued', 'running']), statementId: z.string().optional() }),
   z.strictObject({

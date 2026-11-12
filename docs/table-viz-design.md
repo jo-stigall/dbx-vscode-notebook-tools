@@ -67,8 +67,10 @@ type Result = { type: Request['type']; sql: string[]; approximate: boolean; asOf
 ```
 
 The schemas in `src/tableViz/core/schema.ts` are the source of these types.
-The first five request types exist now. The other three come with column
-detail and compare mode.
+The first six request types exist now. `driftBins` and `validateFilter` come
+with compare mode and filters. `numericStats` and `histogram` have a
+`measure` field: `'length'` measures the number of characters of a value,
+for the card of an identifier column.
 
 Numbers that can be larger than 2^53, and decimals, stay strings in all
 results.
@@ -173,6 +175,24 @@ behaves in an esbuild bundle, and all live queries.
   show hundreds of them. ECharts comes with the column detail cards.
 - No linter yet. The extension has none, and the TypeScript compiler checks
   the feature in strict mode.
+
+## Decisions in milestone 3
+
+- SQL: `min` and `max` are cast to STRING in the statement, so that a large
+  integer or a decimal arrives with all its digits on both kinds of compute.
+- SQL: the Delta version, the sample percent and the period of `date_trunc`
+  are in the statement text, not in parameters. The schema permits only
+  digits, date characters and four fixed words for them.
+- SQL: the builders can write names between backticks in place of
+  `IDENTIFIER()`. This is the fallback if a real workspace refuses
+  `IDENTIFIER()` in some position.
+- SQL: `frequency` gets the total row count from a window function in the
+  same statement, so "Other" needs no second scan.
+- The frequency table of a category shows the 200 most frequent values.
+- The demo profiler puts the SQL of each request in its result, so that
+  "Show SQL" works in demo mode. It does not run that SQL.
+- The card tests draw each card as HTML text in Node.js. A screenshot of
+  each card in each theme needs a browser tool (question 6).
 
 ## Proposals
 

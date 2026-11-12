@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { displayTableName } from '../core/names.ts';
 import { createDispatcher, type Dispatcher, type Profiler } from '../core/profiler.ts';
-import type { BoardDatasets, ToWebview } from '../core/schema.ts';
+import type { BoardDatasets, BoardSettings, ToWebview } from '../core/schema.ts';
 
 /** The name that VS Code uses for the panels of this feature. package.json uses the same name. */
 export const VIEW_TYPE = 'dbxNotebook.tableViz.board';
@@ -19,6 +19,8 @@ export interface BoardDeps {
   extensionUri: vscode.Uri;
   /** Returns the profiler for a profile name. */
   profilerFor: (profile: string) => Profiler;
+  /** Reads the settings of the feature from the VS Code settings. */
+  settings: () => BoardSettings;
   log: vscode.LogOutputChannel;
 }
 
@@ -66,7 +68,7 @@ export class Board {
       },
       onOther: () => {
         this.ready = true;
-        post({ type: 'init', datasets });
+        post({ type: 'init', datasets, settings: deps.settings() });
       },
     });
 

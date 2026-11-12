@@ -4,12 +4,17 @@
  * It needs no Databricks workspace. It is also the reference for the SQL
  * profiler: for the same data, the two profilers must give the same numbers.
  * All numbers from this profiler are exact.
+ *
+ * Each result contains the SQL that the SQL profiler runs for the same
+ * request. The demo profiler does not run that SQL. It is there so that
+ * "Show SQL" works in demo mode.
  */
 import { binIndex, formatDay, truncateDay } from '../core/bins.ts';
 import { isNumeric } from '../core/kinds.ts';
 import { displayTableName } from '../core/names.ts';
 import { CancelledError, ProfilerError, type ProfileOptions, type Profiler } from '../core/profiler.ts';
-import type { ColumnRef, Dataset, OverviewColumn, Request, RequestOf, Result, ResultOf } from '../core/schema.ts';
+import { PERCENTILES, type ColumnRef, type Dataset, type Measure, type OverviewColumn, type Request, type RequestOf, type Result, type ResultOf } from '../core/schema.ts';
+import { buildStatements, renderStatement } from '../core/sql.ts';
 import { demoTable, formatDemoValue, type DemoColumn, type DemoTable } from './data.ts';
 
 const DAY_MS = 86_400_000;
@@ -47,6 +52,37 @@ function toNumber(column: DemoColumn, value: number): number {
   return column.family === 'decimal' ? value / 10 ** column.scale : value;
 }
 
+/**
+ * Get the numbers that a request measures: the values of a number column, or
+ * the lengths of the values as text. The list does not contain the nulls.
+ */
+function measuredNumbers(column: DemoColumn, measure: Measure | undefined): number[] {
+  const out: number[] = [];
+  if (measure === 'length') {
+    if (column.family === 'complex') throw new ProfilerError(`The column ${column.name} has the type ${column.typeText}, so its values have no length.`);
+    for (const v of column.values) if (v !== null) out.push(formatDemoValue(column, v).length);
+  } else {
+    if (!isNumeric(column.family)) throw new ProfilerError(`The column ${column.name} is not a number.`);
+    for (const v of column.values) if (v !== null) out.push(toNumber(column, v as number));
+  }
+  return out;
+}
+
+/**
+ * Get a percentile of sorted numbers, as the Databricks function `percentile` does:
+ * if the position is between two values, the result is between them in the same proportion.
+ *
+ * @example
+ * percentileOf([10, 20, 30, 40], 0.5)   // 25
+ */
+export function percentileOf(sorted: number[], p: number): number {
+  const position = p * (sorted.length - 1);
+  const below = Math.floor(position);
+  const above = Math.ceil(position);
+  const low = sorted[below] as number;
+  return low + ((sorted[above] as number) - low) * (position - below);
+}
+
 export class DemoProfiler implements Profiler {
   async profile(request: Request, options: ProfileOptions = {}): Promise<Result> {
     options.onProgress?.('running');
@@ -54,12 +90,14 @@ export class DemoProfiler implements Profiler {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     if (options.signal?.aborted) throw new CancelledError();
 
-    const base = { sql: [], approximate: false, asOf: new Date().toISOString() };
+    const base = { sql: buildStatements(request).map(renderStatement), approximate: false, asOf: new Date().toISOString() };
     switch (request.type) {
       case 'tableDetails':
         return { ...base, ...this.tableDetails(request) };
       case 'overview':
         return { ...base, ...this.overview(request) };
+      case 'numericStats':
+        return { ...base, ...this.numericStats(request) };
       case 'histogram':
         return { ...base, ...this.histogram(request) };
       case 'frequency':
@@ -114,18 +152,42 @@ export class DemoProfiler implements Profiler {
     return { type: 'overview', rowCount: table.rowCount, columns };
   }
 
+  private numericStats(request: RequestOf<'numericStats'>): Omit<ResultOf<'numericStats'>, 'sql' | 'approximate' | 'asOf'> {
+    const table = tableOf(request.dataset);
+    const column = columnOf(table, request.columns[0]);
+    const numbers = measuredNumbers(column, request.measure);
+    const n = numbers.length;
+    const out: Omit<ResultOf<'numericStats'>, 'sql' | 'approximate' | 'asOf'> = {
+      type: 'numericStats',
+      rowCount: table.rowCount,
+      nonNull: n,
+      zeros: numbers.filter((x) => x === 0).length,
+      negatives: numbers.filter((x) => x < 0).length,
+      percentiles: [],
+    };
+    if (n === 0) return out;
+
+    const sorted = [...numbers].sort((a, b) => a - b);
+    const mean = numbers.reduce((a, b) => a + b, 0) / n;
+    // Write min and max as the table stores them, so that a decimal keeps all its digits.
+    const text = (x: number) =>
+      request.measure === 'length' ? String(x) : formatDemoValue(column, column.family === 'decimal' ? Math.round(x * 10 ** column.scale) : x);
+    out.min = text(sorted[0] as number);
+    out.max = text(sorted[n - 1] as number);
+    out.mean = mean;
+    if (n > 1) out.stddev = Math.sqrt(numbers.reduce((a, x) => a + (x - mean) ** 2, 0) / (n - 1));
+    out.percentiles = PERCENTILES.map((p) => ({ p, value: percentileOf(sorted, p) }));
+    return out;
+  }
+
   private histogram(request: RequestOf<'histogram'>): Omit<ResultOf<'histogram'>, 'sql' | 'approximate' | 'asOf'> {
     const column = columnOf(tableOf(request.dataset), request.columns[0]);
-    if (!isNumeric(column.family)) {
-      throw new ProfilerError(`The column ${column.name} is not a number, so it has no histogram.`);
-    }
     const { edges } = request;
     const counts = new Array<number>(edges.bins).fill(0);
     let below = 0;
     let above = 0;
-    for (const v of column.values) {
-      if (v === null) continue;
-      const i = binIndex(toNumber(column, v as number), edges);
+    for (const x of measuredNumbers(column, request.measure)) {
+      const i = binIndex(x, edges);
       if (i < 0) below++;
       else if (i >= edges.bins) above++;
       else counts[i] = (counts[i] as number) + 1;
