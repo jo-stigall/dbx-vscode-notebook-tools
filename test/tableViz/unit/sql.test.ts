@@ -7,6 +7,14 @@
  *     node --test --test-update-snapshots "test/tableViz/unit/sql.test.ts"
  *
  * Then read the changes to the snapshot file before you commit them.
+ *
+ * The last three tests have no snapshot. They check rules that each
+ * statement must obey: a table name or a column name is always in backticks,
+ * the schema refuses a version or a sample that could carry SQL text, and
+ * each statement starts with SELECT or DESCRIBE.
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/sql.test.ts
  */
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
@@ -14,12 +22,16 @@ import type { Dataset, Request } from '../../../src/tableViz/core/schema.ts';
 import { requestSchema } from '../../../src/tableViz/core/schema.ts';
 import { buildStatements, renderStatement } from '../../../src/tableViz/core/sql.ts';
 
+/** A dataset with simple names and no filter: the table `main.sales.orders`. */
 const plain: Dataset = { profile: 'p', table: { catalog: 'main', schema: 'sales', name: 'orders' } };
 /** A dataset with each kind of difficult name: a space, a backtick, non-ASCII letters and a reserved word. */
 const odd: Dataset = { profile: 'p', table: { catalog: 'główny', schema: 'sales data', name: 'select`from' } };
+/** A dataset with each optional part: a filter, a Delta version and a sample of 12.5 percent. */
 const full: Dataset = { ...plain, filter: "order_date >= '2026-01-01' AND region = 'EMEA'", version: { kind: 'version', n: '42' }, sample: { percent: 12.5 } };
 
+/** A number column with a simple name. */
 const amount = { name: 'amount', typeText: 'decimal(10,2)' };
+/** Columns with each kind of difficult name: a space, a backtick, a non-ASCII letter and a reserved word. */
 const oddColumns = [
   { name: 'unit price', typeText: 'double' },
   { name: 'we`ird', typeText: 'string' },
@@ -27,7 +39,15 @@ const oddColumns = [
   { name: 'select', typeText: 'date' },
 ];
 
-/** Write all statements of a request as one text, for the snapshot file. */
+/**
+ * Write all statements of a request as one text, for the snapshot file.
+ *
+ * The text of a statement starts with one comment line for each parameter,
+ * for example a line that starts with `-- :tbl =`. A line with `;` separates
+ * two statements.
+ *
+ * @param names  'identifier' (the default) puts each name in a parameter of `IDENTIFIER()`. 'backtick' writes each name into the SQL text, in backticks.
+ */
 const render = (request: Request, names?: 'identifier' | 'backtick') =>
   buildStatements(requestSchema.parse(request), { names })
     .map(renderStatement)

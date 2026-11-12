@@ -14,6 +14,7 @@ import { selectProfileAndCompute } from './picker.ts';
 import { DEMO_PROFILE, Session, type HostConnection } from './session.ts';
 import { TableTree, type Node } from './tree.ts';
 
+/** The name of the Demo profile, for the code that loads this file. */
 export { DEMO_PROFILE };
 
 /** The functions that extension.js calls. */
@@ -38,7 +39,11 @@ export interface TableVizApi {
   compareTables(a?: string | Node, b?: string): Promise<Board | undefined>;
   /** Show a board again after VS Code reloads the window. `state` is what the webview stored. */
   restoreBoard(panel: vscode.WebviewPanel, state: unknown): Promise<void>;
-  /** The command "Select Profile and Compute for Tables". */
+  /**
+   * Show the two lists of the command "Select Profile and Compute for Tables".
+   *
+   * @returns true if the user selected a profile and its compute. See selectProfileAndCompute() in picker.ts.
+   */
   selectCompute(): Promise<boolean>;
   /**
    * Show a `.tableviz.json` file as a board. VS Code calls this function when the user opens such a file.
@@ -49,11 +54,11 @@ export interface TableVizApi {
    * it. In a workspace that the user did not trust, the board asks each time.
    */
   resolveView(document: vscode.TextDocument, panel: vscode.WebviewPanel): Promise<Board | undefined>;
-  /** The boards that are open. */
+  /** The boards that are open. A board leaves the set when its panel closes. */
   boards: Set<Board>;
   /** Tells if the user trusted the workspace. A test can replace it. */
   isTrusted: () => boolean;
-  /** The data of the view "Databricks Tables". */
+  /** Gives the lines of the view "Databricks Tables", and stores the favorite and the recent tables. */
   tree: TableTree;
   /** The selected profile and compute. Tests use it. */
   session: Session;
@@ -61,6 +66,9 @@ export interface TableVizApi {
 
 /**
  * Start the feature.
+ *
+ * The function makes the session, the tree and the item in the status bar
+ * that shows the profile and the compute. It opens no board.
  *
  * @example
  * const tableViz = require('./dist/tableViz/host.js').activate(context, conn);
@@ -76,6 +84,13 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
   // The status bar shows the profile and the compute. A click opens the two lists.
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'dbxNotebook.tableViz.selectCompute';
+  /**
+   * Write the profile, the compute and its state to the status bar.
+   *
+   * @example
+   * // The text of the item: '$(database) prod · Starter Warehouse (running)'
+   * // With the Demo profile: '$(database) Demo'
+   */
   const showStatus = () => {
     const profile = session.profile;
     const compute = session.compute(profile);
@@ -112,10 +127,21 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
     });
     return parsed.success ? parsed.data : DEFAULT_SETTINGS;
   };
+  /** The boards that are open. */
   const boards = new Set<Board>();
-  // The views that the user permitted, or saved from a board: a hash of the file path and the content.
+  /**
+   * The name under which VS Code stores the views that the user permitted, or saved from a board.
+   * The stored value is a list of hashes. See hashOf.
+   */
   const APPROVED_KEY = 'dbxNotebook.tableViz.approvedViews';
+  /**
+   * Make the SHA-256 hash of the location and the content of a view file.
+   *
+   * If a person or a program changes the file, the hash changes. The board
+   * then asks for permission again before it runs the filters of the file.
+   */
   const hashOf = (uri: vscode.Uri, text: string) => createHash('sha256').update(uri.toString()).update('\n').update(text).digest('hex');
+  /** Store the hash of a view that the user permitted or saved. VS Code keeps the 200 newest hashes for the open workspace. */
   const remember = (uri: vscode.Uri, text: string) => {
     const list = context.workspaceState.get<string[]>(APPROVED_KEY, []);
     const hash = hashOf(uri, text);
@@ -123,8 +149,10 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
   };
   // The text of each view that waits for permission, to remember it when the user permits it.
   const waiting = new Map<Board, { uri: vscode.Uri; text: string }>();
+  /** `isTrusted` is in an object, so that a test can replace the function after activate() returns. */
   const api = { isTrusted: () => vscode.workspace.isTrusted };
 
+  /** What each board gets. See BoardDeps. */
   const deps = {
     extensionUri: context.extensionUri,
     profilerFor: (profile: string) => session.profilerFor(profile),
@@ -142,6 +170,7 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
       waiting.delete(board);
     },
   };
+  /** Add a board to the set of open boards. Returns the same board. */
   const track = (board: Board): Board => {
     boards.add(board);
     return board;
@@ -150,9 +179,14 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
   /**
    * Open a board for a table with the selected profile.
    *
-   * If the profile has no SQL warehouse, the function shows the lists of
-   * "Select Profile and Compute for Tables" first. It returns undefined if
-   * the user closes a list.
+   * If the profile has no SQL warehouse and no cluster, the function shows
+   * the lists of "Select Profile and Compute for Tables" first. It returns
+   * undefined if the user closes a list. The Demo profile needs no compute.
+   *
+   * The function also puts the table at the top of the recent tables.
+   *
+   * @param table  The table of dataset A.
+   * @param tableB  The table of dataset B. If you give it, the board opens in compare mode.
    */
   const open = async (table: TableName, tableB?: TableName): Promise<Board | undefined> => {
     if (session.profile !== DEMO_PROFILE && !session.compute(session.profile)) {
@@ -165,7 +199,12 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
     return track(new Board(panel, datasets, deps));
   };
 
-  /** Ask for a three-part table name. Returns undefined if the user closes the box. */
+  /**
+   * Ask for a three-part table name. Returns undefined if the user closes the box.
+   *
+   * @param title  The title of the box. Example: 'Dataset A'.
+   * @param value  The text that is in the box when it opens. Example: 'demo.shop.orders_2025'.
+   */
   const askTable = async (title: string, value: string): Promise<TableName | undefined> => {
     const text = await vscode.window.showInputBox({
       title,

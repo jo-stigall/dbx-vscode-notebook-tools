@@ -3,7 +3,10 @@
  *
  * The filter is the only SQL that the user types. Before the board uses a
  * filter, it asks Databricks to check it, and it shows the error from
- * Databricks next to the box.
+ * Databricks below the controls.
+ *
+ * The bar does not hold the dataset. It calls `onChange` with a new
+ * dataset, and the board (Board.tsx) keeps it.
  */
 import { useEffect, useState } from 'react';
 import { chipLabel, missesPartition, parseVersion, removeChip } from '../core/derive.ts';
@@ -12,14 +15,17 @@ import type { Dataset, ResultOf } from '../core/schema.ts';
 import { formatTime } from './format.ts';
 import { acquire, cancelAll, refreshAll, release, useRequests, type RequestError } from './rpc.ts';
 
+/** The properties of the `DatasetBar` component. */
 export interface DatasetBarProps {
+  /** The dataset that the bar shows and changes: its filter, chips, sample and version. */
   dataset: Dataset;
   /** The dataset with the Delta version that the board reads. The filter check uses it. */
   pinned: Dataset;
-  /** The details of the table. Not set while they load. */
+  /** The details of the table. Not set while they load. The bar reads the partition columns from it. */
   facts: ResultOf<'tableDetails'> | undefined;
-  /** The time of the first query, for a table that has no Delta version. */
+  /** The time of the first query, as ISO 8601 text. The bar shows it for a table that has no Delta version. */
   asOf: string | undefined;
+  /** The user changed the filter, a chip, the sample or the version. The function gets the new dataset. */
   onChange: (dataset: Dataset) => void;
   /** Compare mode: 'A' or 'B'. The bar then shows the letter and the name of the table. */
   label?: 'A' | 'B';
@@ -31,6 +37,29 @@ export interface DatasetBarProps {
   onSaveView?: () => void;
 }
 
+/**
+ * The bar with the controls of one dataset.
+ *
+ * What the user sees and what the bar does:
+ *
+ * - The "Filter" box. "Apply" (or the Enter key) sends a "validateFilter"
+ *   request. If Databricks accepts the filter, the bar calls `onChange` with
+ *   the new filter. If not, the bar shows the error and the dataset stays
+ *   as it was. "Clear" removes the filter.
+ * - One chip for each filter from a click on a chart. The "x" on a chip
+ *   removes that chip.
+ * - The "Sample" check box and its percent, from 0.01 to 100. A percent
+ *   outside this range removes the sample.
+ * - The "Version" box. The bar uses the text when the user presses Enter or
+ *   leaves the box. Text that is not a version number or a time gets the
+ *   border color of an error, and the dataset stays as it was.
+ * - "Cancel 3 queries" while requests run, "Save View", and "Refresh".
+ * - A hint, if the table has partition columns and the filter uses none of
+ *   them.
+ *
+ * @example
+ * <DatasetBar dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} onSaveView={saveView} />
+ */
 export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRemove, hideActions, onSaveView }: DatasetBarProps) {
   const { pending } = useRequests();
   const [draft, setDraft] = useState(dataset.filter ?? '');
@@ -74,12 +103,19 @@ export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRe
     }
   };
 
+  /**
+   * Use the "Sample" check box and the text of the percent box.
+   *
+   * @param on  true if the check box has a check mark.
+   * @param text  The percent as text. If it is not a number from 0.01 to 100, the dataset gets no sample.
+   */
   const setSample = (on: boolean, text: string) => {
     const value = Number(text);
     const valid = Number.isFinite(value) && value >= 0.01 && value <= 100;
     onChange({ ...dataset, sample: on && valid ? { percent: value } : undefined });
   };
 
+  // Which data the board shows. Example: "Delta version 42", or "As of 1 Nov 2026, 02:05" for a table that has no Delta version.
   const snapshot = pinned.version?.kind === 'version' ? `Delta version ${pinned.version.n}` : asOf ? `As of ${formatTime(asOf)}` : undefined;
 
   return (

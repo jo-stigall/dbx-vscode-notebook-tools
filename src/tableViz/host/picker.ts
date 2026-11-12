@@ -1,22 +1,36 @@
-/** The command "Select Profile and Compute for Tables": two lists, first the profile, then the SQL warehouse or the cluster. */
+/**
+ * The command "Select Profile and Compute for Tables": two lists, first the profile, then the SQL warehouse or the cluster.
+ *
+ * The session stores what the user selects. index.ts also shows these
+ * lists when the user opens a table and the profile has no compute.
+ */
 import * as vscode from 'vscode';
 import { accessModeLabel, clusterProblem, driverSupportsNode, parseRuntime, type ClusterInfo } from '../core/clusters.ts';
 import { DEMO_PROFILE, TOKEN_PROFILE_PREFIX, WORKSPACE_PROFILE, type Compute, type HostConnection, type Session } from './session.ts';
 import type { Warehouse } from './workspace.ts';
 
+/** One line of the first list: a profile, or the item "Type a workspace URL and a token…". */
 interface ProfileItem extends vscode.QuickPickItem {
   /** The profile name. Not set for the item "Type a workspace URL and a token…". */
   profile?: string;
 }
 
+/** One line of the second list: a SQL warehouse, a cluster, or the heading of a group. */
 interface ComputeItem extends vscode.QuickPickItem {
-  /** Not set for a line that only separates two groups. */
+  /** The warehouse or the cluster of the line. Not set for the heading of a group. */
   compute?: Compute;
-  /** Why the compute cannot be used. Not set if it can. */
+  /** Why the user cannot select this cluster. Not set if the user can select the line. */
   problem?: string;
 }
 
-/** Ask for a workspace URL and a personal access token, and keep the token in the secret store. Returns the profile name. */
+/**
+ * Ask for a workspace URL and a personal access token, and keep the token in the secret store of VS Code.
+ *
+ * The URL must start with "https://". The box accepts "http://" only for
+ * localhost and 127.0.0.1, for tests.
+ *
+ * @returns The profile name, for example '@token:https://adb-123.azuredatabricks.net'. undefined if the user closed a box.
+ */
 async function typeToken(conn: HostConnection): Promise<string | undefined> {
   const host = await vscode.window.showInputBox({
     title: 'Workspace URL',
@@ -45,10 +59,19 @@ async function typeToken(conn: HostConnection): Promise<string | undefined> {
  * list with the reason, but the user cannot select it. To read the list,
  * the function calls the REST API. It starts nothing.
  *
- * @returns true if the user selected a profile. false if the user closed a list.
+ * @example
+ * if (await selectProfileAndCompute(session, conn)) {
+ *   session.profile            // 'prod'
+ *   session.compute('prod')    // { kind: 'warehouse', id: 'abc123def456', name: 'Starter Warehouse' }
+ * }
+ *
+ * @returns true if the user selected a profile and, for a profile that is not the Demo profile, its compute.
+ *   false if the user closed a list, if the function could not read the warehouses, or if the profile has no
+ *   warehouse or cluster that the user can select.
  */
 export async function selectProfileAndCompute(session: Session, conn: HostConnection): Promise<boolean> {
   const current = session.profile;
+  // The text after the name of the profile that is selected now.
   const mark = (profile: string) => (profile === current ? ' (selected)' : '');
   const items: ProfileItem[] = [];
 
@@ -91,10 +114,12 @@ export async function selectProfileAndCompute(session: Session, conn: HostConnec
   }
 
   const selected = session.compute(profile)?.id;
+  // The text after the name of the warehouse or the cluster that is selected now.
   const mine = (id: string) => (id === selected ? ' (selected)' : '');
   // Running compute first: a query on it starts at once and starts nothing.
   const runningFirst = <T extends { state: string; name: string }>(list: T[]) =>
     [...list].sort((a, b) => Number(b.state === 'RUNNING') - Number(a.state === 'RUNNING') || a.name.localeCompare(b.name));
+  // The reason why the user can select no cluster, if the Node.js in this VS Code is too old for the SQL driver.
   const oldNode = driverSupportsNode(process.versions.node) ? undefined : `This VS Code contains Node.js ${process.versions.node}. The SQL driver for clusters needs a newer Node.js. Update VS Code.`;
 
   const computeItems: ComputeItem[] = [];

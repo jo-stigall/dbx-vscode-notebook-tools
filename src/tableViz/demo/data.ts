@@ -41,48 +41,79 @@ import { makeRng, normal, weighted, type Rng } from './random.ts';
  */
 export type DemoValue = number | string | boolean | null;
 
+/**
+ * One column of a demo table, with the value of each row.
+ *
+ * @example
+ * // The column `amount` of demo.shop.orders_2026. The first row has the amount 23.16.
+ * // { name: 'amount', typeText: 'decimal(10,2)', family: 'decimal', scale: 2, partition: false, values: [2316, ...] }
+ */
 export interface DemoColumn {
   name: string;
   /** The Databricks type. Example: 'decimal(10,2)'. */
   typeText: string;
+  /** The group of the type, from typeFamily() in core/kinds.ts. It decides how `values` stores a value. */
   family: TypeFamily;
-  /** For decimal columns: the number of digits after the decimal point. */
+  /** For decimal columns: the number of digits after the decimal point. 0 for all other columns. */
   scale: number;
+  /** true if this is a partition column of the table. */
   partition: boolean;
+  /** One value for each row of the table. See DemoValue. */
   values: DemoValue[];
 }
 
+/** One demo table in memory: its columns with all values, and the facts that "tableDetails" reports. */
 export interface DemoTable {
   name: TableName;
+  /** The number of rows. Each column has this number of values. */
   rowCount: number;
   columns: DemoColumn[];
+  /** The size that the board shows for the table. It is a fixed number, not the size of the rows in memory. */
   sizeBytes: number;
-  /** ISO 8601. */
+  /** The time of the last change, as ISO 8601 text. A fixed value. */
   lastModified: string;
-  /** The Delta version. */
+  /** The Delta version. A fixed value. */
   version: string;
 }
 
+/** The number of milliseconds in one day. */
 const DAY_MS = 86_400_000;
+
+/**
+ * Write a number with zeros in front, until it has `width` characters.
+ *
+ * @example
+ * pad(7, 3)   // '007'
+ */
 const pad = (n: number, width: number) => String(n).padStart(width, '0');
 
 /** The settings that are different between the two tables. */
 interface Variant {
+  /** All orders of the table are in this year. */
   year: number;
+  /** The number of rows. */
   rows: number;
+  /** The seed of the random numbers. The same seed gives the same rows. */
   seed: number;
   /** The median of `amount` is exp(amountMu). */
   amountMu: number;
+  /** The values of `channel`, each with its weight. A larger weight gives more rows. */
   channels: readonly (readonly [string, number])[];
+  /** The part of the rows in which `discount_pct` is null, from 0 to 1. */
   discountNullRate: number;
+  /** true: `store_id` is a string such as 'S037'. false: it is an int such as 37. */
   storeIdAsString: boolean;
+  /** true: the table has the column `coupon_code`. */
   hasCouponCode: boolean;
+  /** true: the table has the column `loyalty_tier`. */
   hasLoyaltyTier: boolean;
+  /** `sizeBytes`, `lastModified` and `version` go to the DemoTable as they are. */
   sizeBytes: number;
   lastModified: string;
   version: string;
 }
 
+/** The settings of the two demo tables. The key is the last part of the table name. */
 const VARIANTS: Record<string, Variant> = {
   orders_2025: {
     year: 2025,
@@ -114,7 +145,13 @@ const VARIANTS: Record<string, Variant> = {
   },
 };
 
-/** Select a time in the year. Saturdays and Sundays get about half of the orders of a weekday. */
+/**
+ * Select a time in the year. Saturdays and Sundays get about half of the orders of a weekday.
+ *
+ * @param yearStart  The start of the year, in milliseconds after 1970-01-01.
+ * @param yearDays  The number of days of the year: 365 or 366.
+ * @returns The time, in milliseconds after 1970-01-01 (UTC).
+ */
 function orderTime(rng: Rng, yearStart: number, yearDays: number): number {
   for (;;) {
     const ms = yearStart + Math.floor(rng() * yearDays * DAY_MS);
@@ -123,7 +160,21 @@ function orderTime(rng: Rng, yearStart: number, yearDays: number): number {
   }
 }
 
-/** Make one demo table. */
+/**
+ * Make all rows of one demo table from the seed of its variant.
+ *
+ * The function makes the rows one after the other and takes the random
+ * numbers of all columns from one generator. Thus, if you change how one
+ * column uses the random numbers, the values of the other columns change too.
+ *
+ * @example
+ * const table = generate('orders_2026', VARIANTS.orders_2026);
+ * table.rowCount                       // 110000
+ * table.columns.map((c) => c.name)     // ['order_id', 'customer_id', 'order_ts', 'order_date', 'amount', ...]
+ * table.columns[0].values[0]           // 5001000000: the first `order_id` of 2026
+ *
+ * @param tableName  The last part of the table name: 'orders_2025' or 'orders_2026'.
+ */
 function generate(tableName: string, v: Variant): DemoTable {
   const rng = makeRng(v.seed);
   const yearStart = Date.UTC(v.year, 0, 1);
@@ -196,9 +247,10 @@ function generate(tableName: string, v: Variant): DemoTable {
   };
 }
 
+/** The demo tables that demoTable() made already. The key is the last part of the table name, for example 'orders_2026'. */
 const cache = new Map<string, DemoTable>();
 
-/** The names of the demo tables. */
+/** The names of the demo tables: demo.shop.orders_2025 and demo.shop.orders_2026. */
 export const DEMO_TABLE_NAMES: TableName[] = Object.keys(VARIANTS).map((name) => ({ catalog: 'demo', schema: 'shop', name }));
 
 /**
@@ -221,9 +273,13 @@ export function demoTable(name: TableName): DemoTable | undefined {
  * Write a stored value as Databricks writes it in a result.
  *
  * @example
- * formatDemoValue(amountColumn, 1999)     // '19.99'
- * formatDemoValue(dateColumn, 20454)      // '2026-01-01'
- * formatDemoValue(tsColumn, 1767225600000) // '2026-01-01T00:00:00.000Z'
+ * // amountColumn has the type decimal(10,2), dateColumn the type date, tsColumn the type timestamp.
+ * formatDemoValue(amountColumn, 1999)        // '19.99'
+ * formatDemoValue(dateColumn, 20454)         // '2026-01-01'
+ * formatDemoValue(tsColumn, 1767225600000)   // '2026-01-01T00:00:00.000Z'
+ * formatDemoValue(regionColumn, 'EMEA')      // 'EMEA'
+ *
+ * @param value  A value of the column, in the form that DemoValue describes. Not null.
  */
 export function formatDemoValue(column: DemoColumn, value: Exclude<DemoValue, null>): string {
   switch (column.family) {

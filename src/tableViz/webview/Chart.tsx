@@ -2,9 +2,13 @@
  * Draw one chart with Apache ECharts.
  *
  * The file loads only the parts of ECharts that the feature uses: bar
- * charts, the grid, the tooltip, the legend, the brush and the patterns for
- * series. ECharts draws on a canvas, which the Content Security Policy
- * permits.
+ * charts, the grid, the tooltip, the legend, the brush, the marker lines
+ * and the patterns for series. ECharts draws on a canvas, which the Content
+ * Security Policy permits.
+ *
+ * The views in cards/ and compare/ make the settings of a chart with
+ * options.ts and give them to the `Chart` component. export.ts reads a chart
+ * with chartPng() and chartState() to save it.
  */
 import { BarChart } from 'echarts/charts';
 import { AriaComponent, BrushComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
@@ -17,11 +21,17 @@ echarts.use([BarChart, GridComponent, TooltipComponent, LegendComponent, BrushCo
 /** The settings of a chart, in the format of ECharts. options.ts makes them. */
 export type ChartOption = Parameters<echarts.ECharts['setOption']>[0];
 
-/** The charts on the page, by their element. The export buttons of a card find the chart of a card with it. */
+/** The charts on the page, by their element. The export functions find the chart of a card with it. */
 const instances = new WeakMap<Element, echarts.ECharts>();
 
 /**
  * Get the picture of a chart as a PNG image.
+ *
+ * The width and the height of the image are two times those of the chart on
+ * the page.
+ *
+ * @example
+ * chartPng(card.querySelector('.chart'), '#1f1f1f')   // 'data:image/png;base64,iVBORw0KGgo...'
  *
  * @param element  The element of the chart: the one with the class "chart".
  * @param background  The color behind the chart. A PNG without it is transparent.
@@ -33,6 +43,12 @@ export function chartPng(element: Element, background: string): string | undefin
 
 /**
  * Get the settings and the size of a chart, to draw it again as SVG. See chartSvg() in export.ts.
+ *
+ * @example
+ * chartState(card.querySelector('.chart'))   // { option: { series: [...], ... }, width: 560, height: 220 }
+ *
+ * @param element  The element of the chart: the one with the class "chart".
+ * @returns The size in pixels and the settings, or undefined if the element has no chart.
  */
 export function chartState(element: Element): { option: ChartOption; width: number; height: number } | undefined {
   const chart = instances.get(element);
@@ -40,13 +56,21 @@ export function chartState(element: Element): { option: ChartOption; width: numb
 }
 
 /**
- * Describe the parts of a chart as text: the type of each axis, the id of
- * each series, and which of them have a title or labels.
- * Two charts with the same text differ only in their numbers.
+ * Describe the parts of a chart as text.
+ *
+ * The text names the type of each axis, the id of each series, and which of
+ * them have a title or labels. Two charts with the same text differ only in
+ * their numbers.
  *
  * ECharts keeps a setting of the old chart if the new chart does not set
  * it. Thus a chart that loses a part (for example, the labels on its bars)
- * must have a different text, so that it is drawn new.
+ * must have a different text. The `Chart` component then draws it new.
+ *
+ * @example
+ * shapeOf(barsOption(theme, { labels: ['web', 'store'], counts: [60, 30], tips: ['', ''] }))
+ * // 'x:category::|y:value::|a:bar::||'
+ * shapeOf(compareBarsOption(theme, { labels: ['web', 'store'], a: [60, 30], b: [50, 50], tips: ['', ''], nameA: 'A', nameB: 'B' }))
+ * // 'x:category::|y:value::|a:bar:title:,b:bar:title:|legend|'
  */
 function shapeOf(option: object): string {
   type Part = { type?: string; id?: string; name?: string; label?: unknown };
@@ -56,8 +80,9 @@ function shapeOf(option: object): string {
   return [part(list(o.xAxis)), part(list(o.yAxis)), part(list(o.series)), o.legend ? 'legend' : '', o.brush ? 'brush' : ''].join('|');
 }
 
+/** The properties of the `Chart` component. */
 export interface ChartProps {
-  /** What the chart shows. */
+  /** What the chart shows: the settings that barsOption() or compareBarsOption() in options.ts made. */
   option: ChartOption;
   /** One sentence that tells a screen reader what the chart shows. */
   label: string;
@@ -70,17 +95,39 @@ export interface ChartProps {
   onSelect?: (first: number, last: number) => void;
   /** true: a drag across the chart selects a range of bars. Use it for a histogram and a date chart. */
   range?: boolean;
-  /** true: the category axis is the vertical axis. */
+  /** true: the category axis is the vertical axis. The component needs it to find the bar below a click. */
   horizontal?: boolean;
 }
 
+/**
+ * One chart on a card.
+ *
+ * The user sees a bar chart that fills the width of its card. A tooltip
+ * shows when the pointer is above a bar. When the card changes its width,
+ * the chart draws again in the new size.
+ *
+ * If `onSelect` is set, the user can select bars:
+ *
+ * - A click on a bar calls `onSelect` with the position of that bar two
+ *   times. Example: a click on the third bar calls `onSelect(2, 2)`.
+ * - With `range`, a drag from the second bar to the fifth bar calls
+ *   `onSelect(1, 4)`.
+ *
+ * When `option` changes and the chart has the same parts, the bars move to
+ * their new lengths. When the parts change (for example from one dataset
+ * to two), the component draws a new chart. See shapeOf().
+ *
+ * @example
+ * <Chart option={barsOption(theme, { labels, counts, tips })} label="Histogram of amount with 30 bars." range onSelect={(first, last) => addFilter(first, last)} />
+ */
 export function Chart({ option, label, height, onSelect, range, horizontal }: ChartProps) {
   const element = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | undefined>(undefined);
-  // The newest callback. The listeners of the chart are added one time and read it from here.
+  // The newest callback. The component adds the listeners of the chart one time, and they read the callback from here.
   const select = useRef(onSelect);
   select.current = onSelect;
 
+  // One time, when the component comes on the page: make the ECharts chart and listen for a click and a drag.
   useEffect(() => {
     if (!element.current) return;
     const instance = echarts.init(element.current, undefined, { renderer: 'canvas' });
@@ -118,6 +165,7 @@ export function Chart({ option, label, height, onSelect, range, horizontal }: Ch
   const selectable = onSelect !== undefined;
   // The parts of the last chart: the types of its axes and the names of its series.
   const shape = useRef('');
+  // Each time the settings change: give them to the chart.
   useEffect(() => {
     const instance = chart.current;
     if (!instance) return;

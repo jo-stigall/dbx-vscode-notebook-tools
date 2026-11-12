@@ -3,6 +3,14 @@
  *
  * ColumnCard selects the kind of the column. Then one component for that
  * kind sends the requests and gives the results to a view in views.tsx.
+ *
+ * | Kind               | Component      | Requests                                                    |
+ * |--------------------|----------------|-------------------------------------------------------------|
+ * | continuous         | ContinuousCard | "numericStats", then "histogram"                            |
+ * | discrete, category | ValuesCard     | "frequency"                                                 |
+ * | identifier         | IdentifierCard | "frequency"; "numericStats" and "histogram" of the lengths  |
+ * | date               | DateCard       | "dateCounts"                                                |
+ * | complex            | (none)         | none: the card shows the overview numbers                   |
  */
 import { useEffect, useMemo, useState } from 'react';
 import { chooseGrain, makeEdges } from '../../core/bins.ts';
@@ -23,8 +31,11 @@ const REPEATED_VALUES = 20;
 /** The largest number of bins in the histogram of value lengths. */
 const LENGTH_BINS = 30;
 
+/** The properties of the `ColumnCard` component. */
 export interface ColumnCardProps {
+  /** The dataset that the requests of the card read, with its Delta version. */
   dataset: Dataset;
+  /** The column that the card shows. */
   column: ColumnInfo;
   /** The overview numbers of the column. Not set while the overview loads. */
   stats: OverviewColumn | undefined;
@@ -36,17 +47,26 @@ export interface ColumnCardProps {
   overviewSql: string[];
   /** true if the overview numbers belong to an older request while a newer request runs. */
   overviewStale?: boolean;
-  /** true if the overview failed or was cancelled. No new overview numbers arrive until "Refresh". */
+  /** true if the overview failed, or the user cancelled it. No new overview numbers arrive until "Refresh". */
   overviewStopped?: boolean;
+  /** The settings of the card. Example: the number of bins, or the kind that the user selected. */
   card: Card;
+  /** The settings of the feature. The card reads the default number of bins and the number of top values. */
   settings: BoardSettings;
+  /** The user changed settings of the card. The board stores them. */
   onChange: (patch: Partial<Card>) => void;
+  /** The user closed the card. */
   onClose: () => void;
   /** The user selected bars of a chart. The board adds the chip to the dataset. */
   onFilter?: (chip: Chip) => void;
 }
 
-/** The properties that each kind of card gets. */
+/**
+ * The properties that each kind of card gets.
+ *
+ * They are the properties of ColumnCard, but the overview numbers are
+ * always set: ColumnCard draws a kind of card only after they arrived.
+ */
 interface KindProps extends ColumnCardProps {
   stats: OverviewColumn;
   rowCount: number;
@@ -55,9 +75,16 @@ interface KindProps extends ColumnCardProps {
 }
 
 /**
- * Get the SQL of the results that are done, the first error, and whether a result is an estimate.
+ * Put the states of the requests of a card together, for the frame of the card.
+ *
+ * @example
+ * // The statistics are done and are an estimate. The histogram waits for a free place on Databricks.
+ * summarize(props, [], stats, histogram)
+ * // { stale: false, sql: ['SELECT ...'], approximate: true, error: undefined, cancelled: false, progress: 'queued' }
  *
  * @param first  SQL statements to put before the SQL of the results.
+ * @param states  The states of the requests of the card.
+ * @returns The SQL of the results that are done, the first error, whether a result is old or is an estimate, and whether the user cancelled a request.
  */
 function summarize(props: KindProps, first: string[], ...states: Loadable<{ sql: string[]; approximate: boolean }, unknown>[]) {
   return {
@@ -76,6 +103,20 @@ function summarize(props: KindProps, first: string[], ...states: Loadable<{ sql:
   };
 }
 
+/**
+ * The card of a number column with many values: statistics and a histogram.
+ *
+ * The card first asks for the statistics ("numericStats"). The bins of the
+ * histogram go from the smallest to the largest value, or from the 1st to
+ * the 99th percentile with "Clip to 1%–99%". So the card sends the
+ * "histogram" request only after the statistics arrived.
+ *
+ * When the user moves the "Bins" slider, the number next to the slider
+ * changes at once. The card sends the new "histogram" request 300 ms after
+ * the last change, and the old histogram stays on the screen, dimmed, until
+ * the answer arrives. "Compute exactly" sends the "numericStats" request
+ * again with `exact: true`.
+ */
 function ContinuousCard(props: KindProps) {
   const { dataset, column, card, settings, onChange } = props;
   const theme = useTheme();
@@ -85,6 +126,7 @@ function ContinuousCard(props: KindProps) {
   // The slider changes `bins` at once. The request uses the value 300 ms after the last change.
   const [bins, setBins] = useState(card.bins ?? settings.defaultBins);
   const settled = useDebounced(bins, 300);
+  // Put the settled value in the settings of the card, so that the board stores it.
   useEffect(() => {
     if (settled !== (card.bins ?? settings.defaultBins)) onChange({ bins: settled });
   }, [settled]);
@@ -125,6 +167,16 @@ function ContinuousCard(props: KindProps) {
   );
 }
 
+/**
+ * The card of a column with few different values: a bar for each value and a frequency table.
+ *
+ * The card sends one "frequency" request: the 50 most frequent values for
+ * a discrete number (all its values), or the 200 most frequent values for a
+ * category. The search box and "Sort by" on the card change what the card
+ * shows and send no request.
+ *
+ * @param props.valuesKind  'discrete': a number with 50 values at most. 'category': all other columns with few values.
+ */
 function ValuesCard(props: KindProps & { valuesKind: 'discrete' | 'category' }) {
   const { dataset, column, card, valuesKind } = props;
   const theme = useTheme();
@@ -149,6 +201,19 @@ function ValuesCard(props: KindProps & { valuesKind: 'discrete' | 'category' }) 
   );
 }
 
+/**
+ * The card of a column where almost every row has a different value, such as an ID.
+ *
+ * A chart of the values would have one bar for each row. The card shows
+ * what helps with an ID: how many values are different, which values
+ * repeat, and how long the values are.
+ *
+ * The card sends two requests at the start: "frequency" for the 20 most
+ * frequent values, and "numericStats" with `measure: 'length'` for the
+ * length of the shortest and of the longest value. When that answer
+ * arrives, the card sends a "histogram" request for the lengths. "Compute exactly" sends an "overview" request
+ * for this column with `exact: true`, for the exact distinct count.
+ */
 function IdentifierCard(props: KindProps) {
   const { dataset, column, card } = props;
   const theme = useTheme();
@@ -196,6 +261,15 @@ function IdentifierCard(props: KindProps) {
   );
 }
 
+/**
+ * The card of a date or timestamp column: the number of rows in each period.
+ *
+ * The card sends one "dateCounts" request. The period is the one that the
+ * user selected in the "Period" list. If the user selected none,
+ * chooseGrain() in core/bins.ts selects it from the first and the last date
+ * of the overview. A different period sends a new request. If all rows are
+ * null, the card sends nothing.
+ */
 function DateCard(props: KindProps) {
   const { dataset, column, card, stats } = props;
   const theme = useTheme();
@@ -219,6 +293,23 @@ function DateCard(props: KindProps) {
   );
 }
 
+/**
+ * The detail card of one column.
+ *
+ * The card needs the overview numbers of the column to select its kind.
+ * Until they arrive, the user sees the frame of the card with "Loading…".
+ * Then the card shows the kind that the user selected in the kind list, or
+ * the kind that detectKind() in core/kinds.ts selected.
+ *
+ * When the dataset changes, the overview numbers load again. The card keeps
+ * the numbers that it had and shows them dimmed, so that it does not go
+ * empty.
+ *
+ * @example
+ * <ColumnCard dataset={pinned} column={{ name: 'amount', typeText: 'decimal(10,2)' }} stats={overview.stats.get('amount')} rowCount={overview.rowCount}
+ *   overviewApproximate={overview.approximate} overviewSql={overview.sql.get('amount') ?? []} card={{ column: 'amount', pinned: false, expanded: true }}
+ *   settings={settings} onChange={setCard('amount')} onClose={closeCard('amount')} onFilter={addFilter} />
+ */
 export function ColumnCard(props: ColumnCardProps) {
   const { column, card } = props;
   // While new overview numbers load, the card keeps the numbers that it had. The card then stays on the screen.

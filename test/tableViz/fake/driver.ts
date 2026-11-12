@@ -8,11 +8,33 @@
  *
  * A test can tell the fake to fail in the ways that a cluster fails: an
  * expired token, a session that ended, a statement that never finishes.
+ *
+ * The fake is different from the real driver (`@databricks/sql`) in these ways:
+ *
+ * - It opens no connection. `connect` records its options and does nothing more.
+ * - It does not run SQL. It knows only the statements that sql.ts builds, for
+ *   the demo tables. It ignores a filter, a version and a sample.
+ * - It accepts each token, until a test adds the token to `expiredTokens`.
+ * - The answer of a statement is ready at once, unless a test sets `hold`.
+ *
+ * Thus no test shows that the real driver can talk to a real cluster.
+ *
+ * Two tests use this file:
+ *
+ *     npm run test:unit    test/tableViz/unit/cluster.test.ts
+ *     npm run test:e2e     test/tableViz/integration/workspace.cjs (through dist/test/fakeWorkspace.cjs)
  */
 import type { DriverClient, DriverModule, DriverOperation, DriverSession } from '../../../src/tableViz/host/clusterRunner.ts';
 import { answerStatement } from './warehouse.ts';
 
+/**
+ * A fake driver, and the record of what the cluster runner did with it.
+ *
+ * A test reads the lists and the counts after a statement. A test sets
+ * `expiredTokens`, `failNext` and `hold` to make the next statements fail.
+ */
 export interface FakeDriver {
+  /** The object that takes the place of the `@databricks/sql` module. Return it from the `loadDriver` function of the runner. */
   module: DriverModule;
   /** The options of each connect call, oldest first. */
   connects: Record<string, unknown>[];
@@ -33,7 +55,22 @@ export interface FakeDriver {
   hold: boolean;
 }
 
-/** Give a value the JavaScript type that the real driver gives for that column. */
+/**
+ * Give a value the JavaScript type that the real driver gives for that column.
+ *
+ * The fake warehouse returns each value as text. The name of the column tells
+ * the function which type the real driver returns.
+ *
+ * @example
+ * typed('n', '110000')                          // 110000n: a count is a bigint
+ * typed('mean', '63.0015')                      // 63.0015
+ * typed('partitionColumns', '["order_date"]')   // ['order_date']
+ * typed('value', 'EMEA')                        // 'EMEA'
+ * typed('min', null)                            // null
+ *
+ * @param column  The name of the column in the result, for example 'n' or 'c0_avg'.
+ * @param text  The value as the fake warehouse returns it.
+ */
 function typed(column: string, text: string | null): unknown {
   if (text === null) return null;
   if (/^(n|nn|total|bucket|zeros|negatives|version|numFiles|sizeInBytes|c\d+_(nn|d))$/.test(column)) return BigInt(text);
@@ -42,6 +79,19 @@ function typed(column: string, text: string | null): unknown {
   return text;
 }
 
+/**
+ * Make a fake driver for one test.
+ *
+ * @example
+ * const fake = makeFakeDriver();
+ * const runner = new ClusterRunner({ loadDriver: () => fake.module, host, httpPath, token, timeoutSeconds, tags });
+ * await runner.run(statement);
+ * fake.connects.length      // 1
+ * fake.statements[0]?.sql   // the SQL text that the runner sent
+ * fake.hold = true;         // the next statement does not finish until the runner cancels it
+ *
+ * @returns The fake. Each call returns a new fake with empty lists and counts of 0.
+ */
 export function makeFakeDriver(): FakeDriver {
   const fake: FakeDriver = {
     module: undefined as unknown as DriverModule,
@@ -57,6 +107,18 @@ export function makeFakeDriver(): FakeDriver {
     hold: false,
   };
 
+  /**
+   * One statement that the runner started. The fake of an operation of the driver.
+   *
+   * - The constructor reads `namedParameters` from the options of `executeStatement`.
+   *   It changes the type name 'INTEGER' of the driver to 'INT', which the fake warehouse reads.
+   * - `id` is the ID that the runner reports for the statement, for example 'op-1'.
+   * - `compute` asks the fake warehouse for the answer one time and keeps it.
+   *   It gives each value its JavaScript type (see `typed`).
+   *   While `fake.hold` is true, `compute` waits until the runner calls `cancel`. Then it fails.
+   * - `fetchAll` returns the rows as objects, and `getSchema` returns the column names, as the real driver does.
+   * - `cancel` and `close` add 1 to `fake.cancels` and `fake.closedOperations`.
+   */
   class Operation implements DriverOperation {
     readonly id: string;
     private readonly sql: string;
@@ -97,6 +159,17 @@ export function makeFakeDriver(): FakeDriver {
     }
   }
 
+  /**
+   * One session of the fake cluster. It remembers the token of its connection.
+   *
+   * `executeStatement` records the statement in `fake.statements`. Then it does one of three things:
+   *
+   * - The token of the session is in `fake.expiredTokens`: it throws the error of an expired token.
+   * - `fake.failNext` is not empty: it throws an error with the first message of that list.
+   * - If not: it returns a new `Operation` with the ID 'op-1', 'op-2' and so on.
+   *
+   * `close` adds 1 to `fake.closedSessions`.
+   */
   class Session implements DriverSession {
     private readonly token: string;
     constructor(token: string) {
@@ -114,6 +187,13 @@ export function makeFakeDriver(): FakeDriver {
     }
   }
 
+  /**
+   * The fake of `DBSQLClient`.
+   *
+   * - `connect` records its options in `fake.connects` and keeps the token. It opens no connection.
+   * - `openSession` records the tags of the session in `fake.sessions` and returns a new `Session`.
+   * - `close` adds 1 to `fake.closedClients`.
+   */
   class Client implements DriverClient {
     private token = '';
     async connect(options: Record<string, unknown>) {
@@ -130,6 +210,7 @@ export function makeFakeDriver(): FakeDriver {
     }
   }
 
+  /** The fake of `DBSQLParameter`: the value of one named parameter and its type, for example 'INTEGER'. */
   class Parameter {
     readonly type?: string;
     readonly value: string;

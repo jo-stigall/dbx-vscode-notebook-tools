@@ -1,7 +1,18 @@
 /**
  * Tests for the pure code in src/tableViz/core: column kinds, names, bins and message checks.
  *
- * Run: npm run test:unit
+ * "Pure" means that the code needs no VS Code, no network and no Databricks.
+ *
+ * Source files that the tests cover:
+ *
+ * - src/tableViz/core/kinds.ts: `typeFamily`, `detectKind`
+ * - src/tableViz/core/names.ts: `quoteIdentifier`, `quoteTableName`, `displayTableName`, `parseTableName`
+ * - src/tableViz/core/bins.ts: `makeEdges`, `binIndex`, `binBounds`, `truncateDay`, `formatDay`, `chooseGrain`
+ * - src/tableViz/core/schema.ts: `requestSchema`, `toHostSchema`, `toWebviewSchema`
+ * - src/tableViz/core/derive.ts: `frequencyRows`, `histogramBars`, `fillPeriods`, `spanDays`, `kindsFor`, `openCard`
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/core.test.ts
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -83,6 +94,7 @@ test('binIndex puts border values in the documented bins', () => {
 });
 
 test('property: each value is in exactly one bin, and the counts add up', () => {
+  // 300 rounds with random values and a random number of bins. The seed 7 does not change, so each run uses the same values.
   const rng = makeRng(7);
   for (let round = 0; round < 300; round++) {
     const n = 1 + Math.floor(rng() * 200);

@@ -1,7 +1,23 @@
 /**
  * Tests for compare mode: column matching, the drift maths, and the compare logic on the demo tables.
  *
- * Run: npm run test:unit
+ * In compare mode, a board shows dataset A and dataset B. The drift score of
+ * a column tells how different its values are in A and in B: 0 is no
+ * difference, 1 is the largest difference.
+ *
+ * Source files that the tests cover:
+ *
+ * - src/tableViz/core/match.ts: `matchColumns`
+ * - src/tableViz/core/drift.ts: `jsDistance`, `psi`, `uniqueCuts`
+ * - src/tableViz/core/compare.ts: `compareKind`, `columnDrift`, `comparedValues`, `comparedFrequency`
+ * - src/tableViz/core/cache.ts: a change of B runs no query for A
+ * - src/tableViz/core/sql.ts and parse.ts: the requests `quantiles`, `driftBins` and `valueCounts`
+ *
+ * The two demo tables have six known differences (see src/tableViz/demo/data.ts).
+ * A is `demo.shop.orders_2025`, B is `demo.shop.orders_2026`.
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/compare.test.ts
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -19,8 +35,30 @@ import { SqlProfiler } from '../../../src/tableViz/host/sqlProfiler.ts';
 import { DemoWorkspaceClient } from '../../../src/tableViz/host/workspace.ts';
 import { answerStatement } from '../fake/warehouse.ts';
 
+/**
+ * Fail if two numbers differ by more than `tolerance`.
+ *
+ * @example
+ * near(0.72870, 0.7287, 1e-5)   // passes
+ * near(0.73, 0.7287, 1e-5)      // fails: "0.73 is not near 0.7287"
+ */
 const near = (actual: number, expected: number, tolerance = 1e-9) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not near ${expected}`);
+/**
+ * Make the dataset of a demo table.
+ *
+ * @example
+ * dataset('orders_2026', { sample: { percent: 10 } })
+ * // { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' }, sample: { percent: 10 } }
+ *
+ * @param extra  A filter, a version or a sample to add to the dataset.
+ */
 const dataset = (name: string, extra: Partial<Dataset> = {}): Dataset => ({ profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name }, ...extra });
+/**
+ * Get the names and the types of the columns of a demo table.
+ *
+ * @example
+ * columnsOf('orders_2026')[0]   // { name: 'order_id', typeText: 'bigint' }
+ */
 const columnsOf = (name: string): ColumnInfo[] => (demoTable(dataset(name).table) as DemoTable).columns.map((c) => ({ name: c.name, typeText: c.typeText }));
 
 test('matchColumns: matched pairs, columns in one dataset only, and types that differ', () => {
@@ -123,7 +161,12 @@ test('comparedValues: the union of the values, ranked by the larger share', () =
   assert.equal(limited.reduce((sum, r) => sum + r.countB, 0), 200);
 });
 
-/** Get the columns and the overview numbers of the two demo tables. */
+/**
+ * Get the columns and the overview numbers of the two demo tables.
+ *
+ * @param ask  Sends one request to a profiler. A test can give a function that counts the requests.
+ * @returns `schema`: the matched pairs of columns. `oa` and `ob`: the overview results of A and B. `stats(o, name)`: the overview numbers of one column.
+ */
 async function overviews(ask: Ask, a: Dataset, b: Dataset) {
   const schema = matchColumns(columnsOf(a.table.name), columnsOf(b.table.name));
   const [oa, ob] = await Promise.all([
@@ -134,7 +177,17 @@ async function overviews(ask: Ask, a: Dataset, b: Dataset) {
   return { schema, oa, ob, stats };
 }
 
-/** Compute the drift of each matched pair of the two datasets. */
+/**
+ * Compute the drift of each matched pair of the two datasets, as the board does.
+ *
+ * @example
+ * const drifts = await allDrifts(askDemo, dataset('orders_2025'), dataset('orders_2026'));
+ * drifts.get('channel')?.score    // more than 0.2: B has the new value 'marketplace'
+ * drifts.get('store_id')          // undefined: the types differ, so the board does not compare the column
+ *
+ * @param asText  The names of the columns that the user wants to compare as text, although their types differ.
+ * @returns The drift of each pair, with the name of the column in A as the key. undefined for a pair that the board does not compare.
+ */
 async function allDrifts(ask: Ask, a: Dataset, b: Dataset, asText: string[] = []): Promise<Map<string, Drift | undefined>> {
   const { schema, oa, ob, stats } = await overviews(ask, a, b);
   const drifts = new Map<string, Drift | undefined>();
@@ -147,7 +200,9 @@ async function allDrifts(ask: Ask, a: Dataset, b: Dataset, asText: string[] = []
   return drifts;
 }
 
+/** The demo profiler. It answers all requests of the tests below. */
 const demo = new DemoProfiler();
+/** Send one request to the demo profiler. The compare functions take a function of this shape. */
 const askDemo: Ask = (request) => demo.profile(request) as never;
 
 test('comparing the demo tables ranks the planted differences highest', async () => {
@@ -198,6 +253,7 @@ test('the top lists get exact counts for the values that one list lacks', async 
   const ask: Ask = (request) => (asked.push(request), demo.profile(request) as never);
   // postal_code has 900 values. With 5 values from each table, the two top lists can differ.
   const { a, b } = await comparedFrequency(ask, dataset('orders_2025'), dataset('orders_2026'), pair, 5);
+  // Count the rows of one value in one table directly, with a `valueCounts` request.
   const direct = async (name: string, value: string) => (await demo.profile({ type: 'valueCounts', dataset: dataset(name), columns: [{ name: 'postal_code', typeText: 'int' }], values: [value] })) as ResultOf<'valueCounts'>;
   for (const value of new Set([...a.values, ...b.values].map((v) => v.value))) {
     assert.equal(a.values.find((v) => v.value === value)?.count ?? 0, (await direct('orders_2025', value)).values[0]?.count, `A ${value}`);
@@ -218,6 +274,7 @@ test('changing dataset B runs no query for dataset A', async () => {
   const cache = new CachingProfiler(inner, { hostOf: () => 'demo' });
   const ask: Ask = (request) => cache.profile(request) as never;
   const a = dataset('orders_2025');
+  // The number of requests for A that reached the inner profiler. A request that the cache answers does not count.
   const forA = () => ran.filter((r) => r.dataset.table.name === 'orders_2025').length;
 
   await allDrifts(ask, a, dataset('orders_2026'));

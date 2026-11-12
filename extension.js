@@ -76,6 +76,9 @@ const serializer = {
   },
 };
 
+/** The kernel of the running extension. deactivate() uses it. */
+let activeKernel;
+
 /**
  * Start the extension. VS Code calls this function one time.
  *
@@ -94,6 +97,7 @@ const serializer = {
 function activate(context) {
   const conn = new Connection(context);
   const kernel = new Kernel(NOTEBOOK_TYPE, conn);
+  activeKernel = kernel;
 
   /** @returns {boolean} true if the notebook is a Databricks .py notebook. */
   const isOurs = (nb) => nb && nb.notebookType === NOTEBOOK_TYPE;
@@ -262,7 +266,18 @@ function activate(context) {
   autoOpen(vscode.window.activeTextEditor);
 }
 
-/** Stop the extension. VS Code removes the parts in `context.subscriptions`, thus this function does nothing. */
-function deactivate() {}
+/**
+ * Stop the extension. VS Code then removes the parts in `context.subscriptions`.
+ *
+ * The function deletes the sessions of the open notebooks on the cluster.
+ * VS Code waits for the returned promise, so the requests can finish before
+ * VS Code stops. Without this, each reload of the VS Code window can leave one
+ * session for each open notebook on the cluster.
+ *
+ * @returns {Promise<void>|undefined}
+ */
+function deactivate() {
+  return activeKernel && activeKernel.dispose();
+}
 
 module.exports = { activate, deactivate, NOTEBOOK_TYPE };

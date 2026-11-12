@@ -2,14 +2,24 @@
 /**
  * Test the table visualization feature in a real VS Code window, with a fake Databricks workspace.
  *
+ * The steps cover the path from a command of VS Code to Databricks and back:
+ * the session and the tree (src/tableViz/host/session.ts, tree.ts), the
+ * workspace client, the two runners and the SQL profiler.
+ *
  * test/e2e.js calls main() after the steps of demo.cjs. Run it with
- * `npm run test:e2e`.
+ * `npm run test:e2e`. That command builds dist/test/fakeWorkspace.cjs, which
+ * this file loads. `npm run test:vsix` runs the same steps on the installed
+ * copy of the extension.
  *
  * The fake workspace (test/tableViz/fake/workspace.ts) is an HTTP server on
  * this computer. The feature talks to it as it talks to Databricks: it lists
  * the catalog with the REST API, runs SQL statements on a warehouse, and
  * cancels a statement. The fake answers the statements from the demo tables,
  * so the test knows the correct numbers.
+ *
+ * For a cluster, a fake of the SQL driver (test/tableViz/fake/driver.ts)
+ * takes the place of the real driver. The test loads the real driver one
+ * time, but does not connect with it.
  *
  * One thing has no test here: the question "Start the warehouse?". It is a
  * modal dialog, and a test cannot click it.
@@ -18,9 +28,27 @@ const vscode = require('vscode');
 const assert = require('assert');
 const path = require('path');
 
+/**
+ * Wait for a time.
+ *
+ * @param {number} ms  The time in milliseconds.
+ * @returns {Promise<void>}
+ */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Wait until `fn` returns a true value. Check 10 times each second. */
+/**
+ * Wait until `fn` returns a true value. Check 10 times each second.
+ *
+ * @example
+ * const overview = await until('the overview numbers', () => answerOf(board, 'overview'));
+ *
+ * @template T
+ * @param {string} what  The thing that the test waits for. The error message contains this text.
+ * @param {() => T | Promise<T>} fn  The check.
+ * @param {number} [timeout]  The longest time to wait, in milliseconds. Default: 20000.
+ * @returns {Promise<T>}  The first true value that `fn` returned.
+ * @throws {Error}  "timed out waiting for the overview numbers", if `fn` returns no true value in that time.
+ */
 async function until(what, fn, timeout = 20000) {
   const end = Date.now() + timeout;
   for (;;) {
@@ -31,7 +59,16 @@ async function until(what, fn, timeout = 20000) {
   }
 }
 
-/** Get the answer of the first request of a type that a board got a result for. */
+/**
+ * Find the first request of a type that a board got a result for.
+ *
+ * @example
+ * answerOf(board, 'overview').response.result.rowCount   // 110000
+ *
+ * @param {{ dispatcher: { exchanges: object[] } }} board  A board from a command of the feature.
+ * @param {string} type  The type of the request, for example 'overview'.
+ * @returns {{ id: string, request: object, response: object } | undefined}  The request and its answer. undefined while no such request is done.
+ */
 const answerOf = (board, type) => board.dispatcher.exchanges.find((x) => x.request.type === type && x.response && x.response.type === 'result');
 
 /**
@@ -40,6 +77,7 @@ const answerOf = (board, type) => board.dispatcher.exchanges.find((x) => x.reque
  * @param {(message: string) => void} log  Call it after each step that passed.
  */
 exports.main = async function main(log) {
+  // The build makes this file from test/tableViz/fake/workspace.ts. VS Code cannot load a TypeScript file.
   const { startFakeWorkspace } = require(path.join(__dirname, '..', '..', '..', 'dist', 'test', 'fakeWorkspace.cjs'));
   const fake = await startFakeWorkspace();
   const api = await vscode.commands.executeCommand('dbxNotebook.tableViz._api');
@@ -158,6 +196,7 @@ exports.main = async function main(log) {
 
     // 10. The SQL driver for clusters is in the built extension, and it loads in VS Code.
     const extensionPath = vscode.extensions.getExtension('local.dbx-notebook').extensionPath;
+    // Tell if Node.js loaded dist/tableViz/driver.js, the file that contains the SQL driver.
     const driverLoaded = () => Object.keys(require.cache).some((key) => key.startsWith(extensionPath) && key.endsWith(path.join('dist', 'tableViz', 'driver.js')));
     assert.ok(!driverLoaded(), 'boards on a SQL warehouse do not load the driver');
     const driver = await api.session.loadDriver();

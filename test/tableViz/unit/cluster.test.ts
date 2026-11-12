@@ -2,9 +2,14 @@
  * Tests for the cluster rules and the cluster runner (src/tableViz/core/clusters.ts, host/clusterRunner.ts).
  *
  * The runner talks to a fake of the SQL driver (test/tableViz/fake/driver.ts),
- * which answers from the demo tables and can fail as a cluster fails.
+ * which answers from the demo tables and can fail as a cluster fails. Thus
+ * no test here shows that the real driver can talk to a real cluster.
  *
- * Run: npm run test:unit
+ * The cluster rules tell which clusters the feature can use: the runtime
+ * version, the access mode, and the Node.js version that the driver needs.
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/cluster.test.ts
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -22,10 +27,27 @@ import { DemoWorkspaceClient } from '../../../src/tableViz/host/workspace.ts';
 import { makeFakeDriver } from '../fake/driver.ts';
 import { answerStatement, comparable } from '../fake/warehouse.ts';
 
+/** The demo table `demo.shop.orders_2026`, in a profile that is not the Demo profile. The fake driver answers for it. */
 const dataset: Dataset = { profile: 'p', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
+/** Build the first SQL statement of a request. */
 const statementOf = (request: Request): Statement => buildStatements(request)[0] as Statement;
+/** A statement that most tests run: the 5 most frequent values of `status`. Its answer has 5 rows, and the first row is the row of the nulls. */
 const frequency = statementOf({ type: 'frequency', dataset, columns: [{ name: 'status', typeText: 'string' }], top: 5 });
 
+/**
+ * Make a cluster runner that talks to a new fake driver.
+ *
+ * @example
+ * const { runner, fake, tokenCalls, loads } = makeRunner({ tokens: ['token-1', 'token-2'] });
+ * await runner.run(frequency);
+ * fake.connects.length   // 1
+ * tokenCalls             // [false]: the runner asked for the stored token, not for a new one
+ * loads()                // 1: the runner loaded the driver one time
+ *
+ * @param options.timeoutSeconds  The time limit of a statement. Default: 300 seconds.
+ * @param options.tokens  The first token is the stored token. The second token is the one that the runner gets when it asks for a new token. Default: 'token-1' and 'token-2'.
+ * @returns `runner`; `fake`: the fake driver; `tokenCalls`: the value of `fresh` in each call of the `token` function; `loads()`: how many times the runner loaded the driver.
+ */
 function makeRunner(options: { timeoutSeconds?: number; tokens?: string[] } = {}) {
   const fake = makeFakeDriver();
   const tokens = options.tokens ?? ['token-1', 'token-2'];
@@ -48,6 +70,7 @@ test('cluster rules: runtime, access mode and HTTP path', () => {
   assert.equal(parseRuntime('custom:my-image'), undefined);
   assert.equal(parseRuntime(undefined), undefined);
 
+  // Make a running cluster with this runtime and this access mode.
   const cluster = (sparkVersion: string | undefined, accessMode: string | undefined) => ({ id: 'c', name: 'c', state: 'RUNNING', sparkVersion, accessMode });
   for (const mode of ['SINGLE_USER', 'USER_ISOLATION', 'DATA_SECURITY_MODE_DEDICATED', 'DATA_SECURITY_MODE_STANDARD', 'DATA_SECURITY_MODE_AUTO']) {
     assert.equal(clusterProblem(cluster('15.4.x-scala2.12', mode)), undefined, mode);
@@ -227,6 +250,22 @@ test('cluster runner: a session that ended gives a new session', async () => {
   fake.failNext.push('[DIVIDE_BY_ZERO] Division by zero. SQLSTATE: 22012');
   await assert.rejects(runner.run(frequency), /DIVIDE_BY_ZERO/);
   assert.equal(fake.sessions.length, 2);
+});
+
+test('cluster runner: the number 403 in the text of a SQL error is not an HTTP status', async () => {
+  const { runner, fake } = makeRunner();
+  await runner.run(frequency);
+  const before = fake.statements.length;
+  for (const text of ["[CAST_INVALID_INPUT] The value '403' of the type \"STRING\" cannot be cast to \"INT\". SQLSTATE: 22018", "[PARSE_SYNTAX_ERROR] Syntax error at or near 'FRM'. SQLSTATE: 42601 (line 1, pos 401)"]) {
+    fake.failNext.push(text);
+    await assert.rejects(runner.run(frequency), (e: unknown) => {
+      assert.ok(e instanceof QueryError);
+      assert.deepEqual([e.kind, e.status], ['failed', undefined], text);
+      return true;
+    });
+  }
+  assert.equal(fake.statements.length, before + 2, 'the runner sends each statement one time only');
+  assert.equal(fake.sessions.length, 1, 'the runner does not connect again');
 });
 
 test('cluster runner: a connection that fails is tried again by the next statement', async () => {

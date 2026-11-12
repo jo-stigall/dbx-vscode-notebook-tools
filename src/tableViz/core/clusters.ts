@@ -25,14 +25,18 @@ export interface ClusterInfo {
  *
  * The statements of the feature need two things. `IDENTIFIER()` needs
  * runtime 13.3 LTS. Named parameters through the SQL driver need a newer
- * protocol; from memory of the Databricks SQL connector docs that is runtime
- * 14.2. The pages that I read do not state this number. A real cluster must
- * confirm it.
+ * protocol, which runtime 14.2 has.
+ *
+ * No test confirmed the number 14.2. The author remembers it from the docs
+ * of the Databricks SQL connector, but did not find a page that states it.
+ * A test on a real cluster must confirm it.
  */
 export const MIN_RUNTIME = { major: 14, minor: 2 };
 
 /**
  * Read the version of a Databricks Runtime.
+ *
+ * @returns The two numbers of the version, or undefined if the text does not start with a version, as for a custom image.
  *
  * @example
  * parseRuntime('15.4.x-scala2.12')          // { major: 15, minor: 4 }
@@ -54,11 +58,16 @@ const UNITY_CATALOG_MODES: Record<string, string> = {
 };
 
 /**
- * The name of the access mode of a cluster, for a person to read.
+ * Get the name of the access mode of a cluster, for a person to read.
+ *
+ * For a mode that can read Unity Catalog, the function returns the name in
+ * the Databricks UI. For each other mode, it writes the API name in lower
+ * case.
  *
  * @example
- * accessModeLabel('SINGLE_USER')   // 'dedicated'
- * accessModeLabel('NONE')          // 'no isolation shared'
+ * accessModeLabel('SINGLE_USER')              // 'dedicated'
+ * accessModeLabel('NONE')                     // 'no isolation shared'
+ * accessModeLabel('LEGACY_TABLE_ACL')         // 'legacy table acl'
  */
 export function accessModeLabel(accessMode: string | undefined): string {
   if (!accessMode || accessMode === 'NONE') return 'no isolation shared';
@@ -73,13 +82,17 @@ export function accessModeLabel(accessMode: string | undefined): string {
  * // undefined
  * clusterProblem({ id: 'c', name: 'c', state: 'RUNNING', sparkVersion: '15.4.x-scala2.12', accessMode: 'NONE' })
  * // 'Its access mode is "no isolation shared", which cannot read Unity Catalog. Use a cluster with the access mode "standard" or "dedicated".'
+ * clusterProblem({ id: 'c', name: 'c', state: 'RUNNING', sparkVersion: '13.3.x-scala2.12', accessMode: 'SINGLE_USER' })
+ * // 'It has Databricks Runtime 13.3. The feature needs 14.2 or later.'
+ *
+ * @returns One or two sentences for the user. The function does not look at `state`: a stopped cluster has no problem.
  */
 export function clusterProblem(cluster: ClusterInfo): string | undefined {
   if (!cluster.accessMode || !(cluster.accessMode in UNITY_CATALOG_MODES)) {
     return `Its access mode is "${accessModeLabel(cluster.accessMode)}", which cannot read Unity Catalog. Use a cluster with the access mode "standard" or "dedicated".`;
   }
   const runtime = parseRuntime(cluster.sparkVersion);
-  // A runtime that the function cannot read (a custom image) is permitted. The first query shows if it works.
+  // The function permits a runtime that it cannot read (a custom image). The first query shows if it works.
   if (runtime && (runtime.major < MIN_RUNTIME.major || (runtime.major === MIN_RUNTIME.major && runtime.minor < MIN_RUNTIME.minor))) {
     return `It has Databricks Runtime ${runtime.major}.${runtime.minor}. The feature needs ${MIN_RUNTIME.major}.${MIN_RUNTIME.minor} or later.`;
   }

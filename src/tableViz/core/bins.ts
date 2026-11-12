@@ -10,7 +10,8 @@ import type { BinEdges, Grain } from './schema.ts';
  * Make bins of equal width for the range from `lo` to `hi`.
  *
  * If all values are the same (`lo` equals `hi`), the function returns one bin
- * that contains that value. Thus no code divides by zero.
+ * that contains that value. Thus no code divides by zero. If `hi` is less
+ * than `lo`, the function swaps them.
  *
  * @example
  * makeEdges(0, 100, 4)   // { lo: 0, hi: 100, bins: 4 }: the bins are 0-25, 25-50, 50-75, 75-100
@@ -18,7 +19,8 @@ import type { BinEdges, Grain } from './schema.ts';
  *
  * @param lo  The smallest value.
  * @param hi  The largest value.
- * @param bins  The number of bins that you want, from 1 to 200.
+ * @param bins  The number of bins that you want, from 1 to 200. The function changes a number outside this range to 1 or 200.
+ * @throws If `lo` or `hi` is not a finite number.
  */
 export function makeEdges(lo: number, hi: number, bins: number): BinEdges {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) throw new Error(`Cannot make bins from ${lo} to ${hi}.`);
@@ -61,12 +63,15 @@ export function binIndex(value: number, edges: BinEdges): number {
  *
  * @example
  * binBounds({ lo: 0, hi: 100, bins: 4 }, 1)   // [25, 50]
+ *
+ * @param index  The bin number, from 0.
  */
 export function binBounds(edges: BinEdges, index: number): [number, number] {
   const width = (edges.hi - edges.lo) / edges.bins;
   return [edges.lo + index * width, index === edges.bins - 1 ? edges.hi : edges.lo + (index + 1) * width];
 }
 
+/** The number of milliseconds in one day. */
 const DAY_MS = 86_400_000;
 
 /**
@@ -80,7 +85,9 @@ const DAY_MS = 86_400_000;
  * | more                   | year   |
  *
  * @example
- * chooseGrain('2026-01-01', '2026-12-31')   // 'week'
+ * chooseGrain('2026-01-01', '2026-02-15')   // 'day': 45 days
+ * chooseGrain('2026-01-01', '2026-12-31')   // 'week': 364 days
+ * chooseGrain('2019-01-01', '2026-12-31')   // 'month': 8 years
  *
  * @param min  The first date, as ISO 8601 text.
  * @param max  The last date, as ISO 8601 text.
@@ -99,7 +106,10 @@ export function chooseGrain(min: string, max: string): Grain {
  * A week starts on Monday.
  *
  * @example
- * truncateDay(Date.UTC(2026, 10, 12) / 86_400_000, 'month')   // the day number of 2026-11-01
+ * // Day 20769 is Thursday 2026-11-12.
+ * truncateDay(20769, 'week')    // 20766: Monday 2026-11-09
+ * truncateDay(20769, 'month')   // 20758: 2026-11-01
+ * truncateDay(20769, 'year')    // 20454: 2026-01-01
  *
  * @param day  The date as a number of days after 1970-01-01.
  * @returns The first day of the period, as a number of days after 1970-01-01.
@@ -116,7 +126,10 @@ export function truncateDay(day: number, grain: Grain): number {
  * Write a day number as YYYY-MM-DD.
  *
  * @example
- * formatDay(0)   // '1970-01-01'
+ * formatDay(0)       // '1970-01-01'
+ * formatDay(20454)   // '2026-01-01'
+ *
+ * @param day  The date as a number of days after 1970-01-01.
  */
 export function formatDay(day: number): string {
   return new Date(day * DAY_MS).toISOString().slice(0, 10);

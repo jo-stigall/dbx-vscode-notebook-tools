@@ -10,6 +10,24 @@ import { chipLabel } from '../core/derive.ts';
 import { displayTableName } from '../core/names.ts';
 import type { BoardDatasets, Dataset } from '../core/schema.ts';
 
+/**
+ * What one dataset of a saved view reads: the table, the login, the filter,
+ * the filters from charts, the version and the sample.
+ *
+ * The filter shows as the exact SQL text, so that the user can read it
+ * before it runs.
+ *
+ * @example
+ * <DatasetFacts label="A" dataset={{ profile: 'Demo', table: { catalog: 'main', schema: 'shop', name: 'orders' }, filter: "region = 'EMEA'" }} />
+ * // Dataset A: main.shop.orders
+ * // Login: Demo
+ * // Filter (SQL): region = 'EMEA'
+ * // Filters from charts: None
+ * // Version: The newest version
+ * // Sample: All rows
+ *
+ * @param label  'A' or 'B'.
+ */
 function DatasetFacts({ label, dataset }: { label: string; dataset: Dataset }) {
   const version = dataset.version?.kind === 'version' ? `Delta version ${dataset.version.n}` : dataset.version?.ts;
   return (
@@ -33,6 +51,19 @@ function DatasetFacts({ label, dataset }: { label: string; dataset: Dataset }) {
   );
 }
 
+/**
+ * The page that asks "Run the queries of this saved view?".
+ *
+ * The user sees the facts of dataset A (and of dataset B, if the view has
+ * one) and the button "Run the Queries". The page sends no request. A click
+ * on the button calls `onApprove`.
+ *
+ * @example
+ * <ConfirmView datasets={init.datasets} onApprove={() => send({ type: 'approve' })} />
+ *
+ * @param datasets  The datasets of the saved view.
+ * @param onApprove  The user permits the queries. App.tsx tells the host, and the host then starts the board.
+ */
 export function ConfirmView({ datasets, onApprove }: { datasets: BoardDatasets; onApprove: () => void }) {
   return (
     <main className="confirm">

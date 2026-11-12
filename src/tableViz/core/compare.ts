@@ -15,14 +15,20 @@ import { detectKind } from './kinds.ts';
 import type { ColumnPair } from './match.ts';
 import type { ColumnRef, Dataset, OverviewColumn, Request, ResultOf } from './schema.ts';
 
-/** Sends one request and returns its result. */
+/**
+ * Sends one request and returns its result.
+ *
+ * @example
+ * const result = await ask({ type: 'frequency', dataset, columns: [{ name: 'channel', typeText: 'string' }], top: 20 });
+ * result.values   // TypeScript knows that the result of a "frequency" request has `values`
+ */
 export type Ask = <T extends Request>(request: T) => Promise<ResultOf<T['type']>>;
 
 /** The number of values that the drift score of a category column reads from each dataset. */
 export const DRIFT_TOP = 50;
 
 /**
- * How a pair of columns is compared.
+ * How compare mode compares a pair of columns. compareKind() selects the kind.
  *
  * | Kind         | The drift score uses                                        |
  * |--------------|-------------------------------------------------------------|
@@ -37,6 +43,27 @@ export type CompareKind = 'values' | 'continuous' | 'date' | 'nulls' | 'skip';
 /**
  * Decide how to compare a pair of columns.
  *
+ * The function gets the kind of each column from detectKind(), then applies
+ * the first rule that matches:
+ *
+ * 1. The types differ and are not both numbers: 'values' if `asText` is true, 'skip' if not.
+ * 2. One column is an identifier or a complex type: 'nulls'.
+ * 3. The two columns are dates: 'date'.
+ * 4. One column is continuous: 'continuous'.
+ * 5. All other pairs: 'values'.
+ *
+ * @example
+ * // `amount` is a double with 8,400 different values in A.
+ * compareKind(amountPair, { name: 'amount', nonNull: 109500, distinct: 8400 }, { name: 'amount', nonNull: 95000, distinct: 8100 }, false)
+ * // 'continuous'
+ * // `order_id` is a bigint, and each row has a different value.
+ * compareKind(orderIdPair, { name: 'order_id', nonNull: 110000, distinct: 110000 }, { name: 'order_id', nonNull: 95000, distinct: 95000 }, false)
+ * // 'nulls'
+ * // `zip` is an int in A and a string in B, so `pair.compareAs` is 'text'.
+ * compareKind(zipPair, statsA, statsB, false)   // 'skip'
+ * compareKind(zipPair, statsA, statsB, true)    // 'values'
+ *
+ * @param statsA  The overview numbers of the column in A. The function uses `distinct` and `nonNull`.
  * @param asText  true if the user chose to compare this pair as text, although the types differ.
  */
 export function compareKind(pair: ColumnPair, statsA: OverviewColumn, statsB: OverviewColumn, asText: boolean): CompareKind {
@@ -49,7 +76,9 @@ export function compareKind(pair: ColumnPair, statsA: OverviewColumn, statsB: Ov
   return 'values';
 }
 
+/** Get the column of dataset A from a pair, in the shape that a request needs: the name and the type only. */
 const refA = (pair: ColumnPair): ColumnRef => ({ name: pair.a.name, typeText: pair.a.typeText });
+/** Get the column of dataset B from a pair, in the shape that a request needs. */
 const refB = (pair: ColumnPair): ColumnRef => ({ name: pair.b.name, typeText: pair.b.typeText });
 
 /**
@@ -60,7 +89,17 @@ const refB = (pair: ColumnPair): ColumnRef => ({ name: pair.b.name, typeText: pa
  * count in the list. The function asks for the exact counts of such values
  * and adds them to the end of the list.
  *
+ * @example
+ * // A: web 60, store 30, phone 10.  B: web 50, marketplace 40, store 10.
+ * const { a, b } = await comparedFrequency(ask, datasetA, datasetB, channelPair, 2);
+ * // The top 2 of A are web and store. The top 2 of B are web and marketplace.
+ * // The function asks A for the count of 'marketplace', and B for the count of 'store'.
+ * // a.values: web 60, store 30                    'marketplace' has the count 0 in A, so the function does not add it
+ * // b.values: web 50, marketplace 40, store 10
+ *
+ * @param ask  Sends a request. The function sends two "frequency" requests, then zero to two "valueCounts" requests.
  * @param top  The number of values to read from each dataset.
+ * @returns The "frequency" results of A and B. `sql` of each result also has the "valueCounts" statement, if one ran.
  */
 export async function comparedFrequency(
   ask: Ask,
@@ -88,6 +127,7 @@ export async function comparedFrequency(
 
 /** One row of the frequency table in compare mode. */
 export interface ComparedValue {
+  /** The text that the table shows: the value, "(null)" or "Other". */
   label: string;
   /** One value, all null rows, or all values that the two lists do not show. */
   role: 'value' | 'null' | 'other';
@@ -96,7 +136,7 @@ export interface ComparedValue {
   /** The count as a part of all rows of the dataset, from 0 to 1. */
   shareA: number;
   shareB: number;
-  /** The value is in one dataset only. */
+  /** Set if the value has rows in one dataset only. */
   onlyIn?: 'a' | 'b';
 }
 
@@ -147,13 +187,29 @@ export function comparedValues(a: ResultOf<'frequency'>, b: ResultOf<'frequency'
   return rows;
 }
 
-/** The drift of a category column: over the values of the two datasets, with "Other" and null as their own values. */
+/**
+ * Compute the drift of a category column from the frequency results of A and B.
+ *
+ * Each value of the two lists is one bin. "Other" and "(null)" are bins too.
+ *
+ * @example
+ * // A: web 60, store 40.  B: web 50, store 38, marketplace 12.
+ * frequencyDrift(a, b)
+ * // { score: 0.2519..., psi: 0.8693..., nullRateA: 0, nullRateB: 0, method: 'values',
+ * //   bins: [{ label: 'web', a: 60, b: 50 }, { label: 'store', a: 40, b: 38 }, { label: 'marketplace', a: 0, b: 12 }] }
+ */
 export function frequencyDrift(a: ResultOf<'frequency'>, b: ResultOf<'frequency'>): Drift {
   const bins = comparedValues(a, b).map((row) => ({ label: row.label, a: row.countA, b: row.countB }));
   return driftOf('values', bins, a.rowCount, a.nulls, b.rowCount, b.nulls);
 }
 
-/** Write a cut point for a bin label. A cut point of a date column is a day number. */
+/**
+ * Write a cut point for a bin label. A cut point of a date column is a day number.
+ *
+ * @example
+ * cutLabel(49.4321, false)   // '49.43': four significant digits
+ * cutLabel(20454, true)      // '2026-01-01'
+ */
 function cutLabel(cut: number, isDate: boolean): string {
   if (isDate) return new Date(cut * 86_400_000).toISOString().slice(0, 10);
   return String(Number(cut.toPrecision(4)));
@@ -168,7 +224,21 @@ function cutLabel(cut: number, isDate: boolean): string {
  * | 'continuous', 'date' | "quantiles" for A (its deciles), then "driftBins" for A and B with those cut points |
  * | 'nulls'              | none: the overview numbers are enough                            |
  *
+ * If dataset A has no values in the column, there are no deciles. The
+ * function then compares the nulls only, as for the kind 'nulls'.
+ *
+ * @example
+ * // The deciles of `amount` in A are 10, 20, ... 90, so each bin of A has 100 of its 1,000 rows.
+ * // B has fewer small amounts and more large amounts.
+ * await columnDrift(ask, datasetA, datasetB, amountPair, 'continuous', 1000, statsA, 1000, statsB)
+ * // { score: 0.1397..., psi: 0.1098..., nullRateA: 0, nullRateB: 0, method: 'deciles',
+ * //   bins: [{ label: 'Below 10', a: 100, b: 50 }, { label: '10 to 20', a: 100, b: 50 }, { label: '20 to 30', a: 100, b: 100 },
+ * //          ..., { label: '80 to 90', a: 100, b: 150 }, { label: '90 and above', a: 100, b: 150 }] }
+ *
+ * @param ask  Sends a request. See the table for the requests that each kind sends.
+ * @param kind  How to compare the pair, from compareKind().
  * @param rowsA  All rows of dataset A, from the overview.
+ * @param statsA  The overview numbers of the column in A. The function uses `nonNull`.
  * @returns The drift, or undefined for the kind 'skip'.
  */
 export async function columnDrift(

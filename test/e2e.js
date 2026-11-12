@@ -277,6 +277,16 @@ async function main(log) {
   await mock('POST', '/mock/config', { execute_delay: 0 });
   log('cancels a command that you stop while the cluster accepts it');
 
+  // 7e. A status request fails: the cell fails, and the kernel cancels the command on the cluster.
+  await mock('POST', '/mock/config', { status_fails: true });
+  await mock('POST', '/mock/requests');
+  await runAll(nb, { start: 2, end: 3 });
+  await until('the failed cell', () => cells[2].executionSummary && cells[2].executionSummary.success === false);
+  assert.ok(outputText(cells[2], 'application/vnd.code.notebook.error').includes('HTTP 500'));
+  await until('the cancel', () => sent('POST /api/1.2/commands/cancel'), 5000);
+  await mock('POST', '/mock/config', { status_fails: false });
+  log('cancels a command when a status request fails');
+
   // 8. Adding cells through the notebook API (what Copilot's edit tool does) saves in Databricks format.
   const add = new vscode.WorkspaceEdit();
   add.set(nb.uri, [

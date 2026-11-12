@@ -14,7 +14,7 @@ tells you where its code is.
 | `src/kernel.js` | The kernel. Runs cells on the cluster and shows the results. |
 | `src/client.js` | The client. Finds the workspace, the login and the cluster. Sends REST requests. |
 | `package.json` | Tells VS Code the name of the extension, its commands and its settings. |
-| `src/tableViz/` | The "Visualize Table" feature, in TypeScript. See [table-viz-design.md](table-viz-design.md). It uses `src/client.js` to find the workspace and the token. |
+| `src/tableViz/` | The "Visualize Table" feature, in TypeScript. See [table-viz-how-it-works.md](table-viz-how-it-works.md). It uses `src/client.js` to find the workspace and the token. |
 | `scripts/build.mjs` | Builds `src/tableViz/` into the folder `dist/`. |
 | `scripts/package.py` | Builds the `.vsix` install file. |
 | `docs/` | This page. |
@@ -105,7 +105,8 @@ kernel then does these steps:
    command with `GET /api/1.2/commands/status`. It asks again until the
    command is done. If the cluster reports text before the command is done,
    the kernel shows that text immediately. If the cluster does not answer a
-   request in 30 seconds, the cell stops with an error.
+   request in 30 seconds, the cell stops with an error, and the kernel tells
+   the cluster to cancel the command.
 5. **Show the result.** The kernel converts the result to a cell output:
 
    | Result from the cluster | What you see |

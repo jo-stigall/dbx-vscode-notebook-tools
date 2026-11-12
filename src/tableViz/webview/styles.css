@@ -1,13 +1,29 @@
 /*
- * The styles of the board.
+ * The styles of the "Visualize Table" page in the webview.
  *
- * All colors and fonts come from the --vscode-* variables, so the board
- * follows the theme of the user: light, dark and high contrast.
+ * The file styles all parts of the page: the header of the board, the
+ * controls of a dataset, the overview table with its thumbnails, the detail
+ * cards and their detailed view, compare mode, and the page that asks
+ * before a saved view runs. main.tsx imports the file, and esbuild writes
+ * it to dist/tableViz/webview.css.
+ *
+ * Colors: the colors and fonts come from the --vscode-* variables that
+ * VS Code sets on the page, so the board follows the theme of the user:
+ * light, dark and high contrast. A value after the comma, as in
+ * var(--vscode-charts-blue, #3794ff), applies only if VS Code does not set
+ * the variable. Only the loading blocks have a fixed color: a grey that is
+ * almost transparent, which shows on a light and on a dark background.
  *
  * --tv-a is the color of dataset A on each chart. --tv-b is the color of
  * dataset B. Blue and orange stay different for people who cannot tell red
  * from green.
+ *
+ * A chart of a card is a canvas, and a canvas cannot use a CSS variable.
+ * theme.ts reads the same --vscode-* variables and gives their values to
+ * the charts, so that a chart and the page around it have the same colors.
  */
+
+/* The colors that many rules in this file share: datasets A and B, borders, and less important text. */
 :root {
   --tv-a: var(--vscode-charts-blue, #3794ff);
   --tv-b: var(--vscode-charts-orange, #d18616);
@@ -15,6 +31,7 @@
   --tv-muted: var(--vscode-descriptionForeground, inherit);
 }
 
+/* The page and its title (the name of the table) */
 body {
   margin: 0;
   padding: 0 20px 24px;
@@ -30,6 +47,7 @@ h1 {
   font-weight: 600;
 }
 
+/* The name of the Databricks login, next to the name of the table */
 .badge {
   margin-left: 6px;
   padding: 1px 7px;
@@ -42,11 +60,13 @@ h1 {
   border: 1px solid var(--vscode-contrastBorder, transparent);
 }
 
+/* A line of less important text, such as "Loading…" */
 .status {
   margin: 24px 0;
   color: var(--tv-muted);
 }
 
+/* The facts of the table in the header of the board: rows, size on disk, last modified */
 .facts {
   display: flex;
   flex-wrap: wrap;
@@ -62,6 +82,7 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+/* The line above the overview: the search box, the "Sort by" list and the count of columns */
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -90,6 +111,7 @@ h1 {
   color: var(--tv-muted);
 }
 
+/* The overview table: one row for each column of the dataset. Compare mode uses the same table. */
 table.columns {
   width: 100%;
   border-collapse: collapse;
@@ -127,6 +149,7 @@ table.columns {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A small label after a name, such as "partition" or "only in A" */
 .tag {
   margin-left: 6px;
   padding: 0 5px;
@@ -137,6 +160,7 @@ table.columns {
   color: var(--tv-muted);
 }
 
+/* The small bar next to a percent of nulls or a drift score */
 .share {
   margin-left: 4px;
   vertical-align: middle;
@@ -150,6 +174,7 @@ table.columns {
   fill: var(--tv-a);
 }
 
+/* The thumbnail in each row of the overview: a small chart, or text if the column has no chart */
 .thumb-cell {
   display: flex;
   align-items: center;
@@ -175,6 +200,7 @@ table.columns {
   opacity: 0.6;
 }
 
+/* An error from the host: the message, the next step and the details */
 .error {
   margin: 12px 0;
   padding: 8px 12px;
@@ -192,7 +218,7 @@ table.columns {
   font-family: var(--vscode-editor-font-family, monospace);
 }
 
-/* Buttons */
+/* Buttons: a button that looks like a link, a button with an icon, and the outline of the control that has the keyboard focus */
 button.link {
   padding: 0;
   border: none;
@@ -232,11 +258,12 @@ summary:focus-visible {
   outline-offset: 1px;
 }
 
+/* The row of the overview whose column has an open card */
 .columns tr.selected {
   background: var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-hoverBackground));
 }
 
-/* Detail cards */
+/* Detail cards: the grid of cards, the frame of a card and its header */
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
@@ -293,6 +320,7 @@ summary:focus-visible {
   border-radius: 2px;
   font: inherit;
 }
+/* The controls of a card: the "Bins" slider, lists and check boxes */
 .controls {
   display: flex;
   flex-wrap: wrap;
@@ -310,6 +338,7 @@ summary:focus-visible {
   min-width: 2.2em;
   font-variant-numeric: tabular-nums;
 }
+/* The chart of a small card. In the detailed view, the card sets a larger height on the element. */
 .chart {
   width: 100%;
   height: 220px;
@@ -318,7 +347,7 @@ summary:focus-visible {
   margin: 8px 0;
 }
 
-/* Tables on a card */
+/* Tables on a card: the statistics table (.stats) and the tables of counts (.data) */
 table.stats,
 table.data {
   width: 100%;
@@ -357,6 +386,7 @@ table.data {
   overflow: auto;
 }
 
+/* Below the content of a card: the note about estimates, and the SQL statements */
 .approx-note {
   margin: 8px 0 0;
   color: var(--tv-muted);
@@ -372,7 +402,7 @@ table.data {
   font-size: 0.92em;
 }
 
-/* The controls of the dataset */
+/* The controls of the dataset: the filter box, the sample, the version, and the buttons */
 .dataset-bar {
   margin: 0 0 14px;
 }
@@ -432,10 +462,12 @@ table.data {
 .dataset-bar button[type='submit']:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground, var(--vscode-list-hoverBackground));
 }
+/* The warning that the filter does not use a partition column */
 .hint {
   margin: 4px 0;
   color: var(--vscode-editorWarning-foreground, var(--tv-muted));
 }
+/* The question before the first scan of a very large table */
 .notice {
   margin: 0 0 14px;
   padding: 8px 12px;
@@ -445,6 +477,7 @@ table.data {
 .notice p {
   margin: 4px 0;
 }
+/* The label "Sampled 1%" next to the name of the table and in the header of a card */
 .sampled {
   margin-left: 6px;
   padding: 1px 7px;
@@ -458,7 +491,7 @@ table.data {
   vertical-align: middle;
 }
 
-/* Compare mode */
+/* Compare mode: the letters "A" and "B" in the color of their dataset, and the names of the two datasets */
 .chip {
   display: inline-block;
   min-width: 1.5em;
@@ -496,6 +529,7 @@ table.data {
 .dataset-bar .version {
   width: 9em;
 }
+/* Compare mode: the "Compare with" form, with the box for the name of a second table and its buttons */
 .compare-with {
   display: flex;
   flex-wrap: wrap;
@@ -529,6 +563,7 @@ table.data {
   opacity: 0.5;
   cursor: default;
 }
+/* Compare mode: the comparison of the columns of A and B (only in A, only in B, different types) */
 .schema {
   margin: 0 0 14px;
   padding: 6px 12px;
@@ -554,6 +589,7 @@ table.data {
 .schema dd label {
   font-family: var(--vscode-font-family);
 }
+/* Compare mode: the drift score. Its bar in the compare table, text such as "Not compared", and the lines below a compare card */
 .drift-fill {
   fill: var(--tv-b);
 }
@@ -568,6 +604,7 @@ table.data {
 .drift p {
   margin: 2px 0;
 }
+/* Compare mode: "Side by side", one chart for A and one chart for B in a compare card */
 .sides {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -583,7 +620,7 @@ table.data {
   font-style: normal;
 }
 
-/* Filter chips */
+/* Filter chips: one chip in the dataset bar for each filter from a click on a chart */
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -612,6 +649,7 @@ table.data {
   color: inherit;
   cursor: pointer;
 }
+/* A chart whose bars add a filter, and the filter button in a table row */
 .chart.selectable {
   cursor: pointer;
 }
@@ -708,6 +746,7 @@ table.data {
   background: var(--vscode-textCodeBlock-background, transparent);
   font-family: var(--vscode-editor-font-family, monospace);
 }
+/* The button "Run the Queries" */
 button.primary {
   padding: 5px 14px;
   border: 1px solid var(--vscode-button-border, transparent);
@@ -853,15 +892,22 @@ span.stale {
   cursor: pointer;
   transition: background-color 120ms ease-out;
 }
+/* A button or a chip changes its color in 120 ms when the pointer comes above it. */
 .icon-button,
 .menu-items button,
 .filter-chip {
   transition: background-color 120ms ease-out, border-color 120ms ease-out;
 }
+/* A new chip moves into its place. */
 .filter-chip {
   animation: tv-enter 160ms ease-out;
 }
 
+/*
+ * tv-enter: a new card or chip moves up 4 pixels while it becomes visible.
+ * tv-slide: the thin line at the top of a card moves from left to right.
+ * tv-shimmer: a lighter band moves across a loading block.
+ */
 @keyframes tv-enter {
   from {
     opacity: 0;

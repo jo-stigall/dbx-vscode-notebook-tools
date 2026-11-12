@@ -17,6 +17,7 @@ import { PERCENTILES, type Chip, type ColumnRef, type Dataset, type Measure, typ
 import { buildStatements, renderStatement } from '../core/sql.ts';
 import { demoTable, formatDemoValue, type DemoColumn, type DemoTable } from './data.ts';
 
+/** The number of milliseconds in one day. */
 const DAY_MS = 86_400_000;
 
 // This folder is checked without Node.js or browser types, so declare the one global function that it uses.
@@ -29,7 +30,10 @@ const samples = new Map<string, DemoTable>();
  * Make a copy of a demo table that has about `percent` percent of the rows.
  *
  * The same rows are in the sample on each run: the function decides from the
- * row number, with no random numbers.
+ * row number, with no random numbers. It keeps each sample in `samples`.
+ *
+ * @example
+ * sampleOf(demoTable({ catalog: 'demo', schema: 'shop', name: 'orders_2026' }), 10).rowCount   // 11001 of 110000
  */
 function sampleOf(table: DemoTable, percent: number): DemoTable {
   const key = `${table.name.name}:${percent}`;
@@ -48,7 +52,20 @@ function sampleOf(table: DemoTable, percent: number): DemoTable {
 /** Copies of the demo tables that have only the rows of some filter chips. The key is the table name, the sample and the chips. */
 const filtered = new Map<string, DemoTable>();
 
-/** Tell if a value of a column meets the condition of a chip. */
+/**
+ * Tell if a value of a column meets the condition of a chip.
+ *
+ * A null meets only a 'null' chip. A 'range' chip includes `lo`. It
+ * includes `hi` only if the chip has `includeHi`.
+ *
+ * @example
+ * // channelColumn is the column `channel`, amountColumn is the column `amount` with the type decimal(10,2).
+ * meets(channelColumn, 'web', { op: 'eq', column: { name: 'channel', typeText: 'string' }, value: 'web' })   // true
+ * meets(amountColumn, 1999, { op: 'range', column: { name: 'amount', typeText: 'decimal(10,2)' }, lo: 0, hi: 19.99 })   // false: 19.99 is not below `hi`
+ * meets(amountColumn, null, { op: 'null', column: { name: 'amount', typeText: 'decimal(10,2)' } })   // true
+ *
+ * @param value  The stored value, in the form that DemoValue describes.
+ */
 function meets(column: DemoColumn, value: DemoColumn['values'][number], chip: Chip): boolean {
   if (chip.op === 'null') return value === null;
   if (value === null) return false;
@@ -60,7 +77,14 @@ function meets(column: DemoColumn, value: DemoColumn['values'][number], chip: Ch
   return x >= chip.lo && (chip.includeHi ? x <= chip.hi : x < chip.hi);
 }
 
-/** Make a copy of a table that has only the rows that meet all chips. */
+/**
+ * Make a copy of a table that has only the rows that meet all chips.
+ *
+ * @example
+ * // The chip "channel = web" keeps 60352 of the 110000 rows of demo.shop.orders_2026.
+ *
+ * @param key  The key under which `filtered` keeps the copy. tableOf() makes it from the table name, the sample and the chips.
+ */
 function chipsOf(table: DemoTable, key: string, chips: Chip[]): DemoTable {
   let result = filtered.get(key);
   if (!result) {
@@ -81,6 +105,12 @@ function chipsOf(table: DemoTable, key: string, chips: Chip[]): DemoTable {
  * The Demo profile cannot run SQL, so it cannot use a filter that the user
  * typed. It can use filter chips, because a chip is a column, an operator
  * and values, not SQL.
+ *
+ * @example
+ * tableOf({ profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } }).rowCount                             // 110000
+ * tableOf({ profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' }, sample: { percent: 10 } }).rowCount   // 11001
+ *
+ * @throws {ProfilerError}  If the table is not a demo table, or if the dataset has a filter that the user typed.
  */
 function tableOf(dataset: Dataset): DemoTable {
   const table = demoTable(dataset.table);
@@ -99,7 +129,11 @@ function tableOf(dataset: Dataset): DemoTable {
   return chipsOf(sampled, JSON.stringify([table.name.name, dataset.sample?.percent, dataset.chips]), dataset.chips);
 }
 
-/** Find a column of a demo table. */
+/**
+ * Find a column of a demo table by its name. The function does not compare the type.
+ *
+ * @throws {ProfilerError}  If the table has no column with this name.
+ */
 function columnOf(table: DemoTable, ref: ColumnRef): DemoColumn {
   const column = table.columns.find((c) => c.name === ref.name);
   if (!column) {
@@ -110,14 +144,33 @@ function columnOf(table: DemoTable, ref: ColumnRef): DemoColumn {
   return column;
 }
 
-/** Convert a stored value to the number that a chart uses. A decimal 1999 with scale 2 becomes 19.99. */
+/**
+ * Convert a stored value to the number that a chart uses.
+ *
+ * @example
+ * toNumber(amountColumn, 1999)    // 19.99: `amount` is a decimal with scale 2
+ * toNumber(quantityColumn, 3)     // 3
+ */
 function toNumber(column: DemoColumn, value: number): number {
   return column.family === 'decimal' ? value / 10 ** column.scale : value;
 }
 
 /**
- * Get the numbers that a request measures: the values of a number column, or
- * the lengths of the values as text. The list does not contain the nulls.
+ * Get the numbers that a request measures in a column. The list does not contain the nulls.
+ *
+ * | `measure`          | The number for each value                                   |
+ * |--------------------|-------------------------------------------------------------|
+ * | 'value' or not set | The value. The column must be a number column.              |
+ * | 'length'           | The number of characters of the value as text.              |
+ * | 'day'              | The date of the value, as a number of days after 1970-01-01. |
+ *
+ * @example
+ * // `amount` holds 23.16 and 45.50; `customer_id` holds 'C03806'; `order_date` holds 2026-06-16.
+ * measuredNumbers(amountColumn, undefined)     // [23.16, 45.5]
+ * measuredNumbers(customerColumn, 'length')    // [6]
+ * measuredNumbers(orderDateColumn, 'day')      // [20620]
+ *
+ * @throws {ProfilerError}  If the column does not have a type that the measure can use.
  */
 function measuredNumbers(column: DemoColumn, measure: Measure | undefined): number[] {
   const out: number[] = [];
@@ -140,6 +193,10 @@ function measuredNumbers(column: DemoColumn, measure: Measure | undefined): numb
  *
  * @example
  * percentileOf([10, 20, 30, 40], 0.5)   // 25
+ * percentileOf([10, 20, 30, 40], 0)     // 10
+ *
+ * @param sorted  The numbers, smallest first. The list must have one number or more.
+ * @param p  The percentile as a part of 1. Example: 0.5 for the median.
  */
 export function percentileOf(sorted: number[], p: number): number {
   const position = p * (sorted.length - 1);
@@ -149,7 +206,35 @@ export function percentileOf(sorted: number[], p: number): number {
   return low + ((sorted[above] as number) - low) * (position - below);
 }
 
+/**
+ * The Profiler for the Demo profile. It computes each answer from the rows of a demo table.
+ *
+ * @example
+ * const profiler = new DemoProfiler();
+ * const result = await profiler.profile({
+ *   type: 'frequency',
+ *   dataset: { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } },
+ *   columns: [{ name: 'channel', typeText: 'string' }],
+ *   top: 3,
+ * });
+ * // {
+ * //   type: 'frequency', rowCount: 110000, nulls: 0,
+ * //   values: [{ value: 'web', count: 60352 }, { value: 'store', count: 27385 }, { value: 'marketplace', count: 13283 }],
+ * //   sql: ['-- :c0 = ...\nSELECT ...'], approximate: false, asOf: '2026-11-12T09:30:00.000Z',
+ * // }
+ */
 export class DemoProfiler implements Profiler {
+  /**
+   * Answer one request from the demo tables.
+   *
+   * The function answers "quantiles", "driftBins", "valueCounts" and
+   * "validateFilter" itself. For each other type it calls the method with
+   * the name of the type. `options.refresh` has no effect.
+   *
+   * @throws {ProfilerError}  If the table or the column does not exist, if the dataset has a filter that the user typed,
+   *   or if the column has a type that the request cannot use.
+   * @throws {CancelledError}  If `options.signal` fired before the function started the computation.
+   */
   async profile(request: Request, options: ProfileOptions = {}): Promise<Result> {
     options.onProgress?.('running');
     // Wait one turn, so that a cancel message can arrive, as it can with a real query.
@@ -203,6 +288,16 @@ export class DemoProfiler implements Profiler {
     }
   }
 
+  /**
+   * Answer "tableDetails": the columns of a demo table and its fixed facts.
+   *
+   * The sample and the chips of the dataset have no effect on the answer.
+   *
+   * @example
+   * // For demo.shop.orders_2026:
+   * // { type: 'tableDetails', columns: [{ name: 'order_id', typeText: 'bigint' }, ...], tableType: 'table', format: 'delta',
+   * //   sizeBytes: 3771332, lastModified: '2026-11-01T02:05:00.000Z', partitionColumns: ['order_date'], version: '42' }
+   */
   private tableDetails(request: RequestOf<'tableDetails'>): Omit<ResultOf<'tableDetails'>, 'sql' | 'approximate' | 'asOf'> {
     // The facts of a table do not depend on the sample.
     const table = tableOf({ ...request.dataset, sample: undefined, chips: undefined });
@@ -218,6 +313,21 @@ export class DemoProfiler implements Profiler {
     };
   }
 
+  /**
+   * Answer "overview": the number of rows, and a short summary of each column of the request.
+   *
+   * - Each column gets `nonNull`, the number of values that are not null.
+   * - A column that is not complex (not an array or a struct) also gets `distinct`, the number of different values.
+   * - A number column and a date or timestamp column also get `min` and `max`. A number column also gets `mean`.
+   *
+   * @example
+   * // For the columns `amount`, `channel` and `items` of demo.shop.orders_2026 (this example shortens the mean):
+   * // { type: 'overview', rowCount: 110000, columns: [
+   * //   { name: 'amount', nonNull: 110000, distinct: 18526, min: '2.33', max: '1202.88', mean: 63.0015 },
+   * //   { name: 'channel', nonNull: 110000, distinct: 4 },
+   * //   { name: 'items', nonNull: 107815 },
+   * // ] }
+   */
   private overview(request: RequestOf<'overview'>): Omit<ResultOf<'overview'>, 'sql' | 'approximate' | 'asOf'> {
     const table = tableOf(request.dataset);
     const columns = request.columns.map((ref): OverviewColumn => {
@@ -249,6 +359,19 @@ export class DemoProfiler implements Profiler {
     return { type: 'overview', rowCount: table.rowCount, columns };
   }
 
+  /**
+   * Answer "numericStats": the statistics of the numbers that the request measures in one column.
+   *
+   * `stddev` is the standard deviation of a sample (it divides by n - 1),
+   * as the Databricks function `stddev`. If all rows are null, the answer
+   * has only the counts.
+   *
+   * @example
+   * // For the column `amount` of demo.shop.orders_2026 (this example shortens the long numbers):
+   * // { type: 'numericStats', rowCount: 110000, nonNull: 110000, zeros: 0, negatives: 0,
+   * //   min: '2.33', max: '1202.88', mean: 63.0015, stddev: 50.4107,
+   * //   percentiles: [{ p: 0.01, value: 9.78 }, ..., { p: 0.5, value: 49.26 }, ..., { p: 0.99, value: 253.2505 }] }
+   */
   private numericStats(request: RequestOf<'numericStats'>): Omit<ResultOf<'numericStats'>, 'sql' | 'approximate' | 'asOf'> {
     const table = tableOf(request.dataset);
     const column = columnOf(table, request.columns[0]);
@@ -277,6 +400,16 @@ export class DemoProfiler implements Profiler {
     return out;
   }
 
+  /**
+   * Answer "histogram": the number of values in each bin of `request.edges`.
+   *
+   * `below` and `above` count the values that are outside the range of the
+   * bins. The function does not count nulls.
+   *
+   * @example
+   * // For the column `amount` of demo.shop.orders_2026 and the edges { lo: 0, hi: 200, bins: 4 }:
+   * // { type: 'histogram', counts: [55974, 36907, 10988, 3608], below: 0, above: 2523 }
+   */
   private histogram(request: RequestOf<'histogram'>): Omit<ResultOf<'histogram'>, 'sql' | 'approximate' | 'asOf'> {
     const column = columnOf(tableOf(request.dataset), request.columns[0]);
     const { edges } = request;
@@ -292,6 +425,19 @@ export class DemoProfiler implements Profiler {
     return { type: 'histogram', counts, below, above };
   }
 
+  /**
+   * Answer "frequency": the most frequent values of one column, with the number of rows of each.
+   *
+   * The list has `request.top` values at most, most frequent first. Null
+   * is not in the list: `nulls` has its count.
+   *
+   * @example
+   * // For the column `channel` of demo.shop.orders_2026 and `top: 3`:
+   * // { type: 'frequency', rowCount: 110000, nulls: 0,
+   * //   values: [{ value: 'web', count: 60352 }, { value: 'store', count: 27385 }, { value: 'marketplace', count: 13283 }] }
+   *
+   * @throws {ProfilerError}  If the column is an array, a map or a struct.
+   */
   private frequency(request: RequestOf<'frequency'>): Omit<ResultOf<'frequency'>, 'sql' | 'approximate' | 'asOf'> {
     const table = tableOf(request.dataset);
     const column = columnOf(table, request.columns[0]);
@@ -312,6 +458,18 @@ export class DemoProfiler implements Profiler {
     return { type: 'frequency', rowCount: table.rowCount, nulls, values };
   }
 
+  /**
+   * Answer "dateCounts": the number of rows in each day, week, month or year of a date column.
+   *
+   * The answer has one entry for each period that has rows, oldest first.
+   * A timestamp counts in the day of its date in UTC.
+   *
+   * @example
+   * // For the column `order_date` of demo.shop.orders_2026 and `grain: 'month'`:
+   * // { type: 'dateCounts', grain: 'month', buckets: [{ start: '2026-01-01', count: 9400 }, { start: '2026-02-01', count: 8482 }, ...] }
+   *
+   * @throws {ProfilerError}  If the column is not a date or a timestamp.
+   */
   private dateCounts(request: RequestOf<'dateCounts'>): Omit<ResultOf<'dateCounts'>, 'sql' | 'approximate' | 'asOf'> {
     const column = columnOf(tableOf(request.dataset), request.columns[0]);
     if (column.family !== 'date' && column.family !== 'timestamp') {

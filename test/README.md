@@ -59,7 +59,7 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code
 If all tests pass, the command prints:
 
 ```text
-6 passed
+10 passed
 ```
 
 The tests make sure that the extension obeys these rules:
@@ -82,7 +82,7 @@ in `tableViz/unit/` directly. It cannot run the `.tsx` file in
 The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 122
+ℹ pass 139
 ℹ fail 0
 ```
 
@@ -97,6 +97,10 @@ The tests make sure of these things:
   A table name or column name never goes into a statement without backticks.
 - Each kind of detail card shows the correct numbers, and each button has a
   name for a screen reader.
+- When no part of the board wants the answer of a query that still runs, the
+  webview tells the host to cancel it. In compare mode, a change to dataset B
+  stops the queries on the old B, and the queries on A continue
+  (`tableViz/unit/requests.test.ts`).
 - The warehouse runner asks for the state of a statement until it is done,
   cancels it on request and after the time limit, gets a new token after
   HTTP 401, and tries again after HTTP 429. A local server with a script
@@ -151,6 +155,7 @@ ok   reports cell errors
 ok   does not run a cell that you stop while the session starts
 ok   deletes a session that you reset while it starts
 ok   cancels a command that you stop while the cluster accepts it
+ok   cancels a command when a status request fails
 ok   writes new cells in Databricks format
 ok   reopening as text sticks
 ok   tableViz: Visualize Table opens a board
@@ -328,6 +333,7 @@ the full extension uses them:
 |---|---|
 | `POST /mock/config {"context_delay": 2}` | A new session takes 2 seconds to start. |
 | `POST /mock/config {"execute_delay": 2}` | The server waits 2 seconds before it accepts a command. |
+| `POST /mock/config {"status_fails": true}` | Each status request of a command fails with HTTP 500. |
 | `GET /mock/requests` | Returns the requests that the extension sent until now. |
 
 The fake server reports the text that a command printed while the command

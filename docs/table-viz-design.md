@@ -30,7 +30,9 @@ does not use that API.
   of catalogs, a log channel (the extension has no log today) and a custom
   editor for `*.tableviz.json`.
 - One change outside the feature folder: the error from `Connection.api()`
-  gets a `status` field, so that callers can see a 401 or a 429.
+  gets a `status` field, so that callers can see a 401 or a 429. (Milestone
+  4 changed this plan: the feature has its own REST client, and
+  `Connection.api()` did not change. See "Decisions in milestone 4".)
 
 ## Chart library: Apache ECharts
 
@@ -42,6 +44,11 @@ not verified: the default tooltip writes inline styles, which a strict policy
 can block. If it does, the feature draws its own tooltip.
 
 ## Types
+
+This section and the next section show the plan from before the code. The
+code now has more requests and different messages. The current lists are in
+[table-viz-how-it-works.md](table-viz-how-it-works.md#the-requests-and-the-messages),
+and `src/tableViz/core/schema.ts` defines them.
 
 ```ts
 type Dataset = {
@@ -293,7 +300,9 @@ behaves in an esbuild bundle, and all live queries.
 - **The drift of each matched column is computed when the board opens**,
   because the sort by drift needs all scores. A table with many columns
   sends many queries; the queue of the host limits how many run at one time.
-- **The question for a very large table** looks at dataset A only.
+- **The question for a very large table** looks at dataset A only. (Changed
+  after the audit of 2026-11-12: each dataset has its own question. See the
+  last section of decisions.)
 - **Dataset B uses the profile of dataset A.** Two workspaces are out of
   scope, but the dataset type has the profile.
 
@@ -417,6 +426,49 @@ behaves in an esbuild bundle, and all live queries.
   scripts in the page, and the layout in screenshots. The tests in VS Code
   do not look at the page of a board.
 
+## Decisions after the audit of 2026-11-12
+
+A second model audited version 0.2.0. I checked each claim in the code and in
+the Databricks docs before I changed anything.
+
+- **Compare mode now releases its requests.** Before, compare mode asked for
+  each answer and never released it. A query on the old dataset B continued
+  after you changed B, and a query of a card continued after you closed the
+  card. The drift hook now keeps each request while the board shows its
+  dataset (`DatasetHolds`). A change to B stops the queries on the old B,
+  and the queries on A continue, because the new drifts need them again.
+  The values card releases its requests when it closes (`Scope`).
+- **`hold()` in `rpc.ts`** releases exactly the request that it sent.
+  `release(request)` finds a request by its text, so after "Refresh" it could
+  release the new request with the same text.
+- **The drift cache is gone.** The module kept each drift forever. "Refresh"
+  did not show old drifts, because the key had the refresh number, but the
+  map grew with each change of a dataset. The requests are shared through
+  `rpc.ts`, so the drift needs no cache of its own.
+- **Each dataset has its own large-table question** (`scanLargeB` in the
+  board state). Before, a large B was read without a question, and in
+  compare mode a large A showed no question at all: the board waited
+  without an end.
+- **The identifier card** labels the lengths below and above its edges, and
+  has no filter button for them. This can occur with a sample, because the
+  statistics and the histogram read different random rows.
+- **The partition hint** looks at each place where the name of a partition
+  column occurs, not only the first.
+- **Unity Catalog lists:** catalogs and schemas now ask for pages
+  (`max_results: 0`). The docs say that a call without `max_results`
+  returns all items and "will be deprecated". Tables keep `max_results: 50`,
+  the largest value that the docs permit.
+- **Not changed, because the docs or the code do not support the claim:**
+  - `DESCRIBE DETAIL IDENTIFIER(:tbl)`. The audit said that many runtimes
+    refuse it. The Databricks page of the `IDENTIFIER` clause permits it for
+    "the target of a SHOW or DESCRIBE statement" from 13.3 LTS. A real
+    workspace must confirm this (see "Not verified"). If it fails,
+    `DESCRIBE DETAIL` gives no size, and the large-table question does not
+    show.
+  - ECharts already loads only the parts that the charts use.
+  - A second auto-open of the same file at the same time: VS Code shows the
+    open notebook again, so no harm occurs.
+
 ## Proposals
 
 These are ideas. None is built.
@@ -434,6 +486,5 @@ These are ideas. None is built.
   folder, as the notebook part does for its cluster.
 - **A row limit for the catalog tree.** A schema with thousands of tables
   loads all of them now.
-- **The question for a large table also for dataset B.**
 - **The `untrustedWorkspaces` declaration**, with the notebook kernel off in
   a project that is not trusted. A saved view could then open there and ask.

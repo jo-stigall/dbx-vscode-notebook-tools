@@ -9,14 +9,14 @@
 import { isNumeric, typeFamily } from './kinds.ts';
 import type { ColumnInfo } from './schema.ts';
 
-/** One column of A and the column of B that it is compared with. */
+/** One column of A and the column of B that has the same name. Compare mode compares the two. */
 export interface ColumnPair {
   a: ColumnInfo;
   b: ColumnInfo;
-  /** true if the two types are different text. 'int' and 'INT' are the same type. */
+  /** true if the two type texts differ. Upper and lower case do not count: 'int' and 'INT' are the same type. */
   typesDiffer: boolean;
   /**
-   * How the two columns can be compared.
+   * How compare mode can compare the two columns.
    *
    * - 'same': the types are the same.
    * - 'number': the types are different, but both are numbers. Compare the values as numbers.
@@ -25,15 +25,20 @@ export interface ColumnPair {
   compareAs: 'same' | 'number' | 'text';
 }
 
+/** The result of matchColumns(): the pairs, and the columns that only one dataset has. */
 export interface SchemaComparison {
+  /** One pair for each column of A that has a match in B, in the sequence of A. */
   pairs: ColumnPair[];
   /** The columns that only dataset A has, in the sequence of A. */
   onlyA: ColumnInfo[];
+  /** The columns that only dataset B has, in the sequence of B. */
   onlyB: ColumnInfo[];
 }
 
 /**
  * Match the columns of A and B by name.
+ *
+ * Each column of B is in one pair at most.
  *
  * @example
  * matchColumns(

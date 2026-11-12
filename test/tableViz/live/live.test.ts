@@ -1,6 +1,11 @@
 /**
  * Live tests: the SQL profiler on a real Databricks workspace.
  *
+ * The tests cover the full SQL path with no fake: the builders
+ * (src/tableViz/core/sql.ts), the two runners, the parsers and the SQL
+ * profiler (src/tableViz/host/sqlProfiler.ts). Only these tests show that
+ * Databricks accepts each statement.
+ *
  * The tests run only when the variables in env.ts are set. Without them,
  * each test is skipped. Before the first run, load the demo tables:
  *
@@ -28,15 +33,26 @@ import { RestWorkspaceClient } from '../../../src/tableViz/host/workspace.ts';
 import type { QueryRunner } from '../../../src/tableViz/core/runner.ts';
 import { liveClients, liveClusterRunner, liveEnv } from './env.ts';
 
+/** The settings from the environment variables. undefined if a variable is missing: the test runner then skips each test. */
 const env = liveEnv();
+/** false if the tests can run. If not, the reason that the test runner prints for each skipped test. */
 const skip = env ? false : 'Set DATABRICKS_HOST, DATABRICKS_TOKEN, TABLE_VIZ_TEST_WAREHOUSE_ID and TABLE_VIZ_TEST_SCHEMA to run the live tests.';
+/** The demo profiler. It gives the expected numbers of each test. */
 const demo = new DemoProfiler();
 
 /** The kinds of compute that the tests run on: the warehouse, and the cluster if TABLE_VIZ_TEST_CLUSTER_ID is set. */
 const targets: ('warehouse' | 'cluster')[] = ['warehouse', ...(env?.clusterId ? (['cluster'] as const) : [])];
+/** The kind of compute that the test that runs now uses. `on()` sets it at the start of each test. */
 let target: 'warehouse' | 'cluster' = 'warehouse';
+/** The cluster runner. All cluster tests share it, so that they use one connection. Not set until a cluster test runs. */
 let clusterRunner: QueryRunner | undefined;
 
+/**
+ * Make a SQL profiler for the real workspace, on the compute that `target` names.
+ *
+ * At most 4 statements run at the same time on the warehouse, and 2 on the cluster.
+ * The time limit of a statement is 300 seconds.
+ */
 function profiler() {
   const { http, runner } = liveClients(env as NonNullable<typeof env>, 300);
   const workspace = new RestWorkspaceClient(http);
@@ -49,21 +65,54 @@ function profiler() {
   });
 }
 
+/**
+ * Make the dataset of a table in the schema of the live tests.
+ *
+ * @example
+ * live('orders_2026')   // { profile: 'live', table: { catalog: 'main', schema: 'table_viz_test', name: 'orders_2026' } }
+ */
 const live = (name: string): Dataset => ({ profile: 'live', table: { catalog: env?.catalog ?? '', schema: env?.schema ?? '', name } });
+/**
+ * Make the dataset of the same table in the Demo profile.
+ *
+ * @example
+ * local('orders_2026')   // { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } }
+ */
 const local = (name: string): Dataset => ({ profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name } });
 
-/** Send one request to the workspace and to the demo profiler. */
+/**
+ * Send one request to the workspace and to the demo profiler.
+ *
+ * @example
+ * const [real, expected] = await both('orders_2026', (dataset) => ({ type: 'tableDetails', dataset }));
+ * assert.equal(real.columns.length, expected.columns.length);
+ *
+ * @param name  The name of the table: 'orders_2025' or 'orders_2026'.
+ * @param request  Makes the request for a dataset. The function calls it one time for the real table and one time for the demo table.
+ * @returns The result from the workspace, then the result from the demo profiler.
+ */
 async function both<T extends Request>(name: string, request: (dataset: Dataset) => T): Promise<[ResultOf<T['type']>, ResultOf<T['type']>]> {
   const [real, expected] = await Promise.all([profiler().profile(request(live(name))), demo.profile(request(local(name)))]);
   return [real as ResultOf<T['type']>, expected as ResultOf<T['type']>];
 }
 
+/**
+ * Fail if a number is not near the expected number.
+ *
+ * @example
+ * near(109_000, 110_000, 0.1, 'distinct count')   // passes: the difference is less than 10 percent
+ * near(63.0, 63.2, 1e-9, 'mean')                  // fails: "mean: 63 is not near 63.2"
+ *
+ * @param tolerance  The largest permitted difference, as a part of the expected number. 0.1 is 10 percent. For an expected number between -1 and 1, it is an absolute difference.
+ * @param what  The name of the number, for the error message.
+ */
 const near = (actual: number | undefined, expected: number | undefined, tolerance: number, what: string) => {
   assert.ok(actual !== undefined && expected !== undefined, what);
   assert.ok(Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected)), `${what}: ${actual} is not near ${expected}`);
 };
 
 for (const kind of targets) for (const name of ['orders_2025', 'orders_2026']) {
+  // Wrap the body of a test: set `target` to the compute of this round, then run the body.
   const on = <T>(run: () => Promise<T>) => async () => {
     target = kind;
     return run();

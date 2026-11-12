@@ -3,6 +3,45 @@
 **Summary:** This file lists what changed in each version of the extension,
 newest first.
 
+## Not released
+
+### Documentation
+
+- **A guide to the code of "Visualize Table":**
+  [docs/table-viz-how-it-works.md](docs/table-viz-how-it-works.md). It
+  follows one request from a click to a chart.
+- Each function, component and test helper of the feature has a description.
+
+### Fixed
+
+- **Compare mode stops the queries that nobody needs.** When you change
+  dataset B, the queries on the old B stop. When you close a compare card
+  before its numbers arrive, its queries stop. Before, these queries
+  continued on Databricks and used the places in the queue.
+- **Each dataset in compare mode has its own question before a large scan.**
+  Before, the board read a large dataset B without a question. If dataset A
+  was large, the board showed no question and waited without an end.
+- **The identifier card** shows "Fewer than 6" and "7 or more" for lengths
+  outside the chart, not "NaN". These rows have no filter button.
+- **The partition hint** no longer says that a filter reads all partitions
+  when the name of the partition column first occurs inside a longer name.
+- **The catalog tree** asks Unity Catalog for catalogs and schemas in pages.
+- **"Last modified" of a table** is correct when Databricks gives the time
+  without a time zone. The board reads such a time as UTC. Before, it used
+  the time zone of your computer, so the time could be some hours off.
+- **On a cluster, a SQL error that contains the number 401 or 403** (as a
+  value or as a position in the statement) shows as the SQL error that it
+  is. Before, the extension read the number as "no permission", connected
+  again and ran the statement a second time.
+- **On a SQL warehouse, a long statement** no longer adds one listener to
+  the cancel signal for each status request. Node.js printed a warning in
+  the log after 10 of them.
+- **Compare mode:** the "Mean A" and "Mean B" cells show "…" while the
+  numbers load, as the other cells do. Before, they showed "—".
+- **Notebook cells:** if a status request fails, the extension tells the
+  cluster to cancel the command. When VS Code stops, it waits for the
+  extension to delete the sessions of the open notebooks on the cluster.
+
 ## 0.2.0 (2026-11-12)
 
 ### Added

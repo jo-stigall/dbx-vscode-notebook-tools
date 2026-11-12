@@ -3,6 +3,17 @@
  *
  * Each request names one dataset. A request for A and a request for B run
  * at the same time, and the host keeps their answers apart.
+ *
+ * CompareCard selects how to compare the column, from the drift of the
+ * column. Then one component sends the requests and gives the results to a
+ * view in compare/views.tsx.
+ *
+ * | The `kind` of the drift | Component             | Requests for A and for B                           |
+ * |-------------------------|-----------------------|----------------------------------------------------|
+ * | 'continuous'            | ContinuousCompareCard | "numericStats", then "histogram" with shared bins  |
+ * | 'values'                | ValuesCompareCard     | "frequency", then "valueCounts" for missing values |
+ * | 'date'                  | DateCompareCard       | "dateCounts" with the same period                  |
+ * | 'nulls', 'skip'         | (none)                | none: the card shows the overview numbers          |
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { chooseGrain, makeEdges } from '../../core/bins.ts';
@@ -13,35 +24,50 @@ import { CardShell, StatTiles, type Tile } from '../cards/CardShell.tsx';
 import { formatCount, formatPercent } from '../format.ts';
 import { fresh, useDebounced, useLast, useResult, type Loadable } from '../hooks.ts';
 import { useTheme } from '../theme.ts';
-import { ask, useAsync, type DriftState } from './useCompare.ts';
+import { useAsync, type DriftState } from './useCompare.ts';
 import { formatScore } from './CompareOverview.tsx';
 import { ContinuousCompareView, DateCompareView, DriftLine, formatPoints, SimpleCompareView, ValuesCompareView, type ChipMaker } from './views.tsx';
 
 /** The number of values that the frequency table of a compare card reads from each dataset. */
 const TABLE_VALUES = 200;
 
+/** The properties of the `CompareCard` component. */
 export interface CompareCardProps {
+  /** Dataset A and dataset B, each with its Delta version. */
   a: Dataset;
   b: Dataset;
+  /** The column of A and the column of B that the card compares. */
   pair: ColumnPair;
   /** The overview numbers of the column in A and B. Not set while the overviews load. */
   statsA: OverviewColumn | undefined;
   statsB: OverviewColumn | undefined;
+  /** The number of rows of A and of B. Not set while the overviews load. */
   rowsA: number | undefined;
   rowsB: number | undefined;
+  /** The drift of the pair, from useDrifts(). Its `kind` tells the card how to compare the column. */
   drift: DriftState;
   /** true if the overview numbers belong to older datasets while newer numbers load. */
   overviewStale?: boolean;
-  /** true if an overview failed or was cancelled. No new overview numbers arrive until "Refresh". */
+  /** true if an overview failed, or the user cancelled it. No new overview numbers arrive until "Refresh". */
   overviewStopped?: boolean;
+  /** The settings of the card. Example: the number of bins, or "Side by side". */
   card: Card;
+  /** The settings of the feature. The card reads the default number of bins and the number of top values. */
   settings: BoardSettings;
+  /** The user changed settings of the card. The board stores them. */
   onChange: (patch: Partial<Card>) => void;
+  /** The user closed the card. */
   onClose: () => void;
   /** The user selected bars of a chart. The board adds the chip to dataset A and to dataset B. */
   onFilter?: (make: ChipMaker) => void;
 }
 
+/**
+ * The properties that each kind of compare card gets.
+ *
+ * They are the properties of CompareCard, but the overview numbers are
+ * always set: CompareCard draws a kind of card only after they arrived.
+ */
 interface KindProps extends CompareCardProps {
   statsA: OverviewColumn;
   statsB: OverviewColumn;
@@ -49,9 +75,18 @@ interface KindProps extends CompareCardProps {
   rowsB: number;
 }
 
+/**
+ * Get the column of A and the column of B of a pair, in the form that a request needs.
+ *
+ * @example
+ * refs(pair)   // { a: { name: 'id', typeText: 'int' }, b: { name: 'ID', typeText: 'bigint' } }
+ */
 const refs = (pair: ColumnPair) => ({ a: { name: pair.a.name, typeText: pair.a.typeText }, b: { name: pair.b.name, typeText: pair.b.typeText } });
+/** Get the SQL statements of the requests that are done, in the sequence of the arguments. */
 const sqlOf = (...states: Loadable<{ sql: string[] }, unknown>[]) => states.flatMap((s) => (s.status === 'done' ? s.result.sql : []));
+/** Get the error of the first request that failed. Returns undefined if no request failed. */
 const errorOf = (...states: Loadable<unknown, unknown>[]) => states.map((s) => (s.status === 'error' ? s.error : undefined)).find((e) => e);
+/** Tell if a result is the answer to an older request while a newer request runs. */
 const staleOf = (...states: Loadable<unknown, unknown>[]) => states.some((s) => s.status === 'done' && s.stale === true);
 
 /**
@@ -63,7 +98,16 @@ const staleOf = (...states: Loadable<unknown, unknown>[]) => states.some((s) => 
  * hook keeps the last pair that belongs together until the new pair is
  * complete.
  *
+ * @example
+ * // The user moves the slider from 30 bins to 40 bins. The histogram of A with 40 bins arrives first.
+ * useMatched(histogramA, histogramB, sameBins)
+ * // { a: <A with 30 bins>, b: <B with 30 bins>, request: <the request with 30 bins>, stale: true }
+ * // Then the histogram of B with 40 bins arrives:
+ * // { a: <A with 40 bins>, b: <B with 40 bins>, request: <the request with 40 bins>, stale: false }
+ *
  * @param same  Tells if the request of A and the request of B ask the same question.
+ * @returns The two results and the request of A. `stale` is true if they are older than the requests that run now.
+ *   undefined before the first pair is complete, and after a request failed or the user cancelled it.
  */
 function useMatched<T, R>(a: Loadable<T, R>, b: Loadable<T, R>, same: (x: R, y: R) => boolean): { a: T; b: T; request: R; stale: boolean } | undefined {
   const last = useRef<{ a: T; b: T; request: R } | undefined>(undefined);
@@ -73,7 +117,23 @@ function useMatched<T, R>(a: Loadable<T, R>, b: Loadable<T, R>, same: (x: R, y: 
   return last.current && { ...last.current, stale: !matched || a.stale === true || b.stale === true };
 }
 
-/** The frame of a compare card. It shows the drift below the content. */
+/**
+ * The frame of a compare card. It shows the drift below the content.
+ *
+ * The frame is a CardShell with no kind list. Its header shows the two
+ * types if they differ, for example "int → bigint". In the detailed view,
+ * the tiles at the top show the drift score, the Population Stability
+ * Index, the rows of A and B, and the percent of nulls in A and B.
+ *
+ * If the types differ and the user did not select "Compare as text", the
+ * frame tells the user how to compare the column.
+ *
+ * @param props.sql  The SQL statements behind the numbers on the card.
+ * @param props.hasChart  true if the card has a chart. The frame then has the button that shows the chart as a table.
+ * @param props.loading  true while the card has no numbers to show.
+ * @param props.stale  true if the card shows the numbers of older requests while newer requests run.
+ * @param props.error  The error of a request of the card. Not set: the frame shows the error of the drift, if there is one.
+ */
 function Frame(props: CompareCardProps & { sql: string[]; hasChart: boolean; loading: boolean; stale?: boolean; error?: ReturnType<typeof errorOf>; children?: React.ReactNode }) {
   const { pair, drift } = props;
   // The header shows the two types if they differ.
@@ -118,6 +178,18 @@ function Frame(props: CompareCardProps & { sql: string[]; hasChart: boolean; loa
   );
 }
 
+/**
+ * The compare card of a number column: the histograms of A and B with the same bins, and their statistics.
+ *
+ * The card first asks for the statistics of A and of B ("numericStats").
+ * It makes one set of bins from the range of the two datasets together, so
+ * that a bar of A and a bar of B cover the same values. Then it sends one
+ * "histogram" request for A and one for B.
+ *
+ * When the user moves the "Bins" slider, the card sends the two "histogram"
+ * requests 300 ms after the last change. It shows the old pair of
+ * histograms, dimmed, until the two new ones arrived. See useMatched().
+ */
 function ContinuousCompareCard(props: KindProps) {
   const { a, b, pair, card, settings, onChange } = props;
   const theme = useTheme();
@@ -125,7 +197,9 @@ function ContinuousCompareCard(props: KindProps) {
   const statsA = useResult({ type: 'numericStats', dataset: a, columns: [ref.a] });
   const statsB = useResult({ type: 'numericStats', dataset: b, columns: [ref.b] });
   const [bins, setBins] = useState(card.bins ?? settings.defaultBins);
+  // The slider changes `bins` at once. The requests use the value 300 ms after the last change.
   const settled = useDebounced(bins, 300);
+  // Put the settled value in the settings of the card, so that the board stores it.
   useEffect(() => {
     if (settled !== (card.bins ?? settings.defaultBins)) onChange({ bins: settled });
   }, [settled]);
@@ -185,10 +259,19 @@ function ContinuousCompareCard(props: KindProps) {
   );
 }
 
+/**
+ * The compare card of a column with few values: the most frequent values of A and B together.
+ *
+ * comparedFrequency() in core/compare.ts sends the requests: the 200 most
+ * frequent values of A and of B, and then the exact counts of the values
+ * that only one of the two lists has. The card runs it again when a dataset
+ * or the pair changes, and after "Refresh". Until the new values arrive, it
+ * shows the old values dimmed.
+ */
 function ValuesCompareCard(props: KindProps) {
   const { a, b, pair, card } = props;
   const theme = useTheme();
-  const frequency = useAsync(JSON.stringify([a, b, pair.a, pair.b]), () => comparedFrequency(ask, a, b, pair, TABLE_VALUES));
+  const frequency = useAsync(JSON.stringify([a, b, pair.a, pair.b]), (ask) => comparedFrequency(ask, a, b, pair, TABLE_VALUES));
   // While the values of the new datasets load, the card keeps the values that it had.
   const done = useLast(frequency.status === 'done' ? frequency.value : undefined);
   const failed = frequency.status === 'error';
@@ -199,6 +282,15 @@ function ValuesCompareCard(props: KindProps) {
   );
 }
 
+/**
+ * The compare card of a date column: the rows of A and B in each period, on one time axis.
+ *
+ * The card sends one "dateCounts" request for A and one for B with the same
+ * period. The period is the one that the user selected in the "Period"
+ * list. If the user selected none, chooseGrain() selects it from the first
+ * and the last date of the two datasets together. While the counts of a
+ * new period load, the card shows the old pair of counts dimmed.
+ */
 function DateCompareCard(props: KindProps) {
   const { a, b, pair, card, statsA, statsB } = props;
   const theme = useTheme();
@@ -231,6 +323,24 @@ function DateCompareCard(props: KindProps) {
   );
 }
 
+/**
+ * The detail card of one column in compare mode.
+ *
+ * The card needs the overview numbers of the column in A and B, and the
+ * drift of the pair. Until they arrive, the user sees the frame of the
+ * card with "Loading…". Then the `kind` of the drift selects the content:
+ * histograms, values, or periods of A and B. A column that has no values to
+ * chart (an ID, a complex type, or types that differ) shows a small table
+ * with the rows, the nulls and the distinct values of A and B.
+ *
+ * When a dataset changes, the card keeps the numbers that it had and shows
+ * them dimmed until the new numbers arrive.
+ *
+ * @example
+ * <CompareCard a={pinned} b={pinnedB} pair={pair} statsA={overview.stats.get('amount')} statsB={overviewB.stats.get('amount')}
+ *   rowsA={overview.rowCount} rowsB={overviewB.rowCount} drift={drifts.get('amount') ?? { status: 'loading' }}
+ *   card={{ column: 'amount', pinned: false, expanded: true }} settings={settings} onChange={setCard('amount')} onClose={closeCard('amount')} />
+ */
 export function CompareCard(props: CompareCardProps) {
   // While new overview numbers or a new drift load, the card keeps the numbers that it had. The card then stays on the screen.
   const ready =

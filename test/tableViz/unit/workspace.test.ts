@@ -2,13 +2,24 @@
  * Tests for the workspace client and the full SQL path through HTTP.
  *
  * The tests use the fake workspace (test/tableViz/fake/workspace.ts): an
- * HTTP server on this computer that answers as Databricks does.
+ * HTTP server on this computer that answers as Databricks does. The fake
+ * does not run SQL: it answers each statement from the demo tables.
  *
- * Run: npm run test:unit
+ * Source files that the tests cover:
+ *
+ * - src/tableViz/host/workspace.ts: `RestWorkspaceClient`, `DemoWorkspaceClient`
+ * - src/tableViz/host/http.ts, statementRunner.ts and sqlProfiler.ts: the full
+ *   path from a request to the REST API and back
+ * - src/tableViz/core/names.ts: `tableNameAt`
+ * - src/tableViz/core/derive.ts: `missesPartition`, `mustAskBeforeScan`
+ * - src/tableViz/demo/demoProfiler.ts: a sample in the Demo profile
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/workspace.test.ts
  */
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { missesPartition } from '../../../src/tableViz/core/derive.ts';
+import { missesPartition, mustAskBeforeScan } from '../../../src/tableViz/core/derive.ts';
 import { Limiter } from '../../../src/tableViz/core/limiter.ts';
 import { tableNameAt } from '../../../src/tableViz/core/names.ts';
 import { CancelledError, ProfilerError } from '../../../src/tableViz/core/profiler.ts';
@@ -21,16 +32,30 @@ import { DemoWorkspaceClient, RestWorkspaceClient } from '../../../src/tableViz/
 import { comparable } from '../fake/warehouse.ts';
 import { startFakeWorkspace, type FakeWorkspace } from '../fake/workspace.ts';
 
+/** The fake workspace. All tests of this file share it, so a test that changes it must change it back. */
 let fake: FakeWorkspace;
 before(async () => {
   fake = await startFakeWorkspace();
 });
 after(() => fake.close());
 
+/** Make the real REST client, and point it at the fake workspace. */
 const http = () => createHttp({ host: () => fake.url, token: async () => 'test-token' });
+/** Make the dataset of a demo table, in a profile that is not the Demo profile. Default: `demo.shop.orders_2026`. */
 const dataset = (name = 'orders_2026'): Dataset => ({ profile: 'p', table: { catalog: 'demo', schema: 'shop', name } });
 
-/** Make the SQL profiler as the extension makes it, for a warehouse of the fake workspace. */
+/**
+ * Make the SQL profiler as the extension makes it, for a warehouse of the fake workspace.
+ *
+ * The runner waits 100 times shorter between two status requests than the real runner.
+ *
+ * @example
+ * const details = await sqlProfiler().profile({ type: 'tableDetails', dataset: dataset() });
+ * sqlProfiler('wh-stop')      // statements go to the stopped warehouse, which then starts
+ * sqlProfiler('wh-deleted')   // each statement fails: the fake workspace has no such warehouse
+ *
+ * @param warehouseId  'wh-run' (the default) or 'wh-stop'. Each other ID is a warehouse that does not exist.
+ */
 function sqlProfiler(warehouseId = 'wh-run') {
   const client = http();
   const workspace = new RestWorkspaceClient(client);
@@ -63,6 +88,24 @@ test('workspace client: warehouses, catalogs, schemas and tables', async () => {
   ]);
   assert.equal(fake.requests.filter((r) => r === 'GET /api/2.1/unity-catalog/tables').length, 2);
   assert.deepEqual(await workspace.listTables('demo', 'nope'), []);
+});
+
+test('workspace client: asks Unity Catalog for pages, not for all items in one answer', async () => {
+  const seen: Record<string, unknown>[] = [];
+  // In place of the REST client: record the path and `max_results` of each request, and return an empty answer.
+  const stub = (async (_method: string, path: string, query?: Record<string, unknown>) => {
+    seen.push({ path, max_results: query?.max_results });
+    return {};
+  }) as unknown as ConstructorParameters<typeof RestWorkspaceClient>[0];
+  const workspace = new RestWorkspaceClient(stub);
+  await workspace.listCatalogs();
+  await workspace.listSchemas('main');
+  await workspace.listTables('main', 'sales');
+  assert.deepEqual(seen, [
+    { path: '/api/2.1/unity-catalog/catalogs', max_results: 0 },
+    { path: '/api/2.1/unity-catalog/schemas', max_results: 0 },
+    { path: '/api/2.1/unity-catalog/tables', max_results: 50 },
+  ]);
 });
 
 test('workspace client: clusters, and the ID of the workspace', async () => {
@@ -188,11 +231,26 @@ test('missesPartition tells if a filter reads all partitions', () => {
   assert.equal(missesPartition("region = 'EMEA'", []), false);
   assert.equal(missesPartition('', ['order_date']), false);
   assert.equal(missesPartition(undefined, ['order_date']), false);
+  // The name occurs first inside a longer word, then as the column.
+  assert.equal(missesPartition("update_date > '2026-01-01' AND date = '2026-02-01'", ['date']), false);
+  assert.equal(missesPartition("`order-date` = '2026-01-01'", ['order-date']), false, 'a quoted name with a hyphen');
+});
+
+test('mustAskBeforeScan asks only for a large table that the board reads in full', () => {
+  const orders = { profile: 'p', table: { catalog: 'main', schema: 'sales', name: 'orders' } };
+  const limit = 100 * 1024 ** 3;
+  assert.equal(mustAskBeforeScan(500 * 1024 ** 3, orders, limit, false), true);
+  assert.equal(mustAskBeforeScan(500 * 1024 ** 3, orders, limit, true), false, 'the user chose "Read all rows"');
+  assert.equal(mustAskBeforeScan(500 * 1024 ** 3, { ...orders, sample: { percent: 1 } }, limit, false), false);
+  assert.equal(mustAskBeforeScan(500 * 1024 ** 3, { ...orders, filter: "region = 'EMEA'" }, limit, false), false);
+  assert.equal(mustAskBeforeScan(10 * 1024 ** 3, orders, limit, false), false, 'a small table');
+  assert.equal(mustAskBeforeScan(undefined, orders, limit, false), false, 'a view has no size');
 });
 
 test('demo profiler: a sample has about the requested part of the rows, and the same rows on each run', async () => {
   const demo = new DemoProfiler();
   const column = [{ name: 'region', typeText: 'string' }];
+  // Get the row count of the demo table with a sample of `percent`. With no argument: all rows.
   const count = async (percent?: number) =>
     ((await demo.profile({ type: 'overview', dataset: { ...dataset(), profile: 'Demo', ...(percent ? { sample: { percent } } : {}) }, columns: column })) as ResultOf<'overview'>).rowCount;
   assert.equal(await count(), 110_000);

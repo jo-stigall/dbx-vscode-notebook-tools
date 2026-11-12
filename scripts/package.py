@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # README.md has links to the other .md files and to the images in docs/images, thus the list contains them.
 # The five dist/ files are the table visualization feature. `npm run build` makes them.
 FILES = ["package.json", "extension.js", "README.md", "docs/how-it-works.md", "test/README.md",
-         "CHANGELOG.md", "docs/table-viz-design.md", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs" / "images").glob("*.jpg")),
+         "CHANGELOG.md", "docs/table-viz-design.md", "docs/table-viz-how-it-works.md", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs" / "images").glob("*.jpg")),
          "dist/tableViz/host.js", "dist/tableViz/driver.js", "dist/tableViz/webview.js", "dist/tableViz/webview.css", "dist/tableViz/codicon.ttf", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "src").glob("*.js"))]
 
 pkg = json.loads((ROOT / "package.json").read_text())

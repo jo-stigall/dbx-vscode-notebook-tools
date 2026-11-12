@@ -4,9 +4,15 @@
  * A click on a column name opens its detail card. A new card replaces the
  * cards that are not pinned. A pinned card stays, so that several columns
  * can sit side by side.
+ *
+ * The board holds the state of the page: the datasets, the open cards, the
+ * search text and the sort. It gives them to the other components, and it
+ * stores them after each change so that they come back after a window
+ * reload. With a dataset B, the board is in compare mode and shows the
+ * components in compare/.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { addChip, openCard } from '../core/derive.ts';
+import { addChip, mustAskBeforeScan, openCard } from '../core/derive.ts';
 import { matchColumns } from '../core/match.ts';
 import { displayTableName, parseTableName } from '../core/names.ts';
 import type { BoardDatasets, BoardSettings, BoardState, Card, Chip, Dataset } from '../core/schema.ts';
@@ -34,10 +40,60 @@ function profileLabel(profile: string): string {
   return profile;
 }
 
-/** Tell if two datasets read the same table with the same login. */
+/**
+ * Tell if two datasets read the same table with the same login.
+ *
+ * The filter, the chips, the sample and the version can be different.
+ *
+ * @example
+ * sameTable(orders, { ...orders, filter: "region = 'EMEA'" })   // true
+ */
 const sameTable = (x: Dataset, y: Dataset) => x.profile === y.profile && JSON.stringify(x.table) === JSON.stringify(y.table);
 
-/** One fact in the header, for example "Rows: 110,000". */
+/**
+ * The question before the first scan of a very large table.
+ *
+ * The user sees the size of the table and two buttons: "Use a 1% sample"
+ * and "Read all rows". The board sends no query that reads the rows until
+ * the user clicks one of them or types a filter.
+ *
+ * @example
+ * <LargeTableNotice label="B" sizeBytes={500 * 1024 ** 3} onSample={...} onReadAll={...} />
+ * // "Dataset B is 500.0 GB. A query that reads all rows can take a long time and cost money."
+ *
+ * @param label  'A' or 'B' in compare mode. Omit it for a board with one table.
+ * @param sizeBytes  The size of the table on disk.
+ * @param onSample  The user chose a 1% sample.
+ * @param onReadAll  The user chose to read all rows.
+ */
+export function LargeTableNotice({ label, sizeBytes, onSample, onReadAll }: { label?: 'A' | 'B'; sizeBytes: number; onSample: () => void; onReadAll: () => void }) {
+  return (
+    <div className="notice" role="alert">
+      <p>
+        <strong>
+          {label ? `Dataset ${label}` : 'This table'} is {formatBytes(sizeBytes)}.
+        </strong>{' '}
+        A query that reads all rows can take a long time and cost money.
+      </p>
+      <p>
+        <button type="button" onClick={onSample}>
+          Use a 1% sample
+        </button>{' '}
+        <button type="button" onClick={onReadAll}>
+          Read all rows
+        </button>{' '}
+        You can also type a filter.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One fact in the header of the board: a small label and its value below it.
+ *
+ * @example
+ * <Fact label="Rows">110,000</Fact>
+ */
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="fact">
@@ -47,6 +103,38 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
+/**
+ * The board of one table, or of two datasets in compare mode.
+ *
+ * From top to bottom, the user sees: the name and the facts of the table,
+ * the bar with the filter and the sample of each dataset, the open detail
+ * cards, and the overview with one row for each column.
+ *
+ * What the board does when the user acts:
+ *
+ * - A click on a row of the overview opens the detailed view of that column
+ *   and moves the page to its card.
+ * - A new filter, sample or version changes the dataset. All components
+ *   then ask for their numbers again, and show the old numbers dimmed until
+ *   the new numbers arrive.
+ * - A click on a bar of a chart adds a filter chip to the dataset. In
+ *   compare mode the chip goes to dataset A and to dataset B.
+ * - "Compare" puts a second table on the board as dataset B. "Remove" on
+ *   the bar of B goes back to one table.
+ * - Text in the search box and the selection in "Sort by" change the rows of
+ *   the overview. They send no request.
+ *
+ * The board reads the Delta version of each table together with the details
+ * of the table, and puts that version in each request. All cards then show
+ * the same data, also while a job writes to the table.
+ *
+ * @example
+ * <Board datasets={{ a: { profile: 'Demo', table: { catalog: 'main', schema: 'shop', name: 'orders' } } }} settings={DEFAULT_SETTINGS} />
+ *
+ * @param datasets  Dataset A, and dataset B to start in compare mode.
+ * @param settings  The settings of the feature, from the VS Code settings.
+ * @param initialState  The cards and settings of a saved view. Not set: the board uses the state that the page stored before a window reload, if there is one.
+ */
 export function Board({ datasets: initial, settings, initialState }: { datasets: BoardDatasets; settings: BoardSettings; initialState?: BoardState }) {
   // The cards and settings: from a saved view, or from the state that the page stored before a window reload.
   const saved = useMemo(() => initialState ?? loadState(), [initialState]);
@@ -69,7 +157,7 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
 
   // Before the first scan of a very large table, ask. A filter or a sample makes the scan small, so then there is no question.
   const [scanLarge, setScanLarge] = useState(saved?.scanLarge ?? false);
-  const tooLarge = facts?.sizeBytes !== undefined && facts.sizeBytes > settings.largeTableBytes && !dataset.filter && !dataset.sample && !scanLarge;
+  const tooLarge = mustAskBeforeScan(facts?.sizeBytes, dataset, settings.largeTableBytes, scanLarge);
   const overview = useOverview(pinned, tooLarge ? undefined : columns);
 
   // Compare mode: the same steps for dataset B. Each request names one dataset, so the answers for A stay when B changes.
@@ -80,11 +168,15 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
     () => (datasetB && versionB && !datasetB.version ? { ...datasetB, version: { kind: 'version', n: versionB } } : datasetB),
     [datasetB, versionB]
   );
-  const overviewB = useOverview(pinnedB ?? pinned, pinnedB && !tooLarge ? factsB?.columns : undefined);
+  // Dataset B has its own question: A can be small and B very large.
+  const [scanLargeB, setScanLargeB] = useState(saved?.scanLargeB ?? false);
+  const tooLargeB = datasetB !== undefined && mustAskBeforeScan(factsB?.sizeBytes, datasetB, settings.largeTableBytes, scanLargeB);
+  const overviewB = useOverview(pinnedB ?? pinned, pinnedB && !tooLargeB ? factsB?.columns : undefined);
   const schema = useMemo(
     () => (columns && factsB ? matchColumns(columns, factsB.columns, { caseSensitive: settings.matchColumnsCaseSensitive }) : undefined),
     [columns, factsB, settings.matchColumnsCaseSensitive]
   );
+  // The names of the columns of A whose types differ in B, and that the user chose to compare as text.
   const [asText, setAsText] = useState<string[]>(saved?.asText ?? []);
   // The drift of the new datasets comes from the new numbers only, not from old numbers that are still on the screen.
   const drifts = useDrifts(pinned, pinnedB ?? pinned, schema?.pairs ?? [], overview.stale ? EMPTY_OVERVIEW : overview, overviewB.stale ? EMPTY_OVERVIEW : overviewB, asText);
@@ -93,7 +185,10 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
   // In compare mode, the columns that changed most come first.
   const [sort, setSort] = useState<Sort>(saved?.ui?.sort ?? (initial.b ? 'drift' : 'table'));
   const [cards, setCards] = useState<Card[]>(saved?.cards ?? []);
-  const state = useMemo<BoardState>(() => ({ datasets, ui: { search, sort }, cards, scanLarge, asText }), [datasets, search, sort, cards, scanLarge, asText]);
+  const state = useMemo<BoardState>(
+    () => ({ datasets, ui: { search, sort }, cards, scanLarge, ...(scanLargeB ? { scanLargeB } : {}), asText }),
+    [datasets, search, sort, cards, scanLarge, scanLargeB, asText]
+  );
   useEffect(() => saveState(state), [state]);
   /** Write the board to a `.tableviz.json` file. The host asks for the file. */
   const saveView = () => send({ type: 'saveView', state });
@@ -101,8 +196,11 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
   /** Put a table on the board as dataset B, or remove dataset B. */
   const compareWith = (next: Dataset | undefined) => {
     setDatasetB(next);
+    // "Read all rows" was for the table that B was. A new table B gets its own question.
+    setScanLargeB(false);
     setSort(next ? 'drift' : 'table');
   };
+  // The text in the "Compare with" box, and the table name that it gives. undefined if the text is not a name with three parts.
   const [compareDraft, setCompareDraft] = useState('');
   const compareTable = parseTableName(compareDraft);
 
@@ -134,11 +232,20 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
     );
   }
   const sample = dataset.sample?.percent;
-  const setCard = (column: string) => (patch: Partial<Card>) => setCards((list) => list.map((c) => (c.column === column ? { ...c, ...patch } : c)));
+  /** Make the function that changes settings of the card of one column. Example: setCard('amount')({ logScale: true }). */
+  const setCard =(column: string) => (patch: Partial<Card>) => setCards((list) => list.map((c) => (c.column === column ? { ...c, ...patch } : c)));
+  /** Make the function that removes the card of one column from the board. */
   const closeCard = (column: string) => () => setCards((list) => list.filter((c) => c.column !== column));
   // A click on a bar adds a filter chip to the dataset. All cards then ask for their numbers again.
   const addFilter = (chip: Chip) => setDataset((d) => addChip(d, chip));
-  const toolbar = (shown: number, total: number | undefined, what: string) => (
+  /**
+   * The line above the overview: the search box, the "Sort by" list, and a count such as "12 of 40 columns".
+   *
+   * @param shown  The number of rows that the overview shows after the search.
+   * @param total  The number of all columns. undefined while the columns load.
+   * @param what  The words after the numbers. Example: 'columns'.
+   */
+  const toolbar =(shown: number, total: number | undefined, what: string) => (
     <div className="toolbar">
       <input type="search" placeholder="Search columns" aria-label="Search columns by name" value={search} onChange={(e) => setSearch(e.target.value)} />
       <label>
@@ -166,8 +273,8 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
             <span className="badge">{profileLabel(dataset.profile)}</span>
           </h1>
           <dl className="facts">
-            <Fact label="Rows in A">{overview.rowCount === undefined ? '…' : formatCount(overview.rowCount)}</Fact>
-            <Fact label="Rows in B">{overviewB.rowCount === undefined ? '…' : formatCount(overviewB.rowCount)}</Fact>
+            <Fact label="Rows in A">{overview.rowCount === undefined ? (tooLarge ? '—' : '…') : formatCount(overview.rowCount)}</Fact>
+            <Fact label="Rows in B">{overviewB.rowCount === undefined ? (tooLargeB ? '—' : '…') : formatCount(overviewB.rowCount)}</Fact>
             <Fact label="Difference (B − A)">
               {difference === undefined
                 ? '…'
@@ -179,6 +286,8 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
         <DatasetBar label="A" dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} onSaveView={saveView} />
         <DatasetBar label="B" dataset={datasetB} pinned={pinnedB} facts={factsB} asOf={overviewB.asOf} onChange={setDatasetB} onRemove={() => compareWith(undefined)} hideActions />
 
+        {tooLarge && <LargeTableNotice label="A" sizeBytes={facts?.sizeBytes ?? 0} onSample={() => setDataset({ ...dataset, sample: { percent: 1 } })} onReadAll={() => setScanLarge(true)} />}
+        {tooLargeB && <LargeTableNotice label="B" sizeBytes={factsB?.sizeBytes ?? 0} onSample={() => setDatasetB({ ...datasetB, sample: { percent: 1 } })} onReadAll={() => setScanLargeB(true)} />}
         {detailsB.status === 'error' && <ErrorPanel error={detailsB.error} />}
         {overview.error && <ErrorPanel error={overview.error} />}
         {overviewB.error && <ErrorPanel error={overviewB.error} />}
@@ -274,22 +383,7 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
         </button>
       </form>
 
-      {tooLarge && (
-        <div className="notice" role="alert">
-          <p>
-            <strong>This table is {formatBytes(facts?.sizeBytes ?? 0)}.</strong> A query that reads all rows can take a long time and cost money.
-          </p>
-          <p>
-            <button type="button" onClick={() => setDataset({ ...dataset, sample: { percent: 1 } })}>
-              Use a 1% sample
-            </button>{' '}
-            <button type="button" onClick={() => setScanLarge(true)}>
-              Read all rows
-            </button>{' '}
-            You can also type a filter.
-          </p>
-        </div>
-      )}
+      {tooLarge && <LargeTableNotice sizeBytes={facts?.sizeBytes ?? 0} onSample={() => setDataset({ ...dataset, sample: { percent: 1 } })} onReadAll={() => setScanLarge(true)} />}
 
       {overview.error && <ErrorPanel error={overview.error} />}
 

@@ -2,7 +2,8 @@
  * The content of each kind of detail card.
  *
  * Each component in this file gets finished results as properties and sends
- * no request. Thus a test can draw a card from fixed results.
+ * no request. Thus a test can draw a card from fixed results. The
+ * components in ColumnCard.tsx send the requests.
  *
  * | Kind       | Component      | Chart                    | Tables                         |
  * |------------|----------------|--------------------------|--------------------------------|
@@ -35,6 +36,15 @@ const MAX_LABELLED_BARS = 40;
  * In a small card, the parts are below each other: controls, chart, tables.
  * In the detailed view, the large numbers are at the top, the chart is on
  * the left, and the tables are on the right.
+ *
+ * @example
+ * <CardLayout detailed tiles={[{ label: 'Count', value: '109,500' }]} main={<Chart ... />} side={<StatsTable rows={rows} />} />
+ *
+ * @param props.detailed  true: the card is the detailed view of the column.
+ * @param props.tiles  The large numbers. A small card does not show them.
+ * @param props.controls  The sliders, lists and check boxes of the card.
+ * @param props.main  The chart, or the table that replaces it.
+ * @param props.side  The tables next to the chart.
  */
 export function CardLayout(props: { detailed: boolean; tiles?: Tile[]; controls?: ReactNode; main: ReactNode; side?: ReactNode }) {
   return (
@@ -50,7 +60,14 @@ export function CardLayout(props: { detailed: boolean; tiles?: Tile[]; controls?
   );
 }
 
-/** A block with the size of a chart, for the time that the chart loads. The page then does not jump when the chart arrives. */
+/**
+ * A block with the size of a chart, for the time that the chart loads. The page then does not jump when the chart arrives.
+ *
+ * @example
+ * <ChartWait detailed={false}>Loading the histogram…</ChartWait>   // a grey block, 220 pixels high, with the text in the middle
+ *
+ * @param detailed  true: the block has the height of the chart in the detailed view, 380 pixels.
+ */
 export function ChartWait({ detailed, children }: { detailed: boolean; children: ReactNode }) {
   return (
     <div className={`skeleton chart-wait${detailed ? ' tall' : ''}`} role="status">
@@ -59,7 +76,12 @@ export function ChartWait({ detailed, children }: { detailed: boolean; children:
   );
 }
 
-/** A table with a name column and a value column. */
+/**
+ * A table with a name column and a value column.
+ *
+ * @example
+ * <StatsTable rows={[['Count', '109,500'], ['Mean', '63.0015']]} />
+ */
 function StatsTable({ rows }: { rows: [string, ReactNode][] }) {
   return (
     <table className="stats">
@@ -75,7 +97,14 @@ function StatsTable({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
-/** A button in a table row that adds a filter chip for that row. It does with the keyboard what a click on a bar does. */
+/**
+ * A button in a table row that adds a filter chip for that row. It does with the keyboard what a click on a bar does.
+ *
+ * @example
+ * <RowFilter label="web" onClick={() => onFilter({ op: 'eq', column, value: 'web' })} />
+ *
+ * @param label  The value or the range of the row. A screen reader says "Filter the dataset to web".
+ */
 export function RowFilter({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button type="button" className="icon-button row-filter" title="Filter the dataset to this row" aria-label={`Filter the dataset to ${label}`} onClick={onClick}>
@@ -87,6 +116,16 @@ export function RowFilter({ label, onClick }: { label: string; onClick: () => vo
 /**
  * A table of counts: one row for each bar of a chart.
  *
+ * The columns are the label, the number of rows, and the percent of `total`.
+ *
+ * @example
+ * <CountTable head="Range" rows={[{ label: '0 to 25', count: 60352 }, { label: '25 to 50', count: 30176 }]} total={109500} />
+ * // Range     Rows     Percent
+ * // 0 to 25   60,352   55.1%
+ * // 25 to 50  30,176   27.6%
+ *
+ * @param head  The title of the first column. Example: 'Range'.
+ * @param total  The number that is 100%.
  * @param onRow  If set, each row has a filter button. The function gets the position of the row. Return false from `canFilter` for a row that has no button.
  */
 function CountTable({ head, rows, total, onRow, canFilter }: { head: string; rows: { label: string; count: number }[]; total: number; onRow?: (index: number) => void; canFilter?: (index: number) => boolean }) {
@@ -121,6 +160,12 @@ function CountTable({ head, rows, total, onRow, canFilter }: { head: string; row
   );
 }
 
+/**
+ * The name of each percentile in the statistics table, by its probability as text.
+ *
+ * @example
+ * PERCENTILE_LABELS['0.5']   // 'Median'
+ */
 const PERCENTILE_LABELS: Record<string, string> = {
   '0.01': '1st percentile',
   '0.05': '5th percentile',
@@ -131,16 +176,23 @@ const PERCENTILE_LABELS: Record<string, string> = {
   '0.99': '99th percentile',
 };
 
+/** The properties of the `ContinuousView` component. */
 export interface ContinuousViewProps {
+  /** The column that the view shows. */
   column: ColumnInfo;
+  /** The statistics of the column: the counts, the mean, the percentiles. */
   stats: ResultOf<'numericStats'>;
-  /** Not set while the histogram loads. */
+  /** The counts of the bins. Not set while the histogram loads. */
   histogram: ResultOf<'histogram'> | undefined;
+  /** The bins of `histogram`. Not set while the histogram loads. */
   edges: BinEdges | undefined;
   /** The number of bins that the slider shows. */
   bins: number;
+  /** The settings of the card. The view reads `expanded`, `asTable`, `logScale` and `clip`. */
   card: Card;
+  /** The colors and the font of the chart. */
   theme: Theme;
+  /** The user changed "Log scale" or "Clip to 1%–99%". */
   onChange: (patch: Partial<Card>) => void;
   /** The user moved the slider. The card asks for a new histogram a moment later. */
   onBins: (bins: number) => void;
@@ -155,6 +207,22 @@ export interface ContinuousViewProps {
  *
  * In the detailed view, the histogram has an axis of numbers, a line at the
  * mean and a line at the median, and a count on each bar.
+ *
+ * What the view does when the user acts:
+ *
+ * - The "Bins" slider calls `onBins` with the new number, from 5 to 200.
+ * - "Log scale" and "Clip to 1%–99%" call `onChange`.
+ * - A click on a bar, or a drag across some bars, calls `onFilter` with a
+ *   chip for the range of those bins. Example: a drag across the bins
+ *   25 to 50 and 50 to 75 gives the chip "amount: 25 to 75".
+ *   The bars "below" and "above" hold the values outside the bins, and a
+ *   click on them does nothing.
+ *
+ * If all rows are null, the view shows "All rows are null." and no chart.
+ *
+ * @example
+ * <ContinuousView column={{ name: 'amount', typeText: 'decimal(10,2)' }} stats={stats} histogram={histogram}
+ *   edges={{ lo: 0, hi: 500, bins: 30 }} bins={30} card={card} theme={theme} onChange={onChange} onBins={setBins} />
  */
 export function ContinuousView(props: ContinuousViewProps) {
   const { column, stats, histogram, edges, card, onChange } = props;
@@ -166,7 +234,7 @@ export function ContinuousView(props: ContinuousViewProps) {
   const label = (bar: { role: string; from?: number; to?: number }) =>
     bar.role === 'below' ? `Below ${formatNumber(bar.to as number)}` : bar.role === 'above' ? `Above ${formatNumber(bar.from as number)}` : `${formatNumber(bar.from as number)} to ${formatNumber(bar.to as number)}`;
 
-  /** Make a chip from the selected bars. The bars "below" and "above" are not bins, so they cannot be selected. */
+  /** Make a chip from the bars that the user selected. The bars "below" and "above" are not bins, so the user cannot select them. */
   const select = (first: number, last: number) => {
     if (!bars || !edges || !props.onFilter) return;
     const offset = bars[0]?.role === 'below' ? 1 : 0;
@@ -271,7 +339,17 @@ export function ContinuousView(props: ContinuousViewProps) {
   );
 }
 
-/** The table of values: value, count, percent and cumulative percent. If `onRow` is set, each value row and the null row has a filter button. */
+/**
+ * The table of values: value, count, percent and cumulative percent.
+ *
+ * The rows "Other" and "(null)" show in a different style.
+ *
+ * @example
+ * <FrequencyTable rows={frequencyRows(frequency, { sortBy: 'count', numeric: false })} total={frequency.rowCount} onRow={filter} />
+ *
+ * @param total  The number of rows of the dataset: the number that is 100%.
+ * @param onRow  If set, each value row and the null row has a filter button. The function gets the row of the button.
+ */
 function FrequencyTable({ rows, total, onRow }: { rows: FrequencyRow[]; total: number; onRow?: (row: FrequencyRow) => void }) {
   return (
     <div className="scroll">
@@ -308,23 +386,48 @@ function FrequencyTable({ rows, total, onRow }: { rows: FrequencyRow[]; total: n
   );
 }
 
+/** The properties of the `ValuesView` component. */
 export interface ValuesViewProps {
+  /** The column that the view shows. */
   column: ColumnInfo;
   /** 'discrete': one bar for each value, in the sequence of the values. 'category': the top values, most frequent first. */
   kind: 'discrete' | 'category';
+  /** The most frequent values with their counts, the number of nulls and the number of rows. */
   frequency: ResultOf<'frequency'>;
   /** The number of different values of the column, from the overview. */
   distinct: number | undefined;
   /** The number of values in the chart of a category. */
   topValues: number;
+  /** The settings of the card. The view reads `expanded`, `asTable` and `sortBy`. */
   card: Card;
+  /** The colors and the font of the chart. */
   theme: Theme;
+  /** The user changed "Sort by". */
   onChange: (patch: Partial<Card>) => void;
   /** The user selected a value. The board adds the chip to the dataset. */
   onFilter?: (chip: Chip) => void;
 }
 
-/** A column with few different values: a bar for each value and a frequency table. */
+/**
+ * A column with few different values: a bar for each value and a frequency table.
+ *
+ * The chart of a category shows the `topValues` most frequent values, one
+ * bar "Other" for the remaining values, and one bar for null. The table
+ * shows all values of the result.
+ *
+ * What the view does when the user acts:
+ *
+ * - Text in "Search values" keeps only the table rows whose value contains
+ *   the text. The chart does not change.
+ * - "Sort by" (category only) calls `onChange` with 'count' or 'label'.
+ * - A click on a bar, or on the filter button of a table row, calls
+ *   `onFilter` with a chip for that value, for example "channel = web". A
+ *   click on "Other" does nothing.
+ *
+ * @example
+ * <ValuesView column={{ name: 'channel', typeText: 'string' }} kind="category" frequency={frequency} distinct={4} topValues={20}
+ *   card={card} theme={theme} onChange={onChange} onFilter={addFilter} />
+ */
 export function ValuesView(props: ValuesViewProps) {
   const { column, kind, frequency, card, onChange } = props;
   const [search, setSearch] = useState('');
@@ -409,9 +512,13 @@ export function ValuesView(props: ValuesViewProps) {
   );
 }
 
+/** The properties of the `IdentifierView` component. */
 export interface IdentifierViewProps {
+  /** The column that the view shows. */
   column: ColumnInfo;
+  /** The number of rows of the dataset. */
   rowCount: number;
+  /** The overview numbers of the column. The view reads the distinct count and the count of rows that are not null. */
   stats: OverviewColumn;
   /** true if the distinct count is an estimate. */
   approximate: boolean;
@@ -419,24 +526,61 @@ export interface IdentifierViewProps {
   frequency: ResultOf<'frequency'> | undefined;
   /** The histogram of the lengths of the values. Not set while it loads. */
   lengths: ResultOf<'histogram'> | undefined;
+  /** The bins of `lengths`, in characters. Example: `{ lo: 6, hi: 9, bins: 3 }` has one bin for each of the lengths 6, 7 and 8. */
   lengthEdges: BinEdges | undefined;
+  /** The settings of the card. The view reads `expanded` and `asTable`. */
   card: Card;
+  /** The colors and the font of the chart. */
   theme: Theme;
   /** The user selected a value or a range of lengths. The board adds the chip to the dataset. */
   onFilter?: (chip: Chip) => void;
 }
 
-/** A column where almost every row has a different value: statistics, the values that repeat, and the lengths of the values. */
+/**
+ * A column where almost every row has a different value: statistics, the values that repeat, and the lengths of the values.
+ *
+ * The chart is a histogram of the number of characters of the values. The
+ * table "Most repeated values" shows only the values that occur more than
+ * one time.
+ *
+ * What the view does when the user acts:
+ *
+ * - A click on a bar, or a drag across some bars, calls `onFilter` with a
+ *   chip for those lengths, for example "length of order_id: 6 to 8".
+ * - The filter button of a repeated value calls `onFilter` with a chip for
+ *   that value, for example "order_id = A-1001".
+ *
+ * @example
+ * <IdentifierView column={{ name: 'order_id', typeText: 'string' }} rowCount={110000} stats={stats} approximate={false}
+ *   frequency={frequency} lengths={lengths} lengthEdges={{ lo: 6, hi: 9, bins: 3 }} card={card} theme={theme} />
+ */
 export function IdentifierView(props: IdentifierViewProps) {
   const { column, stats, rowCount, frequency, lengths, lengthEdges } = props;
   const distinct = stats.distinct ?? 0;
   const repeated = frequency?.values.filter((v) => v.count > 1) ?? [];
   const bars = lengths && lengthEdges ? histogramBars(lengths, lengthEdges) : undefined;
   // The length of a value is a whole number. Show "6" for a bin that holds one length, and "6 to 8" for a wider bin.
-  const lengthLabel = (from: number, to: number) => (to - from <= 1 ? String(Math.floor(from)) : `${Math.floor(from)} to ${Math.ceil(to) - 1}`);
+  // The bars "below" and "above" hold the lengths outside the edges. This occurs with a sample: the statistics and
+  // the histogram read different random rows.
+  const lengthLabel = (bar: { role: string; from?: number; to?: number }) => {
+    if (bar.role === 'below') return `Fewer than ${Math.floor(bar.to as number)}`;
+    if (bar.role === 'above') return `${Math.ceil(bar.from as number)} or more`;
+    const from = bar.from as number;
+    const to = bar.to as number;
+    return to - from <= 1 ? String(Math.floor(from)) : `${Math.floor(from)} to ${Math.ceil(to) - 1}`;
+  };
   const ref = { name: column.name, typeText: column.typeText };
   const { onFilter } = props;
-  const selectLengths = onFilter && lengthEdges ? (first: number, last: number) => onFilter(chipForBins(ref, lengthEdges, first, last, 'length')) : undefined;
+  /** Make a chip from the bars that the user selected. As in ContinuousView, the bars "below" and "above" are not bins, so the user cannot select them. */
+  const selectLengths =
+    onFilter && lengthEdges && bars
+      ? (first: number, last: number) => {
+          const offset = bars[0]?.role === 'below' ? 1 : 0;
+          const from = Math.max(0, first - offset);
+          const to = Math.min(lengthEdges.bins - 1, last - offset);
+          if (to >= from) onFilter(chipForBins(ref, lengthEdges, from, to, 'length'));
+        }
+      : undefined;
 
   const detailed = props.card.expanded === true;
   const nulls = rowCount - stats.nonNull;
@@ -457,7 +601,13 @@ export function IdentifierView(props: IdentifierViewProps) {
           {!bars ? (
             <ChartWait detailed={detailed}>Loading…</ChartWait>
           ) : props.card.asTable ? (
-            <CountTable head="Characters" rows={bars.map((b) => ({ label: lengthLabel(b.from as number, b.to as number), count: b.count }))} total={stats.nonNull} onRow={selectLengths && ((i) => selectLengths(i, i))} />
+            <CountTable
+              head="Characters"
+              rows={bars.map((b) => ({ label: lengthLabel(b), count: b.count }))}
+              total={stats.nonNull}
+              onRow={selectLengths && ((i) => selectLengths(i, i))}
+              canFilter={(i) => bars[i]?.role === 'bin'}
+            />
           ) : (
             <Chart
               onSelect={selectLengths}
@@ -465,9 +615,9 @@ export function IdentifierView(props: IdentifierViewProps) {
               height={detailed ? DETAIL_HEIGHT - 60 : undefined}
               label={`Histogram of the number of characters in the values of ${column.name}.`}
               option={barsOption(props.theme, {
-                labels: bars.map((b) => lengthLabel(b.from as number, b.to as number)),
+                labels: bars.map(lengthLabel),
                 counts: bars.map((b) => b.count),
-                tips: bars.map((b) => `${lengthLabel(b.from as number, b.to as number)} characters\n${formatCount(b.count)} rows`),
+                tips: bars.map((b) => `${lengthLabel(b)} characters\n${formatCount(b.count)} rows`),
                 gap: 4,
                 detail: detailed
                   ? { categoryName: 'Number of characters', countName: 'Rows', barLabels: bars.length <= MAX_LABELLED_BARS ? bars.map((b) => (b.count > 0 ? formatCount(b.count) : '')) : undefined }
@@ -502,23 +652,49 @@ export function IdentifierView(props: IdentifierViewProps) {
   );
 }
 
+/** The periods in the "Period" list of a date card, shortest first. */
 const GRAINS: Grain[] = ['day', 'week', 'month', 'year'];
 
+/** The properties of the `DateView` component. */
 export interface DateViewProps {
+  /** The column that the view shows. */
   column: ColumnInfo;
+  /** The number of rows of the dataset. */
   rowCount: number;
+  /** The overview numbers of the column. `min` is the first date and `max` is the last date. */
   stats: OverviewColumn;
-  /** Not set while it loads. */
+  /** The number of rows in each period that has rows. Not set while it loads. */
   dateCounts: ResultOf<'dateCounts'> | undefined;
+  /** The period of the chart: 'day', 'week', 'month' or 'year'. */
   grain: Grain;
+  /** The settings of the card. The view reads `expanded`, `asTable` and `logScale`. */
   card: Card;
+  /** The colors and the font of the chart. */
   theme: Theme;
+  /** The user changed "Period" or "Log scale". */
   onChange: (patch: Partial<Card>) => void;
   /** The user selected periods. The board adds the chip to the dataset. */
   onFilter?: (chip: Chip) => void;
 }
 
-/** A date or timestamp column: the number of rows in each period, and the first and last date. */
+/**
+ * A date or timestamp column: the number of rows in each period, and the first and last date.
+ *
+ * The chart has one bar for each period from the first to the last date. A
+ * period that has no rows gets a bar with the count 0, and the table counts
+ * such periods as "Empty months" (or days, weeks, years).
+ *
+ * What the view does when the user acts:
+ *
+ * - "Period" and "Log scale" call `onChange`.
+ * - A click on a bar, or a drag across some bars, calls `onFilter` with a
+ *   chip for those periods. Example: a drag from January 2026 to February
+ *   2026 on a month chart gives the chip "order_date: 2026-01-01 to 2026-02-28".
+ *
+ * @example
+ * <DateView column={{ name: 'order_date', typeText: 'date' }} rowCount={110000} stats={stats} dateCounts={dateCounts}
+ *   grain="month" card={card} theme={theme} onChange={onChange} onFilter={addFilter} />
+ */
 export function DateView(props: DateViewProps) {
   const { column, stats, rowCount, dateCounts, grain, card, onChange } = props;
   const filled = dateCounts ? fillPeriods(dateCounts.buckets, grain) : undefined;
@@ -613,7 +789,14 @@ export function DateView(props: DateViewProps) {
   );
 }
 
-/** A column of a type that has no chart, such as array, map or struct: the type and the percent of nulls. */
+/**
+ * A column of a type that has no chart, such as array, map or struct: the type and the percent of nulls.
+ *
+ * @example
+ * <ComplexView column={{ name: 'tags', typeText: 'array<string>' }} rowCount={110000} stats={{ name: 'tags', nonNull: 109450 }} />
+ * // Type: array<string>
+ * // Nulls: 550 (0.5%)
+ */
 export function ComplexView({ column, rowCount, stats }: { column: ColumnInfo; rowCount: number; stats: OverviewColumn }) {
   return (
     <>

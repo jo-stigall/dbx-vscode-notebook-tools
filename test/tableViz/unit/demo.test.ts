@@ -4,7 +4,19 @@
  * The profiler tests compute each number a second time, with simple code that
  * reads the rows directly, and compare the two answers.
  *
- * Run: npm run test:unit
+ * Source files that the tests cover:
+ *
+ * - src/tableViz/demo/random.ts: `makeRng`
+ * - src/tableViz/demo/data.ts: `demoTable`, `formatDemoValue`
+ * - src/tableViz/demo/demoProfiler.ts: `DemoProfiler`, `percentileOf`
+ * - src/tableViz/core/profiler.ts: `createDispatcher`, with the demo profiler behind it
+ *
+ * Many other tests use the demo profiler as the source of the correct
+ * numbers. Thus an error in the demo profiler can hide an error in the SQL
+ * path. This file is the check of the demo profiler.
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/demo.test.ts
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -16,13 +28,31 @@ import { demoTable, formatDemoValue, type DemoColumn, type DemoTable } from '../
 import { DemoProfiler } from '../../../src/tableViz/demo/demoProfiler.ts';
 import { makeRng } from '../../../src/tableViz/demo/random.ts';
 
+/** Make the three-part name of a demo table. `name('orders_2026')` is the table `demo.shop.orders_2026`. */
 const name = (table: string) => ({ catalog: 'demo', schema: 'shop', name: table });
+/** Make the dataset of a demo table in the Demo profile, with no filter. */
 const dataset = (table: string): Dataset => ({ profile: 'Demo', table: name(table) });
+/** The rows of `demo.shop.orders_2025`: 100,000 rows. */
 const t25 = demoTable(name('orders_2025')) as DemoTable;
+/** The rows of `demo.shop.orders_2026`: 110,000 rows. */
 const t26 = demoTable(name('orders_2026')) as DemoTable;
+/**
+ * Get one column of a demo table, with its values.
+ *
+ * @example
+ * column(t26, 'region').values[109_999]   // 'APAC'
+ */
 const column = (table: DemoTable, columnName: string) => table.columns.find((c) => c.name === columnName) as DemoColumn;
+/**
+ * Make the entry of a column in a request: its name and its type.
+ *
+ * @example
+ * ref(t26, 'amount')   // { name: 'amount', typeText: 'decimal(10,2)' }
+ */
 const ref = (table: DemoTable, columnName: string) => ({ name: columnName, typeText: column(table, columnName).typeText });
+/** Compute the part of the values of a column that are null, from 0 to 1. For `discount_pct` in 2026: about 0.35. */
 const nullRate = (c: DemoColumn) => c.values.filter((v) => v === null).length / c.values.length;
+/** The profiler under test. */
 const profiler = new DemoProfiler();
 
 test('the random numbers are the same on each run', () => {
@@ -213,7 +243,17 @@ test('the profiler gives a clear error for a bad request', async () => {
   for (const p of bad) await assert.rejects(p, ProfilerError);
 });
 
-/** Make a dispatcher that collects the messages that it sends. */
+/**
+ * Make a dispatcher that collects the messages that it sends.
+ *
+ * @example
+ * const { dispatcher, sent, ready } = harness(() => profiler);
+ * await dispatcher.handle({ type: 'request', id: 'r1', request: { type: 'tableDetails', dataset: dataset('orders_2026') } });
+ * sent.map((m) => m.type)   // ['progress', 'result']
+ *
+ * @param profilerFor  Returns the profiler for a profile name. It throws if the feature cannot use the profile.
+ * @returns `dispatcher`; `sent`: the messages for the webview, oldest first; `ready`: the messages from the webview that are not "request" or "cancel".
+ */
 function harness(profilerFor: (profile: string) => Profiler) {
   const sent: ToWebview[] = [];
   const ready: unknown[] = [];

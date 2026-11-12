@@ -36,19 +36,37 @@ import { isNumeric, typeFamily } from './kinds.ts';
 import { quoteIdentifier, quoteTableName } from './names.ts';
 import { PERCENTILES, type Chip, type ColumnRef, type Dataset, type Grain, type Measure, type Request, type RequestOf } from './schema.ts';
 
-/** One named parameter of a statement. `value` is text for all types. */
+/**
+ * One named parameter of a statement. `value` is text for all types.
+ *
+ * @example
+ * { name: 'bins', value: '30', type: 'INT' }                          // the marker in the SQL is :bins
+ * { name: 'tbl', value: '`main`.`shop`.`orders`', type: 'STRING' }
+ */
 export interface SqlParam {
+  /** The name without the colon. */
   name: string;
   value: string;
+  /** The Databricks type that the runner gives to the value. */
   type: 'STRING' | 'INT' | 'DOUBLE';
 }
 
-/** One SQL statement and its parameters. */
+/**
+ * One SQL statement and its parameters.
+ *
+ * @example
+ * {
+ *   sql: 'DESCRIBE DETAIL IDENTIFIER(:tbl)',
+ *   params: [{ name: 'tbl', value: '`main`.`shop`.`orders`', type: 'STRING' }],
+ * }
+ */
 export interface Statement {
+  /** The SQL text, with a marker such as `:tbl` in the place of each parameter. */
   sql: string;
   params: SqlParam[];
 }
 
+/** How buildStatements() writes the names of tables and columns. */
 export interface BuildOptions {
   /**
    * How the statement names tables and columns.
@@ -61,10 +79,33 @@ export interface BuildOptions {
   names?: 'identifier' | 'backtick';
 }
 
-/** Collects the parameters of one statement and writes the parts that all statements share. */
+/**
+ * Collects the parameters of one statement and writes the parts that all statements share.
+ *
+ * A builder makes one `Parts` for each statement. It calls the methods to
+ * get pieces of SQL text, and each method adds the parameters of its piece
+ * to `params`. At the end, the builder returns its SQL text with `params`.
+ *
+ * @example
+ * const parts = new Parts({});
+ * parts.column({ name: 'amount', typeText: 'double' })   // 'IDENTIFIER(:c0)'
+ * parts.column({ name: 'amount', typeText: 'double' })   // 'IDENTIFIER(:c0)': the same parameter
+ * parts.param('bins', 30, 'INT')                         // ':bins'
+ * parts.from(orders)                                     // 'FROM IDENTIFIER(:tbl)'
+ * parts.from({ ...orders, version: { kind: 'version', n: '42' }, sample: { percent: 1 } })
+ * // 'FROM IDENTIFIER(:tbl) VERSION AS OF 42 TABLESAMPLE (1 PERCENT)'
+ * parts.where({ ...orders, filter: "region = 'EMEA'" }, 'IDENTIFIER(:c0) IS NOT NULL')
+ * // "\nWHERE (\n  region = 'EMEA'\n) AND IDENTIFIER(:c0) IS NOT NULL"
+ * parts.params
+ * // [{ name: 'c0', value: '`amount`', type: 'STRING' }, { name: 'bins', value: '30', type: 'INT' },
+ * //  { name: 'tbl', value: '`main`.`shop`.`orders`', type: 'STRING' }, ...]
+ */
 class Parts {
+  /** The parameters of the statement, in the sequence in which the methods added them. */
   readonly params: SqlParam[] = [];
+  /** How the methods write the names of tables and columns. See BuildOptions. */
   private readonly names: 'identifier' | 'backtick';
+  /** The marker of each column that the statement already names, by column name. Example: 'amount' -> ':c0'. */
   private readonly columnNames = new Map<string, string>();
 
   constructor(options: BuildOptions) {
@@ -143,6 +184,13 @@ class Parts {
  * | 'value'  | the column                              |
  * | 'length' | the number of characters of the column as text |
  * | 'day'    | the date of the column, as days after 1970-01-01 |
+ *
+ * @example
+ * measured('IDENTIFIER(:c0)', undefined)   // 'IDENTIFIER(:c0)'
+ * measured('IDENTIFIER(:c0)', 'length')    // 'length(CAST(IDENTIFIER(:c0) AS STRING))'
+ * measured('IDENTIFIER(:c0)', 'day')       // 'unix_date(CAST(IDENTIFIER(:c0) AS DATE))'
+ *
+ * @param column  The SQL text of the column, from `Parts.column()`.
  */
 function measured(column: string, measure: Measure | undefined): string {
   if (measure === 'length') return `length(CAST(${column} AS STRING))`;
@@ -156,6 +204,12 @@ function measured(column: string, measure: Measure | undefined): string {
  *
  * The columns of the table do not come from SQL. They come from the Unity
  * Catalog REST API, which does not start a warehouse.
+ *
+ * @example
+ * // For main.shop.orders, the two statements are:
+ * //   DESCRIBE DETAIL IDENTIFIER(:tbl)
+ * //   DESCRIBE HISTORY IDENTIFIER(:tbl) LIMIT 1
+ * // Each has the parameter :tbl = '`main`.`shop`.`orders`'.
  */
 function tableDetails(request: RequestOf<'tableDetails'>, options: BuildOptions): Statement[] {
   const detail = new Parts(options);
@@ -178,7 +232,21 @@ function tableDetails(request: RequestOf<'tableDetails'>, options: BuildOptions)
  * | number                     | those, plus mean                         |
  *
  * The result has one row. The columns of column number i are named `c<i>_nn`,
- * `c<i>_d`, `c<i>_min`, `c<i>_max` and `c<i>_avg`.
+ * `c<i>_d`, `c<i>_min`, `c<i>_max` and `c<i>_avg`. With `exact: true`, the
+ * statement uses `count(DISTINCT ...)` in the place of `approx_count_distinct`.
+ *
+ * @example
+ * // The request has the columns `amount` (decimal) and `channel` (string).
+ * // SELECT
+ * //   count(*) AS `n`,
+ * //   count(IDENTIFIER(:c0)) AS `c0_nn`,
+ * //   approx_count_distinct(IDENTIFIER(:c0)) AS `c0_d`,
+ * //   CAST(min(IDENTIFIER(:c0)) AS STRING) AS `c0_min`,
+ * //   CAST(max(IDENTIFIER(:c0)) AS STRING) AS `c0_max`,
+ * //   avg(CAST(IDENTIFIER(:c0) AS DOUBLE)) AS `c0_avg`,
+ * //   count(IDENTIFIER(:c1)) AS `c1_nn`,
+ * //   approx_count_distinct(IDENTIFIER(:c1)) AS `c1_d`
+ * // FROM IDENTIFIER(:tbl)
  */
 function overview(request: RequestOf<'overview'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
@@ -204,7 +272,20 @@ function overview(request: RequestOf<'overview'>, options: BuildOptions): Statem
  *
  * The inner query computes the percentiles as one array. The outer query
  * gives each percentile its own column (`p0` to `p6`), so that the result is
- * one row of plain values.
+ * one row of plain values. With `exact: true`, the statement uses
+ * `percentile` in the place of `approx_percentile`.
+ *
+ * @example
+ * // SELECT `n`, `nn`, `zeros`, `negatives`, `min`, `max`, `mean`, `stddev`, `p`[0] AS `p0`, ..., `p`[6] AS `p6`
+ * // FROM (
+ * //   SELECT
+ * //     count(*) AS `n`,
+ * //     count(IDENTIFIER(:c0)) AS `nn`,
+ * //     count_if(IDENTIFIER(:c0) = 0) AS `zeros`,
+ * //     ...
+ * //     approx_percentile(CAST(IDENTIFIER(:c0) AS DOUBLE), array(0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99)) AS `p`
+ * //   FROM IDENTIFIER(:tbl)
+ * // )
  */
 function numericStats(request: RequestOf<'numericStats'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
@@ -231,10 +312,19 @@ function numericStats(request: RequestOf<'numericStats'>, options: BuildOptions)
 /**
  * The statement for "histogram": the number of rows in each bin.
  *
- * `width_bucket` gives bucket 1 to `bins` for a value in the range, 0 for a
- * value below `lo`, and `bins + 1` for a value at or above `hi`. The CASE
- * puts the value `hi` in the last bin, as binIndex() in bins.ts does. Thus
- * the largest value of a column is not "above the range".
+ * `width_bucket` gives bucket 1 to `bins` for a value in the range. It gives
+ * 0 for a value below `lo`, and `bins + 1` for a value at or above `hi`. The
+ * CASE puts the value `hi` in the last bin, as binIndex() in bins.ts does.
+ * Thus the largest value of a column is not "above the range".
+ *
+ * @example
+ * // The parameters are :lo = 0, :hi = 500 and :bins = 30.
+ * // SELECT
+ * //   CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) = :hi THEN :bins ELSE width_bucket(CAST(IDENTIFIER(:c0) AS DOUBLE), :lo, :hi, :bins) END AS `bucket`,
+ * //   count(*) AS `n`
+ * // FROM IDENTIFIER(:tbl)
+ * // WHERE CAST(IDENTIFIER(:c0) AS DOUBLE) IS NOT NULL
+ * // GROUP BY 1
  */
 function histogram(request: RequestOf<'histogram'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
@@ -254,6 +344,17 @@ function histogram(request: RequestOf<'histogram'>, options: BuildOptions): Stat
  * Each row also has the count of all rows (`total`), so that the caller can
  * compute "Other" as the remainder. The row of the null value, if there is
  * one, comes first. Thus the statement asks for one row more than `top`.
+ *
+ * @example
+ * // For `top: 20`, the parameter is :limit = 21.
+ * // SELECT `value`, `n`, sum(`n`) OVER () AS `total`
+ * // FROM (
+ * //   SELECT CAST(IDENTIFIER(:c0) AS STRING) AS `value`, count(*) AS `n`
+ * //   FROM IDENTIFIER(:tbl)
+ * //   GROUP BY 1
+ * // )
+ * // ORDER BY CASE WHEN `value` IS NULL THEN 0 ELSE 1 END, `n` DESC, `value`
+ * // LIMIT :limit
  */
 function frequency(request: RequestOf<'frequency'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
@@ -271,7 +372,19 @@ function frequency(request: RequestOf<'frequency'>, options: BuildOptions): Stat
 /** The period names that `date_trunc` accepts. The statement contains one of these fixed words, never text from a user. */
 const TRUNC_UNITS: Record<Grain, string> = { day: 'DAY', week: 'WEEK', month: 'MONTH', year: 'YEAR' };
 
-/** The statement for "dateCounts": the number of rows in each day, week, month or year. A week starts on Monday. */
+/**
+ * The statement for "dateCounts": the number of rows in each day, week, month or year. A week starts on Monday.
+ *
+ * @example
+ * // For `grain: 'month'`:
+ * // SELECT
+ * //   CAST(CAST(date_trunc('MONTH', IDENTIFIER(:c0)) AS DATE) AS STRING) AS `start`,
+ * //   count(*) AS `n`
+ * // FROM IDENTIFIER(:tbl)
+ * // WHERE IDENTIFIER(:c0) IS NOT NULL
+ * // GROUP BY 1
+ * // ORDER BY 1
+ */
 function dateCounts(request: RequestOf<'dateCounts'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
   const column = parts.column(request.columns[0]);
@@ -283,7 +396,17 @@ function dateCounts(request: RequestOf<'dateCounts'>, options: BuildOptions): St
 
 /**
  * The statement for "validateFilter": ask Databricks to read the filter, with `LIMIT 0` so that it reads no rows.
+ *
  * If the filter is not valid, the statement fails, and the error text tells why.
+ *
+ * @example
+ * // For the filter "region = 'EMEA'":
+ * // SELECT 1 AS `ok`
+ * // FROM IDENTIFIER(:tbl)
+ * // WHERE (
+ * //   region = 'EMEA'
+ * // )
+ * // LIMIT 0
  */
 function validateFilter(request: RequestOf<'validateFilter'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
@@ -293,6 +416,14 @@ function validateFilter(request: RequestOf<'validateFilter'>, options: BuildOpti
 
 /**
  * The statement for "quantiles": approximate percentiles, one result column (`q0`, `q1`, ...) for each probability.
+ *
+ * @example
+ * // For `probabilities: [0.1, 0.5, 0.9]`:
+ * // SELECT `q`[0] AS `q0`, `q`[1] AS `q1`, `q`[2] AS `q2`
+ * // FROM (
+ * //   SELECT approx_percentile(CAST(IDENTIFIER(:c0) AS DOUBLE), array(0.1, 0.5, 0.9)) AS `q`
+ * //   FROM IDENTIFIER(:tbl)
+ * // )
  */
 function quantiles(request: RequestOf<'quantiles'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
@@ -307,9 +438,21 @@ function quantiles(request: RequestOf<'quantiles'>, options: BuildOptions): Stat
 /**
  * The statement for "driftBins": the number of rows between each two cut points.
  *
- * The bucket of a value is the number of cut points that are not above it:
- * 0 for a value below the first cut point, and `cuts.length` for a value at
- * or above the last one. The bucket of a null is -1.
+ * The bucket of a value is the number of cut points that are not above it.
+ * Thus a value below the first cut point gets 0, and a value at or above the
+ * last one gets `cuts.length`. The bucket of a null is -1.
+ *
+ * @example
+ * // For `cuts: [12.5, 49.4]`, the parameters are :k0 = 12.5 and :k1 = 49.4.
+ * // SELECT
+ * //   CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) IS NULL THEN -1 ELSE
+ * //     CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) >= :k0 THEN 1 ELSE 0 END +
+ * //     CASE WHEN CAST(IDENTIFIER(:c0) AS DOUBLE) >= :k1 THEN 1 ELSE 0 END
+ * //   END AS `bucket`,
+ * //   count(*) AS `n`
+ * // FROM IDENTIFIER(:tbl)
+ * // GROUP BY 1
+ * // The amount 30 gets bucket 1: it is at or above 12.5, and below 49.4.
  */
 function driftBins(request: RequestOf<'driftBins'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
@@ -321,7 +464,16 @@ function driftBins(request: RequestOf<'driftBins'>, options: BuildOptions): Stat
   return [{ sql, params: parts.params }];
 }
 
-/** The statement for "valueCounts": the number of rows for each value in a list. A value with no rows gives no result row. */
+/**
+ * The statement for "valueCounts": the number of rows for each value in a list. A value with no rows gives no result row.
+ *
+ * @example
+ * // For `values: ['fax', 'phone']`, the parameters are :v0 = 'fax' and :v1 = 'phone'.
+ * // SELECT CAST(IDENTIFIER(:c0) AS STRING) AS `value`, count(*) AS `n`
+ * // FROM IDENTIFIER(:tbl)
+ * // WHERE CAST(IDENTIFIER(:c0) AS STRING) IN (:v0, :v1)
+ * // GROUP BY 1
+ */
 function valueCounts(request: RequestOf<'valueCounts'>, options: BuildOptions): Statement[] {
   const parts = new Parts(options);
   const x = `CAST(${parts.column(request.columns[0])} AS STRING)`;
@@ -333,7 +485,13 @@ function valueCounts(request: RequestOf<'valueCounts'>, options: BuildOptions): 
 /**
  * Build the statements for a request.
  *
- * Most requests need one statement. "tableDetails" needs two.
+ * Most requests need one statement. "tableDetails" needs two. The top of
+ * this file shows an example for a "histogram" request.
+ *
+ * @example
+ * // With the option `names: 'backtick'`, the names are in the SQL text and are not parameters:
+ * buildStatements({ type: 'validateFilter', dataset: { profile: 'p', table: { catalog: 'main', schema: 'shop', name: 'orders' } } }, { names: 'backtick' })
+ * // [{ sql: 'SELECT 1 AS `ok`\nFROM `main`.`shop`.`orders`\nLIMIT 0', params: [] }]
  */
 export function buildStatements(request: Request, options: BuildOptions = {}): Statement[] {
   switch (request.type) {
@@ -362,6 +520,9 @@ export function buildStatements(request: Request, options: BuildOptions = {}): S
 
 /**
  * Write a statement for a person to read: the parameters as comments, then the SQL.
+ *
+ * The value of a STRING parameter is between single quotation marks, and
+ * each single quotation mark in the value is there two times.
  *
  * @example
  * renderStatement({ sql: 'SELECT count(*) FROM IDENTIFIER(:tbl)', params: [{ name: 'tbl', value: '`main`.`sales`.`orders`', type: 'STRING' }] })

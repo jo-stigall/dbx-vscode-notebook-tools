@@ -464,6 +464,10 @@ class Kernel {
    * does not send the command. If you stop the notebook while the cluster
    * accepts the command, the function cancels the command.
    *
+   * If a status request fails, for example because the cluster does not
+   * answer in 30 seconds, the function tells the cluster to cancel the
+   * command, so that the command does not continue without a cell.
+   *
    * @returns {Promise<boolean>}  true if the command passed. false if the code failed or you stopped the command.
    * @throws {Error}  If a request to Databricks fails.
    */
@@ -524,6 +528,10 @@ class Kernel {
         }
         await sleep(delay);
       }
+    } catch (e) {
+      // The kernel stops waiting for this command. Do not wait for the cancel either: the cluster may not answer.
+      this.cancel({ ...s, commandId });
+      throw e;
     } finally {
       s.commandId = undefined;
     }
@@ -565,10 +573,16 @@ class Kernel {
     await Promise.all([...this.sessions.values()].map((s) => this.reset(s.uri)));
   }
 
-  /** Delete all sessions and remove the kernel from VS Code. VS Code calls this function when the extension stops. */
+  /**
+   * Delete all sessions and remove the kernel from VS Code. VS Code calls this function when the extension stops.
+   *
+   * @returns {Promise<void>}  Ends when the cluster deleted the sessions. deactivate() in extension.js returns it, so
+   *   that VS Code waits for the requests before it stops the extension.
+   */
   dispose() {
-    this.resetAll();
+    const done = this.resetAll();
     this.controller.dispose();
+    return done;
   }
 }
 

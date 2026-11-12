@@ -1,9 +1,23 @@
-/** Make the ECharts settings for the bar charts of the cards. */
+/**
+ * Make the ECharts settings for the bar charts of the cards.
+ *
+ * The views in cards/views.tsx and compare/views.tsx call these functions
+ * and give the settings to the `Chart` component in Chart.tsx. The functions
+ * read nothing from the page and send no request, so a test can call them in
+ * Node.js.
+ */
 import type { ChartOption } from './Chart.tsx';
 import { formatCount, formatNumber } from './format.ts';
 import type { Theme } from './theme.ts';
 
-/** Make text safe to put in the HTML of a tooltip. */
+/**
+ * Make text safe to put in the HTML of a tooltip.
+ *
+ * A value of a column can contain HTML. The tooltip must show it as text.
+ *
+ * @example
+ * escapeHtml('<b>web</b>')   // '&#60;b&#62;web&#60;/b&#62;'
+ */
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 /** How long a chart takes to move from the old numbers to the new numbers, in milliseconds. */
@@ -34,11 +48,18 @@ export interface ChartDetail {
   numeric?: { lo: number; hi: number; markers: { value: number; label: string }[] };
 }
 
+/**
+ * What barsOption() needs to draw the bars of one dataset.
+ *
+ * `labels`, `counts` and `tips` have one entry for each bar, in the sequence
+ * of the bars.
+ */
 export interface BarsInput {
   /** The text below each bar (or next to each bar, if `horizontal`). */
   labels: string[];
+  /** The length of each bar: a number of rows, or a percent of the rows in a compare card. */
   counts: number[];
-  /** The text of the tooltip of each bar. Line breaks are permitted. */
+  /** The text of the tooltip of each bar. The text can have line breaks. Example: '0 to 25\n60,352 rows (54.9%)'. */
   tips: string[];
   /** true: the count axis has a logarithmic scale. A bar with the count 0 does not show. */
   logScale?: boolean;
@@ -48,11 +69,11 @@ export interface BarsInput {
   gap?: number;
   /** The color of the bars. Default: the color of dataset A. */
   color?: string;
-  /** The top of the count axis. Two charts side by side use the same number, so that their bars can be compared. */
+  /** The top of the count axis. Two charts side by side use the same number, so that you can compare the lengths of their bars. */
   max?: number;
   /** Writes a number of the count axis. Default: a count with separators. */
   axisFormat?: (value: number) => string;
-  /** Set in the detailed view of a column. */
+  /** The extra parts of the chart in the detailed view of a column. Not set for a small card. */
   detail?: ChartDetail;
 }
 
@@ -64,7 +85,17 @@ export interface BarsInput {
  * draw a new chart from zero.
  *
  * @example
- * barsOption(theme, { labels: ['web', 'store'], counts: [60, 30], tips: ['web: 60 rows', 'store: 30 rows'], horizontal: true })
+ * // The top values of the column `channel`, most frequent first.
+ * const option = barsOption(theme, { labels: ['web', 'store'], counts: [60, 30], tips: ['web: 60 rows', 'store: 30 rows'], horizontal: true });
+ * option.series[0].data   // [60, 30]
+ * option.yAxis.data       // ['web', 'store']: with `horizontal`, the labels are on the vertical axis
+ *
+ * @example
+ * // A logarithmic axis cannot show 0. The bar with the count 0 gets null, and ECharts draws no bar.
+ * const option = barsOption(theme, { labels: ['0', '10', '20'], counts: [120, 0, 45], tips: ['', '', ''], logScale: true, gap: 0 });
+ * option.series[0].data   // [120, null, 45]
+ *
+ * @param theme  The colors and the font of the VS Code theme. See useTheme() in theme.ts.
  */
 export function barsOption(theme: Theme, input: BarsInput): ChartOption {
   const { detail } = input;
@@ -186,21 +217,37 @@ export function barsOption(theme: Theme, input: BarsInput): ChartOption {
   };
 }
 
+/**
+ * What compareBarsOption() needs to draw the bars of dataset A and dataset B in one chart.
+ *
+ * `labels`, `a`, `b` and `tips` have one entry for each label. Each label
+ * gets one bar of A and one bar of B.
+ */
 export interface CompareBarsInput {
+  /** The text below each pair of bars (or next to it, if `horizontal`). */
   labels: string[];
   /** The numbers of dataset A and dataset B for each label: counts, or percents of the rows of the dataset. */
   a: number[];
   b: number[];
+  /** The text of the tooltip of each label. One tooltip tells the numbers of A and of B. */
   tips: string[];
+  /** The name of dataset A in the legend. The compare cards pass 'A'. */
   nameA: string;
+  /** The name of dataset B in the legend. The compare cards pass 'B'. */
   nameB: string;
+  /** true: the value axis has a logarithmic scale. A bar with the number 0 does not show. */
   logScale?: boolean;
+  /** true: the bars go from left to right, with the first label at the top. */
   horizontal?: boolean;
   /** Writes a number of the value axis. Example: (v) => v + '%'. */
   axisFormat?: (value: number) => string;
-  /** Set in the detailed view of a column. `barLabels` are not used: a chart with two datasets has too many bars for labels. */
+  /**
+   * The titles of the axes in the detailed view of a column. The function
+   * ignores `barLabels` and `numeric`. Use `labelsA` and `labelsB` for the
+   * text on the bars.
+   */
   detail?: ChartDetail;
-  /** In the detailed view: the text on each bar of A and of B. */
+  /** In the detailed view: the text on each bar of A and of B. Not set: the bars have no text. */
   labelsA?: string[];
   labelsB?: string[];
 }
@@ -208,9 +255,18 @@ export interface CompareBarsInput {
 /**
  * Make the settings of a bar chart that shows dataset A and dataset B next to each other for each label.
  *
- * A has one color and B has another, on each chart. The bars of B also have
- * a pattern, so that a person who cannot tell the two colors apart can tell
- * the datasets apart.
+ * A has one color and B has another, on each chart. ECharts also draws a
+ * different pattern on the bars of each dataset. A person who cannot tell
+ * the two colors apart can then tell the datasets apart.
+ *
+ * @example
+ * // The percent of the rows of each dataset that have the value 'web' and 'store'.
+ * const option = compareBarsOption(theme, {
+ *   labels: ['web', 'store'], a: [66.7, 33.3], b: [50, 50], tips: ['', ''],
+ *   nameA: 'A', nameB: 'B', axisFormat: (v) => v + '%',
+ * });
+ * option.series[0]   // { id: 'a', name: 'A', data: [66.7, 33.3], ... } in the color `theme.a`
+ * option.series[1]   // { id: 'b', name: 'B', data: [50, 50], ... } in the color `theme.b`
  */
 export function compareBarsOption(theme: Theme, input: CompareBarsInput): ChartOption {
   const detail = input.detail ? { ...input.detail, barLabels: undefined, numeric: undefined } : undefined;

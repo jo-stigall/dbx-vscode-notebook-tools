@@ -10,6 +10,7 @@ import { ProfilerError } from './profiler.ts';
 import { QueryError } from './runner.ts';
 import type { TableName } from './schema.ts';
 
+/** What toProfilerError() must know about the failed request, so that the message can name the table and the compute. */
 export interface ErrorContext {
   /** The table of the request. */
   table: TableName;
@@ -25,15 +26,31 @@ export interface ErrorContext {
 
 /** A plain message and a next step for one kind of error. */
 interface Advice {
+  /** What went wrong, in one sentence. Example: 'The warehouse "Shared" is stopped.' */
   message: string;
+  /** What the user can do. Example: 'Start it in Databricks, ...' */
   nextStep: string;
 }
 
 /**
  * Find the advice for an error. Returns undefined for an error that the file does not know.
  *
- * The function looks at the error code, the SQLSTATE and the HTTP status
- * first, and at words in the text only when those are missing.
+ * For most errors, the function looks at the error code, the SQLSTATE and
+ * the HTTP status. It looks at words in the text when those do not match.
+ * The first check that matches gives the advice, in this sequence:
+ *
+ * | Error                                   | How the function knows it                          |
+ * |-----------------------------------------|----------------------------------------------------|
+ * | the query ran too long                  | `kind` is 'timeout'                                |
+ * | the login is not valid                  | HTTP 401, or words such as "token expired"         |
+ * | the table does not exist                | TABLE_OR_VIEW_NOT_FOUND, or SQLSTATE 42P01         |
+ * | no USE CATALOG or USE SCHEMA privilege  | the text names the privilege                       |
+ * | no SELECT privilege                     | INSUFFICIENT_PERMISSIONS, SQLSTATE 42501, HTTP 403 |
+ * | a column does not exist                 | UNRESOLVED_COLUMN, or SQLSTATE 42703               |
+ * | Databricks cannot read the SQL          | PARSE_SYNTAX_ERROR, or SQLSTATE 42601              |
+ * | the warehouse or cluster does not exist | HTTP 404, or RESOURCE_DOES_NOT_EXIST               |
+ * | the warehouse or cluster is stopped     | words such as "cluster ... terminated"             |
+ * | too many requests                       | HTTP 429                                           |
  */
 function advise(error: QueryError, context: ErrorContext): Advice | undefined {
   const table = displayTableName(context.table);
@@ -107,6 +124,10 @@ function advise(error: QueryError, context: ErrorContext): Advice | undefined {
 
 /**
  * Make the error that the UI shows from an error of a query runner.
+ *
+ * A ProfilerError goes through without a change. An error that the file
+ * does not know gets the message "Databricks reported an error for this
+ * query." In each case, `raw` keeps the original text.
  *
  * @example
  * toProfilerError(new QueryError('[TABLE_OR_VIEW_NOT_FOUND] ...', { kind: 'failed', code: 'TABLE_OR_VIEW_NOT_FOUND' }), context)

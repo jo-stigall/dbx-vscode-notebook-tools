@@ -1,7 +1,20 @@
 /**
  * Tests for filter chips: the conditions that a click on a chart adds to a dataset.
  *
- * Run: npm run test:unit
+ * The file also tests four things that use a dataset with chips: the CSV
+ * export, the SQL text that a person can run, the saved view, and the
+ * permission that a saved view needs before it runs a query.
+ *
+ * Source files that the tests cover:
+ *
+ * - src/tableViz/core/derive.ts: `chipForValue`, `chipForBins`, `chipForPeriods`, `chipLabel`, `addChip`, `removeChip`, `toCsv`, `fileName`
+ * - src/tableViz/core/sql.ts: the WHERE clause of a chip, and `inlineRendered`
+ * - src/tableViz/core/schema.ts: `datasetSchema` and `savedViewSchema`
+ * - src/tableViz/core/profiler.ts: the option `blocked` of the dispatcher
+ * - src/tableViz/demo/demoProfiler.ts: chips in the Demo profile
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/chips.test.ts
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -13,14 +26,37 @@ import { buildStatements } from '../../../src/tableViz/core/sql.ts';
 import { demoTable, formatDemoValue, type DemoTable } from '../../../src/tableViz/demo/data.ts';
 import { DemoProfiler } from '../../../src/tableViz/demo/demoProfiler.ts';
 
+/** The demo table `demo.shop.orders_2026` with no filter: 110,000 rows. */
 const dataset: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
+/** The rows of that table. The tests count rows in it directly, to check the numbers of the profiler. */
 const table = demoTable(dataset.table) as DemoTable;
+/**
+ * Get all values of a column, as the demo table stores them.
+ *
+ * The demo table stores a decimal as cents, and a date as the number of days after 1970-01-01.
+ *
+ * @example
+ * values('region')[109_999]   // 'APAC'
+ * values('amount')[0]         // 2316, which is the amount 23.16
+ */
 const values = (name: string) => (table.columns.find((c) => c.name === name) as DemoTable['columns'][number]).values;
+/** A category column with four values, for example 'EMEA'. */
 const region = { name: 'region', typeText: 'string' };
+/** A number column with two decimal places. */
 const amount = { name: 'amount', typeText: 'decimal(10,2)' };
+/** A number column where 35% of the rows are null. */
 const discount = { name: 'discount_pct', typeText: 'double' };
+/** A date column. All dates are in 2026. */
 const orderDate = { name: 'order_date', typeText: 'date' };
+/** The demo profiler, which applies chips to the demo tables. */
 const demo = new DemoProfiler();
+/**
+ * Ask the demo profiler how many rows of the dataset meet all the chips.
+ *
+ * @example
+ * await rowCount([])                                                // 110000
+ * await rowCount([{ op: 'eq', column: region, value: 'MARS' }])     // 0
+ */
 const rowCount = async (chips: Chip[]) =>
   ((await demo.profile({ type: 'overview', dataset: { ...dataset, chips }, columns: [region] })) as ResultOf<'overview'>).rowCount;
 
@@ -71,6 +107,7 @@ test('the SQL of a chip has parameters only', () => {
   ];
   const [statement] = buildStatements({ type: 'frequency', dataset: { ...dataset, filter: 'quantity > 1', chips }, columns: [region], top: 5 });
   assert.ok(statement);
+  // Cut the WHERE clause out of the statement. The filter that the user typed comes first, then one condition for each chip.
   const where = statement.sql.slice(statement.sql.indexOf('WHERE'), statement.sql.indexOf('GROUP BY')).trim();
   assert.equal(
     where,

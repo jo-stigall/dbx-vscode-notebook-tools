@@ -7,8 +7,8 @@
  *   tries one more time, because an OAuth token expires in less than one hour.
  * - It waits and tries again after an HTTP 429 or 503 answer.
  * - It refuses a workspace URL that starts with "http://", because that
- *   sends the token as plain text. A server on this computer is permitted,
- *   for tests.
+ *   sends the token as plain text. The client permits a server on this
+ *   computer, for tests.
  *
  * The client never writes a token to a log or to an error message.
  *
@@ -16,10 +16,33 @@
  * local server.
  */
 
-/** Sends one request and returns the JSON answer. GET puts `payload` in the URL. POST sends it as JSON. */
+/**
+ * Sends one request and returns the JSON answer. GET puts `payload` in the URL. POST sends it as JSON.
+ *
+ * @example
+ * await http('GET', '/api/2.1/unity-catalog/schemas', { catalog_name: 'main', max_results: 0 })
+ * // requests https://adb-123.azuredatabricks.net/api/2.1/unity-catalog/schemas?catalog_name=main&max_results=0
+ * // returns { schemas: [{ name: 'shop', ... }] }
+ * await http('POST', '/api/2.1/clusters/start', { cluster_id: '0101-123456-abcdefgh' })
+ * // sends the body {"cluster_id":"0101-123456-abcdefgh"}
+ *
+ * @param path  The path of the API. It starts with "/".
+ * @param payload  For GET, a value that is `undefined` does not go in the URL.
+ * @param signal  Stops the request when it fires.
+ * @throws {HttpError}  If Databricks answers with an error status or does not answer in time, or if the client cannot reach the workspace.
+ */
 export type Http = (method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
 
-/** Databricks answered with an error status, or did not answer. */
+/**
+ * Databricks answered with an error status, or did not answer.
+ *
+ * @example
+ * // Databricks answers GET /api/2.0/sql/warehouses/abc123def456 with HTTP 404 and, for example,
+ * // { error_code: 'RESOURCE_DOES_NOT_EXIST', message: 'Warehouse abc123def456 does not exist.' }
+ * // The client then throws an HttpError with:
+ * //   message: 'Databricks API /api/2.0/sql/warehouses/abc123def456 failed (HTTP 404): Warehouse abc123def456 does not exist.'
+ * //   status: 404, code: 'RESOURCE_DOES_NOT_EXIST'
+ */
 export class HttpError extends Error {
   /** The HTTP status code. 0 if there was no answer. */
   readonly status: number;
@@ -34,6 +57,7 @@ export class HttpError extends Error {
   }
 }
 
+/** What createHttp() needs from the code that calls it. Only `host` and `token` are necessary. */
 export interface HttpDeps {
   /** Returns the workspace URL. Example: 'https://adb-123.azuredatabricks.net'. */
   host: () => string;
@@ -56,9 +80,16 @@ export interface HttpDeps {
   onWorkspaceId?: (id: string) => void;
 }
 
+/** Wait for a number of milliseconds. createHttp() uses this function if `deps.sleep` is not set. */
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Tell if a URL points to this computer. */
+/**
+ * Tell if a URL points to this computer.
+ *
+ * @example
+ * isLoopback('http://127.0.0.1:8765')               // true
+ * isLoopback('http://adb-123.azuredatabricks.net')  // false
+ */
 function isLoopback(url: string): boolean {
   try {
     return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname);
@@ -70,9 +101,15 @@ function isLoopback(url: string): boolean {
 /**
  * Make the function that sends requests to one workspace.
  *
+ * The function that you get reads `deps.host()` and `deps.token()` for
+ * each request. Thus it uses a new workspace URL or a new token at once.
+ * It returns the JSON of the answer, or `{}` if the answer has no JSON.
+ * See the top of this file for when it tries a request again.
+ *
  * @example
  * const http = createHttp({ host: () => 'https://adb-123.azuredatabricks.net', token: async () => 'dapi...' });
  * const { warehouses } = await http('GET', '/api/2.0/sql/warehouses');
+ * // warehouses: [{ id: 'abc123def456', name: 'Starter Warehouse', state: 'RUNNING', ... }]
  */
 export function createHttp(deps: HttpDeps): Http {
   const sleep = deps.sleep ?? defaultSleep;

@@ -14,7 +14,9 @@ export interface CancelSignal {
   addEventListener(type: 'abort', listener: () => void): void;
 }
 
+/** What a caller can ask of one `profile()` call: to stop it, to report its progress, and to ignore the cache. */
 export interface ProfileOptions {
+  /** When this signal fires, the profiler stops the request and throws a CancelledError. */
   signal?: CancelSignal;
   /** The profiler calls this function when the state of the query changes. */
   onProgress?: (state: 'queued' | 'running', statementId?: string) => void;
@@ -22,9 +24,23 @@ export interface ProfileOptions {
   refresh?: boolean;
 }
 
-/** Answers requests about datasets. */
+/**
+ * Answers requests about datasets.
+ *
+ * @example
+ * const result = await profiler.profile({
+ *   type: 'frequency',
+ *   dataset: { profile: 'DEFAULT', table: { catalog: 'main', schema: 'shop', name: 'orders' } },
+ *   columns: [{ name: 'channel', typeText: 'string' }],
+ *   top: 20,
+ * });
+ * // result.type is 'frequency'. result.values has the 20 most frequent values.
+ */
 export interface Profiler {
   /**
+   * Answer one request.
+   *
+   * @returns A result with the same `type` as the request.
    * @throws {ProfilerError}  If the request fails.
    * @throws {CancelledError}  If `options.signal` stops the request.
    */
@@ -34,6 +50,8 @@ export interface Profiler {
 /**
  * An error that the UI can show: a plain message, a next step, and the details.
  *
+ * `message` tells what went wrong, in one sentence.
+ *
  * @example
  * throw new ProfilerError('The table main.sales.orders does not exist.', {
  *   nextStep: 'Check the name of the table.',
@@ -42,10 +60,11 @@ export interface Profiler {
  * });
  */
 export class ProfilerError extends Error {
+  /** What the user can do. Example: 'Check the name of the table.' */
   readonly nextStep?: string;
-  /** The error text from Databricks. */
+  /** The error text from Databricks. The same as `message` if the caller gives no text. */
   readonly raw: string;
-  /** The SQL statements that failed. */
+  /** The SQL statements that failed. Empty if the caller gives none. */
   readonly sql: string[];
 
   constructor(message: string, details: { nextStep?: string; raw?: string; sql?: string[] } = {}) {
@@ -65,19 +84,22 @@ export class CancelledError extends Error {
   }
 }
 
-/** One message from the webview and the last message that the host sent back for it. Tests and the log read this record. */
+/** One request from the webview and the final message that the host sent back for it. Tests and the log read this record. */
 export interface Exchange {
+  /** The `id` of the "request" message. */
   id: string;
   request: Request;
+  /** The "result", "error" or "cancelled" message. Not set while the request runs. A "progress" message is not a response. */
   response?: ToWebview;
 }
 
+/** Handles the "request" and "cancel" messages of one board. createDispatcher() makes it. */
 export interface Dispatcher {
   /** Handle one message from the webview. The function checks the message before it uses it. */
   handle(message: unknown): Promise<void>;
   /** Stop all requests that run. Call it when the board closes. */
   cancelAll(): void;
-  /** The requests that the webview sent, oldest first. */
+  /** The requests that the webview sent, oldest first. The list does not have a request that `blocked` refused. */
   readonly exchanges: Exchange[];
 }
 
@@ -87,6 +109,9 @@ export interface Dispatcher {
  * The dispatcher handles "request" and "cancel" messages. For each request it
  * sends back "progress", then one of "result", "error" or "cancelled".
  *
+ * An error that is not a ProfilerError gets the message "The request
+ * failed.", and `raw` has the text of the error.
+ *
  * @example
  * const dispatcher = createDispatcher({
  *   profilerFor: () => new DemoProfiler(),
@@ -95,10 +120,11 @@ export interface Dispatcher {
  * });
  * panel.webview.onDidReceiveMessage((m) => dispatcher.handle(m));
  *
- * @param deps.profilerFor  Returns the profiler for a profile name. It throws a ProfilerError if the profile cannot be used.
+ * @param deps.profilerFor  Returns the profiler for a profile name. It throws a ProfilerError if the feature cannot use the profile.
  * @param deps.post  Sends one message to the webview.
  * @param deps.makeSignal  Makes a cancel signal and the function that fires it.
  * @param deps.onOther  Handles the messages that are not "request" or "cancel", for example "ready" and "saveView".
+ * @param deps.blocked  Returns a reason if requests must not run now. The dispatcher then answers each request with an "error" message that has this reason.
  */
 export function createDispatcher(deps: {
   profilerFor: (profile: string) => Profiler;
@@ -108,9 +134,11 @@ export function createDispatcher(deps: {
   /** Returns a reason if requests must not run now, for example while a saved view waits for the permission of the user. */
   blocked?: () => string | undefined;
 }): Dispatcher {
+  // The function that stops each request that runs now. The key is the `id` of the request.
   const running = new Map<string, () => void>();
   const exchanges: Exchange[] = [];
 
+  /** Check one message from the webview, then cancel a request, run a request, or give the message to `onOther`. */
   async function handle(raw: unknown): Promise<void> {
     const parsed = toHostSchema.safeParse(raw);
     if (!parsed.success) return; // Ignore a message that does not have a known shape.

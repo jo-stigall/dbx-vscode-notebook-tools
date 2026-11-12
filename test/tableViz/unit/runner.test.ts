@@ -5,7 +5,8 @@
  * script: what to answer to each request. The runner then talks to that
  * server as it talks to Databricks. No test needs a workspace.
  *
- * Run: npm run test:unit
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/runner.test.ts
  */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -19,23 +20,37 @@ import { StatementExecutionRunner } from '../../../src/tableViz/host/statementRu
 
 /** One request that the server received. */
 interface Seen {
+  /** 'GET' or 'POST'. */
   method: string;
+  /** The path, with the part after `?` if the request has one. Example: '/api/2.0/sql/statements/s-1'. */
   path: string;
+  /** The JSON body. An empty object if the request has no body. */
   body: Record<string, unknown>;
+  /** The token of the "Authorization" header, without the word "Bearer". */
   token: string;
 }
 /** What the server answers. */
 interface Answer {
+  /** The HTTP status. Default: 200. */
   status?: number;
+  /** The JSON body. Default: an empty object. */
   body?: unknown;
+  /** More headers, for example `{ 'Retry-After': '2' }`. */
   headers?: Record<string, string>;
 }
 
 /**
  * Start a server that answers each request with the result of `script`.
  *
+ * @example
+ * // The first request gets RUNNING, each later request gets SUCCEEDED.
+ * const server = await scripted((request, all) => ({ body: all.length === 1 ? inState('RUNNING') : succeeded([['1', '1.50']]) }));
+ * await makeRunner(server.url).runner.run(statement);
+ * server.paths()   // ['POST /api/2.0/sql/statements', 'GET /api/2.0/sql/statements/s-1']
+ * server.close();
+ *
  * @param script  Gets the request and the list of all requests until now (the new request is the last one).
- * @returns The address of the server, the requests that it received, and a function that stops it.
+ * @returns `url`: the address of the server. `seen`: the requests that it received. `paths()`: each request as "METHOD /path". `close()`: stops the server.
  */
 async function scripted(script: (request: Seen, all: Seen[]) => Answer) {
   const seen: Seen[] = [];
@@ -68,13 +83,34 @@ async function scripted(script: (request: Seen, all: Seen[]) => Answer) {
   };
 }
 
-/** The waits of the runner and the client, 200 times faster. The test records the times that the code asked for. */
+/**
+ * Make a sleep function that waits 200 times shorter than the code asks for, and records the times that the code asked for.
+ *
+ * The runner waits between two status requests, and the client waits after HTTP 429. With the real waits, a test takes seconds.
+ *
+ * @example
+ * const { asked, sleep } = fastSleep();
+ * await sleep(2000);   // waits 10 ms
+ * asked                // [2000]
+ */
 function fastSleep() {
   const asked: number[] = [];
   return { asked, sleep: (ms: number) => (asked.push(ms), new Promise<void>((resolve) => setTimeout(resolve, ms / 200))) };
 }
 
-/** Make a runner that talks to a scripted server. */
+/**
+ * Make a warehouse runner that talks to a scripted server, with the warehouse ID 'wh-1'.
+ *
+ * @example
+ * const { runner, tokenCalls } = makeRunner(server.url, { tokens: ['token-1', 'token-2'] });
+ * await runner.run(statement);
+ * tokenCalls   // [false]: the client asked for the stored token. `true` is a request for a new token.
+ *
+ * @param url  The address of the server from `scripted()`.
+ * @param options.timeoutSeconds  The time limit of a statement. Default: 300 seconds.
+ * @param options.tokens  The stored token, then the token that the client gets when it asks for a new one. Default: only 'token-1'.
+ * @param options.sleep  The sleep function of the runner and the client. Default: a new `fastSleep()`.
+ */
 function makeRunner(url: string, options: { timeoutSeconds?: number; tokens?: string[]; sleep?: (ms: number) => Promise<void> } = {}) {
   const tokens = options.tokens ?? ['token-1'];
   const tokenCalls: boolean[] = [];
@@ -97,20 +133,40 @@ function makeRunner(url: string, options: { timeoutSeconds?: number; tokens?: st
   return { runner, tokenCalls };
 }
 
+/** The statement that each test runs. The server does not read it. */
 const statement: Statement = {
   sql: 'SELECT count(*) AS `n` FROM IDENTIFIER(:tbl)',
   params: [{ name: 'tbl', value: '`main`.`sales`.`orders`', type: 'STRING' }],
 };
+/** The columns of the result, in the form that Databricks uses in `manifest.schema.columns`. */
 const columns = [
   { name: 'n', type_name: 'LONG', position: 0 },
   { name: 'lo', type_name: 'DECIMAL', position: 1 },
 ];
+/**
+ * Make the body that Databricks sends for a statement that is done.
+ *
+ * @example
+ * succeeded([['1', '1.50']], { next_chunk_index: 1 })
+ * // { statement_id: 's-1', status: { state: 'SUCCEEDED' }, manifest: {...}, result: { data_array: [['1', '1.50']], next_chunk_index: 1 } }
+ *
+ * @param rows  The rows of the first piece of the result. One value for each of the two columns `n` and `lo`.
+ * @param extra  More fields of `result`, for example `next_chunk_index` if the result has a second piece.
+ */
 const succeeded = (rows: (string | null)[][], extra: object = {}) => ({
   statement_id: 's-1',
   status: { state: 'SUCCEEDED' },
   manifest: { schema: { columns } },
   result: { data_array: rows, ...extra },
 });
+/**
+ * Make the body that Databricks sends for a statement that has no result yet.
+ *
+ * @example
+ * inState('RUNNING')   // { statement_id: 's-1', status: { state: 'RUNNING' } }
+ *
+ * @param state  A state of the Statement Execution API: 'PENDING', 'RUNNING' or 'CANCELED'.
+ */
 const inState = (state: string) => ({ statement_id: 's-1', status: { state } });
 
 test('runner: a statement that is done in the first request', async () => {
@@ -160,6 +216,24 @@ test('runner: a statement that is pending, then runs, then succeeds with two pie
       'GET /api/2.0/sql/statements/s-1/result/chunks/1',
     ]);
     assert.deepEqual(asked, [500, 750, 1125], 'the wait between two requests increases');
+  } finally {
+    server.close();
+  }
+});
+
+test('runner: a statement with many status requests puts one listener on the cancel signal', async () => {
+  const server = await scripted((request, all) => {
+    if (request.method === 'POST') return { body: inState('PENDING') };
+    return { body: all.filter((r) => r.method === 'GET').length < 15 ? inState('RUNNING') : succeeded([['1', '1.50']]) };
+  });
+  try {
+    // Node.js prints a warning for more than 10 listeners on one signal.
+    let listeners = 0;
+    const signal = { aborted: false, addEventListener: () => void listeners++ };
+    const result = await makeRunner(server.url).runner.run(statement, { signal });
+    assert.deepEqual(result.rows, [['1', '1.50']]);
+    assert.equal(server.paths().filter((p) => p.startsWith('GET')).length, 15);
+    assert.equal(listeners, 1);
   } finally {
     server.close();
   }

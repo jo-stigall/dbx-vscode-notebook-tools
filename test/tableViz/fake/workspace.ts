@@ -19,6 +19,25 @@
  * A statement starts a stopped warehouse, as on Databricks. Each answer has
  * the header "x-databricks-org-id" with the ID of the workspace.
  *
+ * The fake is different from a Databricks workspace in these ways:
+ *
+ * - It does not run SQL. It answers each statement from the demo tables
+ *   (see warehouse.ts). Thus it does not show that Databricks accepts a statement.
+ * - It accepts each token. A request without a "Bearer" token gets HTTP 401.
+ * - The answer to the POST request has the final state of the statement.
+ *   Set `hold` to keep the statement in the state RUNNING.
+ * - A stopped warehouse runs at once. On Databricks, a warehouse needs time to start.
+ * - It returns all rows of a result in one piece.
+ * - It has one catalog, one schema, two tables, two warehouses and five clusters.
+ *
+ * Two tests use this file:
+ *
+ *     npm run test:unit    test/tableViz/unit/workspace.test.ts
+ *     npm run test:e2e     test/tableViz/integration/workspace.cjs
+ *
+ * The test in VS Code cannot load a TypeScript file. `npm run build` makes
+ * dist/test/fakeWorkspace.cjs from this file for it.
+ *
  * @example
  * const workspace = await startFakeWorkspace();
  * workspace.url        // 'http://127.0.0.1:54321'
@@ -32,29 +51,42 @@ import { DEMO_TABLE_NAMES, demoTable } from '../../../src/tableViz/demo/data.ts'
 import { makeFakeDriver } from './driver.ts';
 import { answerStatement, FakeSqlError } from './warehouse.ts';
 
+// The build makes dist/test/fakeWorkspace.cjs from this file. The test in VS Code gets the fake driver from that file also.
 export { makeFakeDriver };
 
-/** The ID of the fake workspace. */
+/** The ID of the fake workspace. The server sends it in the header "x-databricks-org-id" of each answer. */
 export const FAKE_WORKSPACE_ID = '1234567890123456';
 
+/** One cluster of the fake workspace. The fields have the names that the Clusters API of Databricks uses. */
 interface FakeCluster {
   cluster_name: string;
+  /** 'RUNNING', 'TERMINATED' or 'PENDING'. */
   state: string;
+  /** The runtime of the cluster, for example '15.4.x-scala2.12'. */
   spark_version: string;
+  /** The access mode, for example 'SINGLE_USER'. 'NONE' cannot read Unity Catalog. */
   data_security_mode?: string;
+  /** What made the cluster: 'UI', 'API' or 'JOB'. The extension does not list the cluster of a job. */
   cluster_source: string;
   /** The number of "get" requests until a cluster that starts is RUNNING. */
   startsIn?: number;
 }
 
+/** What the fake workspace keeps for one statement. */
 interface StatementState {
+  /** The body of the POST request that started the statement. */
   body: Record<string, unknown>;
   /** The answer when the statement is done. Not set while it "runs". */
   done?: Record<string, unknown>;
+  /** true after a cancel request for a statement that was not done. The statement then has the state CANCELED. */
   cancelled: boolean;
 }
 
+/**
+ * A fake workspace that runs: its address, the record of what it received, and the parts that a test can change.
+ */
 export interface FakeWorkspace {
+  /** The address of the server, for example 'http://127.0.0.1:54321'. The port is different on each run. */
   url: string;
   /** Each request as "METHOD /path", oldest first. */
   requests: string[];
@@ -66,9 +98,23 @@ export interface FakeWorkspace {
   clusters: Record<string, FakeCluster>;
   /** true: a statement stays in the state RUNNING until it is cancelled. For cancel tests. */
   hold: boolean;
+  /** Stop the server and close its open connections. */
   close(): void;
 }
 
+/**
+ * Start a fake workspace on a free port of this computer.
+ *
+ * @example
+ * const fake = await startFakeWorkspace();
+ * const http = createHttp({ host: () => fake.url, token: async () => 'test-token' });
+ * await new RestWorkspaceClient(http).listCatalogs()   // ['demo']
+ * fake.requests                                         // ['GET /api/2.1/unity-catalog/catalogs']
+ * fake.hold = true;                                     // the next statements stay in the state RUNNING
+ * fake.close();
+ *
+ * @returns The fake workspace. Call `close()` when the test is done.
+ */
 export async function startFakeWorkspace(): Promise<FakeWorkspace> {
   const statements = new Map<string, StatementState>();
   const workspace: FakeWorkspace = {
@@ -93,14 +139,22 @@ export async function startFakeWorkspace(): Promise<FakeWorkspace> {
     },
   };
 
+  // Send a JSON answer with the header that has the ID of the workspace.
   const send = (res: ServerResponse, status: number, body: unknown) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'x-databricks-org-id': FAKE_WORKSPACE_ID });
     res.end(JSON.stringify(body));
   };
+  // Send HTTP 404 with the error code that Databricks uses for a warehouse or a statement that does not exist.
   const notFound = (res: ServerResponse, message: string) => send(res, 404, { error_code: 'RESOURCE_DOES_NOT_EXIST', message });
+  // Make the answer to a status request: CANCELED, the stored final answer, or RUNNING.
   const statusOf = (id: string, s: StatementState) =>
     s.cancelled ? { statement_id: id, status: { state: 'CANCELED' } } : (s.done ?? { statement_id: id, status: { state: 'RUNNING' } });
 
+  /**
+   * Answer one request.
+   *
+   * @param text  The body of the request, as text. Empty for a GET request.
+   */
   async function handle(req: IncomingMessage, res: ServerResponse, text: string): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
@@ -118,6 +172,7 @@ export async function startFakeWorkspace(): Promise<FakeWorkspace> {
       return found ? send(res, 200, { id, ...found }) : notFound(res, `Warehouse ${id} does not exist`);
     }
 
+    // Write a cluster as the Clusters API returns it. `startsIn` is a field of the fake only.
     const clusterBody = (id: string, c: FakeCluster) => {
       const { startsIn: _startsIn, ...rest } = c;
       return { cluster_id: id, ...rest };
@@ -209,6 +264,7 @@ export async function startFakeWorkspace(): Promise<FakeWorkspace> {
     return send(res, 404, { message: `The fake workspace has no ${path}` });
   }
 
+  // Read the full body of each request, then answer it. An error in `handle` becomes HTTP 500.
   const server = createServer((req, res) => {
     let text = '';
     req.on('data', (chunk) => (text += chunk));

@@ -6,12 +6,19 @@
  * small difference is "significant", and that tells the user nothing.
  *
  * All functions take counts for the same list of bins or values in dataset
- * A and in dataset B. The compare code makes those lists: for a category,
- * the values of the two datasets, with null as its own value; for a number
- * or a date, 10 bins cut at the deciles of A, plus a bin for null.
+ * A and in dataset B. The compare code makes those lists:
+ *
+ * - For a category: the values of the two datasets, with null as its own value.
+ * - For a number or a date: 10 bins cut at the deciles of A, plus a bin for null.
  */
 
-/** Divide each count by the sum of all counts. A list of zeros stays a list of zeros. */
+/**
+ * Divide each count by the sum of all counts. A list of zeros stays a list of zeros.
+ *
+ * @example
+ * shares([30, 10])   // [0.75, 0.25]
+ * shares([0, 0])     // [0, 0]
+ */
 function shares(counts: number[]): number[] {
   const total = counts.reduce((a, b) => a + b, 0);
   return counts.map((c) => (total === 0 ? 0 : c / total));
@@ -33,6 +40,7 @@ function shares(counts: number[]): number[] {
  * @param a  The counts of dataset A, one for each bin.
  * @param b  The counts of dataset B, for the same bins in the same sequence.
  * @returns The distance. 0 if one dataset has no rows: there is nothing to compare.
+ * @throws If the two lists do not have the same number of bins.
  */
 export function jsDistance(a: number[], b: number[]): number {
   if (a.length !== b.length) throw new Error(`The two lists have ${a.length} and ${b.length} bins.`);
@@ -63,13 +71,18 @@ export const PSI_SMOOTHING = 0.0001;
  * very small share (PSI_SMOOTHING), because the formula has a logarithm of
  * each share.
  *
+ * For each bin, the formula is (share in B - share in A) * ln(share in B / share in A).
+ * The index is the sum of all bins.
+ *
  * @example
  * psi([50, 50], [50, 50])   // 0
  * psi([90, 10], [80, 20])   // 0.081...
+ * psi([100, 0], [50, 50])   // 4.604...: the empty bin of A counts as a share of 0.0001
  *
  * @param a  The counts of dataset A (the "expected" dataset).
  * @param b  The counts of dataset B (the "actual" dataset), for the same bins.
- * @returns The index. 0 if one dataset has no rows.
+ * @returns The index, 0 or more. 0 if one dataset has no rows.
+ * @throws If the two lists do not have the same number of bins.
  */
 export function psi(a: number[], b: number[]): number {
   if (a.length !== b.length) throw new Error(`The two lists have ${a.length} and ${b.length} bins.`);
@@ -85,7 +98,7 @@ export function psi(a: number[], b: number[]): number {
   return index;
 }
 
-/** The drift of one column. */
+/** The drift of one column: the two scores, the null rates, and the bins that gave them. driftOf() makes it. */
 export interface Drift {
   /** The Jensen-Shannon distance, from 0 to 1. The overview sorts by this number. */
   score: number;
@@ -94,7 +107,10 @@ export interface Drift {
   /** The part of the rows that is null in A and in B, from 0 to 1. */
   nullRateA: number;
   nullRateB: number;
-  /** How the bins were made, for the text below the score. */
+  /**
+   * How the compare code made the bins. The card shows it in the text below the score.
+   * 'values': one bin for each value. 'deciles': bins cut at the deciles of A. 'nulls': only "null" and "not null".
+   */
   method: 'values' | 'deciles' | 'nulls';
   /** The names of the bins and their counts in A and B. */
   bins: { label: string; a: number; b: number }[];
@@ -103,6 +119,12 @@ export interface Drift {
 /**
  * Compute the drift from the counts of the bins.
  *
+ * @example
+ * // `channel` in A: 60 web, 35 store, 5 null.  In B: 50 web, 30 store, 20 null.
+ * driftOf('values', [{ label: 'web', a: 60, b: 50 }, { label: 'store', a: 35, b: 30 }, { label: '(null)', a: 5, b: 20 }], 100, 5, 100, 20)
+ * // { score: 0.1985..., psi: 0.2338..., nullRateA: 0.05, nullRateB: 0.2, method: 'values', bins: [the same bins] }
+ *
+ * @param method  How the caller made the bins. The function copies it to the result.
  * @param bins  The bins or values. The null bin must be in the list, if the column has nulls.
  * @param rowsA  All rows of dataset A.
  * @param nullsA  The null rows of dataset A.
@@ -129,6 +151,8 @@ export function driftOf(method: Drift['method'], bins: Drift['bins'], rowsA: num
  *
  * @example
  * uniqueCuts([1, 1, 2, 2, 2, 5, 7, 7, 9])   // [1, 2, 5, 7, 9]
+ *
+ * @returns The cut points, smallest first, without numbers that are not finite.
  */
 export function uniqueCuts(deciles: number[]): number[] {
   return [...new Set(deciles.filter((d) => Number.isFinite(d)))].sort((x, y) => x - y);

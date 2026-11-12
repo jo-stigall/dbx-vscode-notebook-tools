@@ -6,7 +6,19 @@
  * The main test sends each request through the real builders and parsers
  * and expects the same numbers as the demo profiler.
  *
- * Run: npm run test:unit
+ * Source files that the tests cover:
+ *
+ * - src/tableViz/core/parse.ts: the parsers of the rows that Databricks returns
+ * - src/tableViz/core/errors.ts: `toProfilerError`
+ * - src/tableViz/core/limiter.ts: `Limiter`, the queue of the statements
+ * - src/tableViz/core/cache.ts: `CachingProfiler`
+ * - src/tableViz/host/sqlProfiler.ts: `SqlProfiler`
+ *
+ * The fake warehouse does not run SQL. Thus these tests do not show that
+ * Databricks accepts each statement. Only the tests in test/tableViz/live show that.
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: node --test test/tableViz/unit/sqlProfiler.test.ts
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -26,12 +38,40 @@ import { HttpError } from '../../../src/tableViz/host/http.ts';
 import { SqlProfiler, type SqlProfilerDeps, type TableInfo } from '../../../src/tableViz/host/sqlProfiler.ts';
 import { answerStatement, comparable, FakeSqlError } from '../fake/warehouse.ts';
 
+/** Make the three-part name of a demo table. `table('orders_2026')` is the table `demo.shop.orders_2026`. */
 const table = (name: string) => ({ catalog: 'demo', schema: 'shop', name });
+/**
+ * Make the dataset of a demo table.
+ *
+ * @param name  The name of the table. Default: 'orders_2026'.
+ * @param profile  The name of the profile. Default: 'p', a profile that is not the Demo profile. The cache tests use different profiles.
+ */
 const dataset = (name = 'orders_2026', profile = 'p'): Dataset => ({ profile, table: table(name) });
+/**
+ * Make the rows of a statement in the form that a runner returns, for the parser tests.
+ *
+ * @example
+ * result(['bucket', 'n'], [['1', '5'], ['3', '7']])
+ * // { columns: [{ name: 'bucket', typeName: 'STRING' }, { name: 'n', typeName: 'STRING' }], rows: [['1', '5'], ['3', '7']] }
+ */
 const result = (names: string[], rows: (string | null)[][]): QueryResult => ({ columns: names.map((name) => ({ name, typeName: 'STRING' })), rows });
+/** Wait until the next turn of the event loop, so that other statements can start. */
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-/** A runner that answers from the fake warehouse and records what it ran. */
+/**
+ * Make a runner that answers from the fake warehouse and records what it ran.
+ *
+ * Each statement waits one turn of the event loop before it answers. Thus
+ * statements can run at the same time, and the test of the queue can count them.
+ *
+ * @example
+ * const { runner, ran, state } = fakeRunner();
+ * await runner.run(statement);
+ * ran.length    // 1
+ * state.most    // 1: the largest number of statements that ran at the same time
+ *
+ * @returns `runner`; `ran`: the statements in the sequence of their start; `state.running`: how many statements run now; `state.most`: the largest value that `running` had.
+ */
 function fakeRunner() {
   const ran: Statement[] = [];
   const state = { running: 0, most: 0 };
@@ -54,7 +94,16 @@ function fakeRunner() {
   return { runner, ran, state };
 }
 
-/** What Unity Catalog tells about a demo table. */
+/**
+ * Get what Unity Catalog tells about a demo table: the columns, the table type and the format.
+ *
+ * The real extension gets these facts from the REST API, not from a SQL statement.
+ *
+ * @example
+ * tableInfo({ catalog: 'demo', schema: 'shop', name: 'orders_2026' }).columns[0]   // { name: 'order_id', typeText: 'bigint' }
+ *
+ * @throws {HttpError}  With HTTP 404 and the code 'TABLE_DOES_NOT_EXIST', if the table is not a demo table.
+ */
 function tableInfo(name: { catalog: string; schema: string; name: string }): TableInfo {
   const demo = demoTable(name);
   if (!demo) throw new HttpError(`Table '${name.name}' does not exist.`, 404, 'TABLE_DOES_NOT_EXIST');
@@ -66,6 +115,18 @@ function tableInfo(name: { catalog: string; schema: string; name: string }): Tab
   };
 }
 
+/**
+ * Make a SQL profiler that runs its statements on the fake warehouse.
+ *
+ * @example
+ * const { profiler, ran, state } = makeProfiler({}, 2);
+ * await profiler.profile({ type: 'frequency', dataset: dataset(), columns: [{ name: 'region', typeText: 'string' }], top: 5 });
+ * ran.length   // 1: the profiler ran one statement
+ *
+ * @param overrides  Parts of the profiler to replace, for example `getTable` to make the table a view.
+ * @param max  The largest number of statements that run at the same time. Default: 4.
+ * @returns The profiler, and the three values of `fakeRunner()`.
+ */
 function makeProfiler(overrides: Partial<SqlProfilerDeps> = {}, max = 4) {
   const fake = fakeRunner();
   const profiler = new SqlProfiler({
@@ -139,9 +200,15 @@ test('parsers: histogram buckets and frequency rows', () => {
   assert.deepEqual(parseDescribeDetail(result(['format', 'sizeInBytes', 'lastModified', 'partitionColumns'], [['delta', '3771332', '2026-11-01 02:05:00', '["order_date","region"]']])), {
     format: 'delta',
     sizeBytes: 3_771_332,
-    lastModified: new Date('2026-11-01 02:05:00').toISOString(),
+    // A time without a time zone is UTC, on each computer.
+    lastModified: '2026-11-01T02:05:00.000Z',
     partitionColumns: ['order_date', 'region'],
   });
+  // A time with a time zone keeps its meaning.
+  for (const text of ['2026-11-01T02:05:00.000Z', '2026-11-01T04:05:00+02:00', '2026-10-31 21:05:00-05:00']) {
+    assert.equal(parseDescribeDetail(result(['lastModified'], [[text]])).lastModified, '2026-11-01T02:05:00.000Z', text);
+  }
+  assert.equal(parseDescribeDetail(result(['lastModified'], [['not a time']])).lastModified, undefined);
   assert.deepEqual(parseDescribeDetail(result(['format'], [['parquet']])), { format: 'parquet', partitionColumns: [] });
 });
 
@@ -185,7 +252,7 @@ test('SQL profiler: tableDetails reads the columns from Unity Catalog and the fa
   assert.equal(details.columns.length, 18);
   assert.deepEqual([details.tableType, details.format, details.sizeBytes, details.version], ['table', 'delta', 3_771_332, '42']);
   assert.deepEqual(details.partitionColumns, ['order_date']);
-  assert.equal(details.lastModified, new Date('2026-11-01 02:05:00').toISOString());
+  assert.equal(details.lastModified, '2026-11-01T02:05:00.000Z', 'the same time as in the demo table');
   assert.deepEqual(ran.map((s) => s.sql.split(' IDENTIFIER')[0]), ['DESCRIBE DETAIL', 'DESCRIBE HISTORY']);
   assert.equal(details.sql.length, 2);
 
@@ -227,6 +294,7 @@ test('SQL profiler: errors become plain messages with the SQL', async () => {
 
 test('error messages for the common failures', () => {
   const context = { table: table('orders_2026'), sql: ['SELECT 1'], timeoutSeconds: 120, compute: 'The warehouse "Shared"', host: 'https://adb-1.azuredatabricks.net' };
+  // Change an error of a runner into the error that the board shows, and return it as "message | next step".
   const message = (error: QueryError) => {
     const e = toProfilerError(error, context);
     assert.deepEqual(e.sql, ['SELECT 1']);

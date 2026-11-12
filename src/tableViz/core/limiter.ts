@@ -6,18 +6,39 @@
  */
 import { CancelledError, type CancelSignal } from './profiler.ts';
 
+/** One task that waits in the queue of a limiter. */
 interface Waiting {
+  /** Starts the task. The limiter calls it when a place is free. */
   start: () => void;
+  /** Removes the task from the queue and makes its promise fail with a CancelledError. */
   cancel: () => void;
 }
 
+/**
+ * Runs at most `max()` tasks at the same time. A task that finds no free place waits in a queue.
+ *
+ * The tasks start in the sequence in which they came. If `max()` returns
+ * less than 1, the limiter uses 1.
+ *
+ * @example
+ * const limiter = new Limiter(() => 2);
+ * const jobs = statements.map((statement) => limiter.run(() => runner.run(statement)));
+ * // Two statements run. limiter.waiting is statements.length - 2.
+ * const results = await Promise.all(jobs);
+ */
 export class Limiter {
+  /** The number of tasks that run now. */
   private running = 0;
+  /** The tasks that wait, oldest first. */
   private readonly queue: Waiting[] = [];
+  /** Returns the largest number of tasks that can run at the same time. */
   private readonly max: () => number;
 
   /**
-   * @param max  The largest number of tasks that run at the same time. A function, so that a change to the setting applies at once.
+   * Make a limiter with an empty queue.
+   *
+   * @param max  Returns the largest number of tasks that can run at the same time. The limiter calls it each time a task
+   *   comes or ends. Thus a change to the setting applies at once.
    */
   constructor(max: () => number) {
     this.max = max;
@@ -76,6 +97,7 @@ export class Limiter {
     });
   }
 
+  /** Start tasks from the queue until `max()` tasks run or the queue is empty. The limiter calls it each time a task ends. */
   private next(): void {
     while (this.running < Math.max(1, this.max())) {
       const entry = this.queue.shift();

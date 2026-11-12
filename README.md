@@ -125,8 +125,9 @@ More things that you can do:
 | Stop a cell | Click the stop button of the cell. |
 
 If Databricks does not answer a request in 30 seconds, the cell stops with an
-error. The command can continue on the cluster. Click "Reset Execution
-Context" to stop it.
+error, and the extension tells the cluster to cancel the command. If the
+cluster does not get that message, the command can continue. Click "Reset
+Execution Context" to stop it.
 
 A cell keeps its language when you replace its text. If you paste Python into
 an SQL cell, the cluster reports an SQL error. Change the language of the cell
@@ -142,6 +143,8 @@ numbers. The extension never downloads the rows of the table.
 No person has run this part on a real workspace. All its tests use fake
 servers and the demo tables. [docs/table-viz-design.md](docs/table-viz-design.md)
 lists the decisions and the things that a real workspace must confirm.
+[docs/table-viz-how-it-works.md](docs/table-viz-how-it-works.md) explains
+the code.
 
 ![The board of a table: one row for each column, with a small chart](docs/images/overview-dark.jpg)
 
@@ -389,7 +392,8 @@ together.
 - For a Delta table, all queries read the version that the table had when
   you opened the board. The cards then agree while a job writes to the table.
 - Before the first query on a table larger than 100 GB, the board asks. You
-  can use a sample or a filter.
+  can use a sample or a filter. In compare mode, the board asks for each
+  dataset that is larger than 100 GB.
 - The extension runs 4 queries at the same time at most on a warehouse, and
   2 on a cluster. It cancels a query after 5 minutes. The settings change
   these numbers.
@@ -489,5 +493,6 @@ button, which does what a click on a bar does.
 |---|---|
 | [docs/how-it-works.md](docs/how-it-works.md) | How the extension opens, saves and runs a notebook. Where each part is in the code. |
 | [test/README.md](test/README.md) | How to run the tests and the demo. What the fake Databricks server does. |
+| [docs/table-viz-how-it-works.md](docs/table-viz-how-it-works.md) | How "Visualize Table" gets a number from Databricks to a chart. Where each part is in the code. |
 | [docs/table-viz-design.md](docs/table-viz-design.md) | The plan for the "Visualize Table" feature, its decisions, and what is not verified. |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each version. |

@@ -1,10 +1,17 @@
-/** React hooks that the board uses. */
+/**
+ * React hooks that the board uses.
+ *
+ * useResult() is the usual way for a component to get numbers from the host.
+ * It calls acquire() and release() in rpc.ts. The other hooks keep old
+ * numbers on the screen, delay a request, or start a request only when its
+ * row is visible.
+ */
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { Request, ResultOf } from '../core/schema.ts';
 import { acquire, release, useRequests, type Progress, type RequestError } from './rpc.ts';
 
 /**
- * The state of one request: it runs, it has a result, it failed, or it was cancelled.
+ * The state of one request: it runs, it has a result, it failed, or the user cancelled it.
  *
  * While it runs, `progress` tells if the query waits for a free place on
  * Databricks or runs.
@@ -24,17 +31,21 @@ export type Loadable<T, R = Request> =
 /**
  * Send a request and get its state.
  *
- * When the component leaves the page or asks for a different thing, the
- * hook releases the request. A request that no component wants is cancelled.
+ * The hook sends the request when the component comes on the page, when
+ * the request changes, and after a click on "Refresh". When the component
+ * leaves the page or asks for a different thing, the hook releases the
+ * request. If no other component wants that request and it still runs, the
+ * host cancels it.
  *
  * While a new request runs, the hook gives the last result with
  * `stale: true`. Use `state.request` to know which request a result answers.
  *
  * @example
  * const details = useResult({ type: 'tableDetails', dataset });
- * if (details.status === 'done') details.result.columns
+ * if (details.status === 'done') details.result.columns   // [{ name: 'amount', typeText: 'decimal(10,2)' }, ...]
  *
  * @param req  The request. Pass undefined to send nothing; the state is then the last result (stale), or "loading" if there is none.
+ * @returns The state of the request: "loading", "done" with the result, "error" or "cancelled".
  */
 export function useResult<T extends Request>(req: T | undefined): Loadable<ResultOf<T['type']>, T> {
   type State = Loadable<ResultOf<T['type']>, T>;
@@ -74,9 +85,15 @@ export function useResult<T extends Request>(req: T | undefined): Loadable<Resul
 /**
  * Get the result of a state only if it answers the newest request.
  *
- * Use it for a result that the next request is made from. Example: the
+ * Use it for a result from which a card makes its next request. Example: the
  * edges of a histogram come from the statistics of the column. While new
  * statistics load, the card must not ask for a histogram with the old edges.
+ *
+ * @example
+ * const stats = useResult({ type: 'numericStats', dataset, columns: [amount] });
+ * fresh(stats)   // the statistics; undefined while they load, also if `stats` shows the old numbers with `stale: true`
+ *
+ * @returns The result. undefined if the state has no result, or if the result is stale.
  */
 export function fresh<T>(state: Loadable<T, unknown>): T | undefined {
   return state.status === 'done' && !state.stale ? state.result : undefined;
@@ -103,7 +120,15 @@ export function useLast<T>(value: T | undefined): T | undefined {
  * its row comes into view. A table with 500 columns then does not send 500
  * requests at the start.
  *
- * @returns A ref for the element, and true after the element was visible.
+ * "On the screen" includes the 200 pixels above and below the visible part
+ * of the page, so a thumbnail starts to load a moment before its row
+ * arrives.
+ *
+ * @example
+ * const [ref, seen] = useSeen<HTMLDivElement>();
+ * return <div ref={ref}>{seen ? <HistogramThumb ... /> : null}</div>;
+ *
+ * @returns A ref for the element, and true after the element was visible. The value stays true.
  */
 export function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
   const ref = useRef<T>(null);
@@ -132,6 +157,8 @@ export function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
  * @example
  * const [bins, setBins] = useState(30);
  * const settled = useDebounced(bins, 300);   // follows `bins` 300 ms later
+ *
+ * @param ms  How long the input must be stable, in milliseconds.
  */
 export function useDebounced<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);

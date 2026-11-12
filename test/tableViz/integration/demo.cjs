@@ -2,21 +2,48 @@
 /**
  * Test the table visualization feature in a real VS Code window, with the Demo profile.
  *
+ * The steps cover the code of the extension host (src/tableViz/host/index.ts
+ * and board.ts): the commands, the board panel, saved views, and the question
+ * that a saved view asks before it runs a query.
+ *
  * test/e2e.js calls main() after its own steps. Run it with test/run-e2e.sh
- * (or `npm run test:e2e`, which builds the feature first).
+ * (or `npm run test:e2e`, which builds the feature first). `npm run test:vsix`
+ * runs the same steps on the installed copy of the extension.
  *
  * The test opens a board with the command "Visualize Table". The board is a
  * webview. The test cannot look into the webview, but it can read the
  * requests that the webview sent to the extension host and the answers. A
  * request from the webview shows that the page loaded and ran with its
  * Content Security Policy.
+ *
+ * The command `dbxNotebook.tableViz._api` gives the test the objects of the
+ * feature: the session, the open boards and the tree. Users do not see this
+ * command.
  */
 const vscode = require('vscode');
 const assert = require('assert');
 
+/**
+ * Wait for a time.
+ *
+ * @param {number} ms  The time in milliseconds.
+ * @returns {Promise<void>}
+ */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Wait until `fn` returns a true value. Check 10 times each second. */
+/**
+ * Wait until `fn` returns a true value. Check 10 times each second.
+ *
+ * @example
+ * const overview = await until('the overview numbers', () => answer('overview'));
+ *
+ * @template T
+ * @param {string} what  The thing that the test waits for. The error message contains this text.
+ * @param {() => T | Promise<T>} fn  The check.
+ * @param {number} [timeout]  The longest time to wait, in milliseconds. Default: 20000.
+ * @returns {Promise<T>}  The first true value that `fn` returned.
+ * @throws {Error}  "timed out waiting for the overview numbers", if `fn` returns no true value in that time.
+ */
 async function until(what, fn, timeout = 20000) {
   const end = Date.now() + timeout;
   for (;;) {
@@ -35,6 +62,7 @@ async function until(what, fn, timeout = 20000) {
 exports.main = async function main(log) {
   // The first command of the feature loads its code. The SQL driver for clusters stays unloaded.
   const extensionPath = vscode.extensions.getExtension('local.dbx-notebook').extensionPath;
+  // Tell if Node.js loaded a file of the feature, for example 'host.js' for dist/tableViz/host.js.
   const loaded = (file) => Object.keys(require.cache).some((key) => key.startsWith(extensionPath) && key.endsWith(require('path').join('dist', 'tableViz', file)));
   // Use the Demo profile. Without this, the feature uses the connection of the notebooks, which the other steps set.
   const api = await vscode.commands.executeCommand('dbxNotebook.tableViz._api');
@@ -53,6 +81,7 @@ exports.main = async function main(log) {
 
   // 2. The webview asks for the columns and the overview numbers, and the answers are correct.
   const exchanges = board.dispatcher.exchanges;
+  // Find the first request of a type that has a result. undefined while no such request is done.
   const answer = (type) => exchanges.find((x) => x.request.type === type && x.response && x.response.type === 'result');
   const details = (await until('the table details', () => answer('tableDetails'))).response.result;
   assert.strictEqual(details.columns.length, 18);
@@ -93,6 +122,7 @@ exports.main = async function main(log) {
   // 2c. Compare mode: a board with two tables asks for the numbers of A and B and for the drift bins.
   const compared = await vscode.commands.executeCommand('dbxNotebook.tableViz.compareTables', 'demo.shop.orders_2025', 'demo.shop.orders_2026');
   assert.strictEqual(compared.panel.title, 'orders_2025 ↔ orders_2026');
+  // Get the requests of a type on a table that have a result, for example ('overview', 'orders_2025').
   const sent = (type, table) => compared.dispatcher.exchanges.filter((x) => x.request.type === type && x.request.dataset.table.name === table && x.response && x.response.type === 'result');
   await until('the overviews of A and B', () => sent('overview', 'orders_2025').length && sent('overview', 'orders_2026').length);
   // The page computes the drift of each pair. For a number column it asks for the deciles of A, then for the bins of A and B.
@@ -119,10 +149,12 @@ exports.main = async function main(log) {
   assert.ok(!/token|rowCount|"values"/.test(fs.readFileSync(viewFile.fsPath, 'utf8')), 'the file has no token and no data');
 
   // The board saved this file, so the extension knows its content: it opens with no question.
+  // Wait for the board that VS Code opens for the file of a saved view. `board` is the board that saved the file, so skip it.
   const boardOf = async (uri) => until('the board of the view', () => [...api.boards].find((b) => b.viewUri && b.viewUri.fsPath === uri.fsPath && b !== board));
   await vscode.commands.executeCommand('vscode.openWith', viewFile, 'dbxNotebook.tableViz.view');
   const restored = await boardOf(viewFile);
   assert.strictEqual(restored.approved, true);
+  // Find the first request of a type that a board got a result for.
   const done = (b, type) => b.dispatcher.exchanges.find((x) => x.request.type === type && x.response && x.response.type === 'result');
   // The page asks for the numbers of the saved card, with the saved filter chip and the saved number of bins.
   const histogram = await until('the histogram of the saved card', () => restored.dispatcher.exchanges.find((x) => x.request.type === 'histogram' && x.request.edges.bins === 12 && x.response));
@@ -183,6 +215,7 @@ exports.main = async function main(log) {
   log('tableViz: a workspace that is not trusted asks each time, and a wrong file makes no board');
 
   // 3. A name that is not a three-part name opens no board.
+  // Count the webview tabs that are open.
   const tabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview).length;
   const before = tabs();
   assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'orders_2026'), undefined);

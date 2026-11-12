@@ -62,12 +62,26 @@ export function typeFamily(typeText: string): TypeFamily {
   }
 }
 
-/** Tell if a type family holds numbers. */
+/**
+ * Tell if a type family holds numbers.
+ *
+ * @example
+ * isNumeric(typeFamily('decimal(10,2)'))   // true
+ * isNumeric(typeFamily('date'))            // false
+ */
 export const isNumeric = (family: TypeFamily): boolean => family === 'integer' || family === 'decimal' || family === 'float';
 
 /**
  * Tell if almost every row has a different value, as in an ID column.
+ *
  * The rule is: 100 values or more, and at least 95% of them are different.
+ *
+ * @example
+ * nearlyUnique(96_000, 100_000)   // true
+ * nearlyUnique(50, 50)            // false: fewer than 100 values
+ *
+ * @param distinct  The number of different values.
+ * @param nonNull  The number of rows where the column is not null.
  */
 function nearlyUnique(distinct: number, nonNull: number): boolean {
   return nonNull >= 100 && distinct >= 0.95 * nonNull;

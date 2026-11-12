@@ -4,12 +4,24 @@
  * VS Code sets these variables in a real webview. The test page has no
  * VS Code, so this file sets them. The values are those of the default
  * "Dark Modern", "Light Modern" and "Dark High Contrast" themes.
+ *
+ * The parameter `theme` of the page URL selects the theme. shim.ts writes it
+ * to the attribute `data-theme` of the <html> element:
+ *
+ *     index.html?theme=dark    "Dark Modern" (the default)
+ *     index.html?theme=light   "Light Modern"
+ *     index.html?theme=hc      "Dark High Contrast"
+ *
+ * If the board uses a new --vscode-* variable, add it to each of the three themes.
  */
+
+/* The fonts. They are the same in each theme. */
 :root {
   --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --vscode-font-size: 13px;
   --vscode-editor-font-family: Menlo, Monaco, "Courier New", monospace;
 }
+/* "Dark Modern". */
 :root[data-theme="dark"] {
   --vscode-foreground: #cccccc;
   --vscode-descriptionForeground: #9d9d9d;
@@ -28,6 +40,7 @@
   --vscode-inputValidation-errorBorder: #be1100;
   --vscode-inputValidation-errorBackground: #5a1d1d;
 }
+/* "Light Modern". */
 :root[data-theme="light"] {
   --vscode-foreground: #3b3b3b;
   --vscode-descriptionForeground: #616161;
@@ -46,6 +59,7 @@
   --vscode-inputValidation-errorBorder: #be1100;
   --vscode-inputValidation-errorBackground: #f2dede;
 }
+/* "Dark High Contrast". Only this theme sets --vscode-contrastBorder. */
 :root[data-theme="hc"] {
   --vscode-foreground: #ffffff;
   --vscode-descriptionForeground: #ffffff;

@@ -26,17 +26,28 @@ export function makeRng(seed: number): Rng {
   };
 }
 
-/** Get a random number from the normal distribution with mean 0 and standard deviation 1. */
+/**
+ * Get a random number from the normal distribution with mean 0 and standard deviation 1.
+ *
+ * The function takes two numbers from `rng`. The demo data uses it for
+ * `amount`: exp(3.9 + 0.7 * normal(rng)) gives amounts with a median of
+ * about 49.
+ *
+ * @example
+ * normal(makeRng(42))   // -1.2848381576290195, on each run
+ */
 export function normal(rng: Rng): number {
   // Box-Muller. 1 - rng() is never 0, so the logarithm is always finite.
   return Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(2 * Math.PI * rng());
 }
 
 /**
- * Select one value. A value with a larger weight is selected more frequently.
+ * Select one value. The function selects a value with a larger weight more frequently.
  *
  * @example
  * weighted(rng, [['web', 60], ['store', 30], ['phone', 10]])   // 'web' in 60% of the calls
+ *
+ * @param choices  Each entry is a value and its weight. The weights do not need to add up to 100.
  */
 export function weighted<T>(rng: Rng, choices: readonly (readonly [T, number])[]): T {
   let total = 0;

@@ -26,6 +26,7 @@ The server has two requests that Databricks does not have. Tests use them:
 
     POST /mock/config {"context_delay": 3}   # a new session is "Pending" for 3 seconds
     POST /mock/config {"execute_delay": 2}   # the server waits 2 seconds before it accepts a command
+    POST /mock/config {"status_fails": true} # each status request of a command fails with HTTP 500
     GET  /mock/requests                      # the requests until now, for example ["POST /api/1.2/contexts/create"]
     POST /mock/requests                      # forget the requests until now
 """
@@ -52,8 +53,9 @@ ready_at = {}
 
 # "context_delay": the number of seconds that a new session is "Pending".
 # "execute_delay": the number of seconds that the server waits before it accepts a command.
+# "status_fails": true makes each status request of a command fail with HTTP 500.
 # Set them with POST /mock/config.
-config = {"context_delay": 0, "execute_delay": 0}
+config = {"context_delay": 0, "execute_delay": 0, "status_fails": False}
 
 # The requests that the extension sent, for example "POST /api/1.2/commands/execute". Read it with GET /mock/requests.
 requests = []
@@ -186,7 +188,9 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/api/1.2/commands/status":
             cid = q.get("commandId")
             cmd = commands.get(cid)
-            if cmd is None:
+            if config["status_fails"]:
+                self.reply({"message": "mock: status_fails is on"}, 500)
+            elif cmd is None:
                 self.reply({"message": "no such command"}, 404)
             elif cmd["cancelled"]:
                 self.reply({"id": cid, "status": "Cancelled"})

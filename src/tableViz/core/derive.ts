@@ -3,6 +3,10 @@
  *
  * The functions in this file compute nothing from the table. They only
  * arrange numbers that a result already contains.
+ *
+ * The file also has other small functions for the board. They send no
+ * request. They handle the list of open cards, the filter chips, the
+ * question before a large scan, CSV text and file names.
  */
 import { binBounds, formatDay } from './bins.ts';
 import { typeFamily, type TypeFamily } from './kinds.ts';
@@ -14,6 +18,7 @@ export interface FrequencyRow {
   label: string;
   /** What the row is: one value of the column, all null rows, or all values that the list does not show. */
   role: 'value' | 'null' | 'other';
+  /** The number of rows. */
   count: number;
   /** The count as a part of all rows, from 0 to 1. */
   share: number;
@@ -39,8 +44,8 @@ export interface FrequencyRow {
  * // ]
  *
  * @param options.limit  Use only the first `limit` values of the result. The rest goes into "Other".
- * @param options.sortBy  'count': most frequent first. 'label': in the sequence of the values. Numbers sort as numbers.
- * @param options.numeric  true if the values are numbers. Used with `sortBy: 'label'`.
+ * @param options.sortBy  'count' (default): most frequent first. 'label': in the sequence of the values.
+ * @param options.numeric  true if the values are numbers. With `sortBy: 'label'`, '9' then comes before '10'.
  */
 export function frequencyRows(
   result: ResultOf<'frequency'>,
@@ -99,10 +104,28 @@ export function histogramBars(result: ResultOf<'histogram'>, edges: BinEdges): H
   return bars;
 }
 
+/** The number of milliseconds in one day. */
 const DAY_MS = 86_400_000;
+
+/**
+ * Get the day number of a date: the number of days after 1970-01-01.
+ *
+ * The function reads the first 10 characters (YYYY-MM-DD) and ignores a time.
+ *
+ * @example
+ * dayOf('2026-01-01')                 // 20454
+ * dayOf('2026-01-01T23:59:59.000Z')   // 20454
+ */
 const dayOf = (iso: string) => Math.round(Date.parse(iso.slice(0, 10) + 'T00:00:00Z') / DAY_MS);
 
-/** Get the first day of the period after the period that starts on `day`. */
+/**
+ * Get the first day of the period after the period that starts on `day`.
+ *
+ * @example
+ * nextPeriod(20454, 'week')    // 20461: 2026-01-01 plus 7 days
+ * nextPeriod(20454, 'month')   // 20485: 2026-02-01
+ * nextPeriod(20454, 'year')    // 20819: 2027-01-01
+ */
 function nextPeriod(day: number, grain: Grain): number {
   if (grain === 'day') return day + 1;
   if (grain === 'week') return day + 7;
@@ -155,13 +178,16 @@ export function fillPeriods(
  *
  * @example
  * spanDays('2026-01-01', '2026-12-31T23:59:59.000Z')   // 364
+ *
+ * @param min  The first date, as ISO 8601 text. The function ignores a time.
+ * @param max  The last date.
  */
 export function spanDays(min: string, max: string): number {
   return dayOf(max) - dayOf(min);
 }
 
 /**
- * The kinds that a user can select for a column of a type.
+ * List the kinds that a user can select for a column of a type.
  *
  * The first kind in each list is not always the kind that detectKind()
  * selects. The list only tells which kinds make sense for the type.
@@ -206,22 +232,50 @@ export function openCard(cards: Card[], column: string): Card[] {
 }
 
 /**
+ * Tell if the board must ask before it reads all rows of a dataset.
+ *
+ * The board asks when the table is larger than the limit and the dataset has
+ * no filter and no sample. A filter or a sample makes the scan small. The
+ * board does not ask if the user already chose to read all rows.
+ *
+ * @example
+ * const limit = 100 * 1024 ** 3;   // 100 GB
+ * mustAskBeforeScan(500 * 1024 ** 3, orders, limit, false)                          // true
+ * mustAskBeforeScan(500 * 1024 ** 3, { ...orders, sample: { percent: 1 } }, limit, false)   // false
+ * mustAskBeforeScan(undefined, orders, limit, false)                               // false: the size is not known
+ *
+ * @param sizeBytes  The size of the table on disk, from DESCRIBE DETAIL. Undefined for a view, or if DESCRIBE DETAIL failed.
+ * @param limitBytes  The limit, from the setting `largeTableBytes`.
+ * @param confirmed  true if the user clicked "Read all rows" for this dataset.
+ */
+export function mustAskBeforeScan(sizeBytes: number | undefined, dataset: Dataset, limitBytes: number, confirmed: boolean): boolean {
+  return sizeBytes !== undefined && sizeBytes > limitBytes && !dataset.filter && !dataset.sample && !confirmed;
+}
+
+/**
  * Tell if a filter does not name a partition column of the table.
- * A query with such a filter reads all partitions.
+ *
+ * A query with such a filter reads all partitions. The function looks for
+ * the name as a full word, in upper or lower case. It does not read the SQL,
+ * so a name in a string or a comment also counts.
  *
  * @example
  * missesPartition("region = 'EMEA'", ['order_date'])              // true
  * missesPartition("order_date >= '2026-01-01'", ['order_date'])   // false
  * missesPartition("region = 'EMEA'", [])                          // false: the table has no partitions
+ * missesPartition("update_date > x AND date = y", ['date'])       // false: the second "date" is the column
  */
 export function missesPartition(filter: string | undefined, partitionColumns: string[]): boolean {
   if (!filter?.trim() || partitionColumns.length === 0) return false;
   const text = filter.toLowerCase();
+  const part = /[\p{L}\p{N}_]/u;
   return !partitionColumns.some((column) => {
     const name = column.toLowerCase();
-    const at = text.indexOf(name);
-    // The name must be a full word: "date" is not in "update_date".
-    return at >= 0 && !/[\p{L}\p{N}_]/u.test(text[at - 1] ?? ' ') && !/[\p{L}\p{N}_]/u.test(text[at + name.length] ?? ' ');
+    // The name must be a full word: "date" is not in "update_date". Look at each place where the name occurs.
+    for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+      if (!part.test(text[at - 1] ?? ' ') && !part.test(text[at + name.length] ?? ' ')) return true;
+    }
+    return false;
   });
 }
 
@@ -256,6 +310,8 @@ export function sharedPeriods(
  * parseVersion('42')                    // { kind: 'version', n: '42' }
  * parseVersion('2026-11-01 02:05')      // { kind: 'timestamp', ts: '2026-11-01 02:05' }
  * parseVersion('yesterday')             // 'invalid'
+ *
+ * @returns The version. undefined for an empty box. 'invalid' for text that is not a version number or a date and time.
  */
 export function parseVersion(text: string): DatasetVersion | undefined | 'invalid' {
   const value = text.trim();
@@ -267,7 +323,13 @@ export function parseVersion(text: string): DatasetVersion | undefined | 'invali
 /**
  * Make the filter chip for a click on a bar of a value.
  *
+ * @example
+ * chipForValue(region, 'value', 'EMEA')    // { op: 'eq', column: region, value: 'EMEA' }
+ * chipForValue(region, 'null', '(null)')   // { op: 'null', column: region }
+ * chipForValue(region, 'other', 'Other')   // undefined
+ *
  * @param role  What the bar is: one value, the null rows, or "Other".
+ * @param label  The value of the bar, as text.
  * @returns The chip, or undefined for "Other": "all values that the chart does not show" is not one condition.
  */
 export function chipForValue(column: ColumnRef, role: 'value' | 'null' | 'other', label: string): Chip | undefined {
@@ -299,8 +361,10 @@ export function chipForBins(column: ColumnRef, edges: BinEdges, first: number, l
  * Make the filter chip for a click on a period of a date chart, or a drag across some periods.
  *
  * @example
+ * // The user drags from January 2026 to February 2026 on a month chart.
  * chipForPeriods(orderDate, '2026-01-01', '2026-02-01', 'month')
- * // { op: 'range', column: orderDate, measure: 'day', lo: <day of 2026-01-01>, hi: <day of 2026-03-01> }
+ * // { op: 'range', column: orderDate, measure: 'day', lo: 20454, hi: 20513 }
+ * // 20454 is 2026-01-01. 20513 is 2026-03-01: the range ends before the first day of the next period.
  *
  * @param first  The start of the first selected period, as YYYY-MM-DD.
  * @param last  The start of the last selected period.
@@ -318,6 +382,7 @@ export function chipForPeriods(column: ColumnRef, first: string, last: string, g
  * chipLabel({ op: 'null', column: discount })                                  // 'discount_pct is null'
  * chipLabel({ op: 'range', column: amount, lo: 25, hi: 75 })                   // 'amount: 25 to 75'
  * chipLabel({ op: 'range', column: orderDate, measure: 'day', lo: 20454, hi: 20485 })   // 'order_date: 2026-01-01 to 2026-01-31'
+ * chipLabel({ op: 'range', column: orderId, measure: 'length', lo: 8, hi: 12 })          // 'length of order_id: 8 to 12'
  */
 export function chipLabel(chip: Chip): string {
   const name = chip.column.name;
@@ -330,7 +395,12 @@ export function chipLabel(chip: Chip): string {
 }
 
 /**
- * Add a chip to a dataset. A chip that the dataset has is not added a second time.
+ * Add a chip to a dataset. The function does not add a chip that the dataset already has.
+ *
+ * @example
+ * const emea = { op: 'eq', column: region, value: 'EMEA' };
+ * const filtered = addChip(orders, emea)   // { ...orders, chips: [emea] }
+ * addChip(filtered, emea)                  // filtered: no change
  *
  * @returns A new dataset. The same dataset if it has the chip, or has 20 chips.
  */
@@ -341,7 +411,16 @@ export function addChip(dataset: Dataset, chip: Chip): Dataset {
   return { ...dataset, chips: [...chips, chip] };
 }
 
-/** Remove the chip at a position from a dataset. */
+/**
+ * Remove the chip at a position from a dataset.
+ *
+ * @example
+ * removeChip({ ...orders, chips: [emea, largeAmount] }, 0)   // { ...orders, chips: [largeAmount] }
+ * removeChip({ ...orders, chips: [emea] }, 0)                // { ...orders, chips: undefined }
+ *
+ * @param index  The position of the chip in `dataset.chips`, from 0.
+ * @returns A new dataset.
+ */
 export function removeChip(dataset: Dataset, index: number): Dataset {
   const chips = (dataset.chips ?? []).filter((_, i) => i !== index);
   return { ...dataset, chips: chips.length ? chips : undefined };
@@ -350,15 +429,17 @@ export function removeChip(dataset: Dataset, index: number): Dataset {
 /**
  * Write rows of cells as CSV text.
  *
- * A cell that contains a comma, a quotation mark or a line break is between
- * quotation marks, and each quotation mark in it is written two times. A
- * cell that starts with =, +, - or @ gets an apostrophe before it, so that a
- * spreadsheet program does not run it as a formula. A negative number keeps
- * its minus sign.
+ * The function puts quotation marks around a cell that contains a comma, a
+ * quotation mark or a line break. It writes each quotation mark in such a
+ * cell two times. It puts an apostrophe before a cell that starts with
+ * =, +, - or @. Thus a spreadsheet program does not run the cell as a
+ * formula. A negative number keeps its minus sign. Each row ends with "\r\n".
  *
  * @example
  * toCsv([['Value', 'Rows'], ['web, mobile', '60,352'], ['say "hi"', '1']])
  * // 'Value,Rows\r\n"web, mobile","60,352"\r\n"say ""hi""",1\r\n'
+ * toCsv([['=SUM(A1:A9)', '-12.5', '-n/a']])
+ * // "'=SUM(A1:A9),-12.5,'-n/a\r\n"
  */
 export function toCsv(rows: string[][]): string {
   const cell = (text: string) => {
@@ -371,8 +452,12 @@ export function toCsv(rows: string[][]): string {
 /**
  * Make a file name from parts. The name has only letters, digits, "-", "_" and ".".
  *
+ * The function changes each group of other characters to one "_", and joins
+ * the parts with "_".
+ *
  * @example
  * fileName(['orders 2026', 'unit/price'], 'csv')   // 'orders_2026_unit_price.csv'
+ * fileName([], 'png')                              // 'table.png': the name when no part has a usable character
  */
 export function fileName(parts: string[], extension: string): string {
   const base = parts

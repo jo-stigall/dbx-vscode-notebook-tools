@@ -7,7 +7,18 @@
  * is a canvas, which has no text, so the tests check the sentence for screen
  * readers and the table that shows the same numbers.
  *
- * Run: npm run test:unit   (the command converts this file with esbuild first)
+ * Source files that the tests cover:
+ *
+ * - src/tableViz/webview/cards/views.tsx and CardShell.tsx: the cards of one dataset
+ * - src/tableViz/webview/compare/views.tsx and CompareOverview.tsx: the cards and the overview of compare mode
+ * - src/tableViz/webview/options.ts: the chart options of the detailed view
+ * - src/tableViz/webview/Board.tsx: `LargeTableNotice`
+ *
+ * Node.js cannot run a .tsx file. `npm run build` converts this file to
+ * dist/test/cards.test.cjs with esbuild.
+ *
+ * Run all unit tests: npm run test:unit
+ * Run this file only: npm run build && node --test dist/test/cards.test.cjs
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -21,6 +32,8 @@ import type { Card, ColumnInfo, Dataset, OverviewColumn, Request, ResultOf } fro
 import { DemoProfiler } from '../../../src/tableViz/demo/demoProfiler.ts';
 import { CardShell, type CardShellProps } from '../../../src/tableViz/webview/cards/CardShell.tsx';
 import { ComplexView, ContinuousView, DateView, IdentifierView, ValuesView } from '../../../src/tableViz/webview/cards/views.tsx';
+import { LargeTableNotice } from '../../../src/tableViz/webview/Board.tsx';
+import { formatBytes } from '../../../src/tableViz/webview/format.ts';
 import { CompareTable, compareRows, SchemaPanel } from '../../../src/tableViz/webview/compare/CompareOverview.tsx';
 import type { DriftState } from '../../../src/tableViz/webview/compare/useCompare.ts';
 import { ContinuousCompareView, DateCompareView, DriftLine, formatPoints, ValuesCompareView } from '../../../src/tableViz/webview/compare/views.tsx';
@@ -28,12 +41,27 @@ import { barsOption, compareBarsOption } from '../../../src/tableViz/webview/opt
 import { RequestError } from '../../../src/tableViz/webview/rpc.ts';
 import { FALLBACK_THEME as theme } from '../../../src/tableViz/webview/theme.ts';
 
+/** The demo table `demo.shop.orders_2026`: 110,000 rows. In the compare tests it is dataset B. */
 const dataset: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
+/** The demo profiler. It gives the results that the tests draw. */
 const profiler = new DemoProfiler();
+/**
+ * Send one request to the demo profiler. The result has the type that fits the request.
+ *
+ * @example
+ * const stats = await ask({ type: 'numericStats', dataset, columns: [{ name: 'amount', typeText: 'decimal(10,2)' }] });
+ * stats.min   // '2.33'
+ */
 const ask = <T extends Request>(request: T) => profiler.profile(request) as Promise<ResultOf<T['type']>>;
+/** A function that does nothing. The tests give it to each `on...` prop, because static HTML has no events. */
 const noop = () => {};
 
-/** Draw an element and return its text: the HTML without the tags, with one space between two pieces of text. */
+/**
+ * Draw an element and return its text: the HTML without the tags, with one space between two pieces of text.
+ *
+ * @example
+ * textOf(<table><tbody><tr><th>Count</th><td>110,000</td></tr></tbody></table>)   // ' Count 110,000 '
+ */
 function textOf(element: ReactElement): string {
   return renderToStaticMarkup(element)
     .replace(/<[^>]+>/g, ' ')
@@ -42,7 +70,15 @@ function textOf(element: ReactElement): string {
     .replace(/\s+/g, ' ');
 }
 
-/** Get the columns and the overview numbers of the demo table. */
+/**
+ * Get the columns and the overview numbers of the demo table.
+ *
+ * @example
+ * const { column, stats, rowCount } = await tableFacts();
+ * column('amount')             // { name: 'amount', typeText: 'decimal(10,2)' }
+ * stats('region').distinct     // 4
+ * rowCount                     // 110000
+ */
 async function tableFacts() {
   const details = await ask({ type: 'tableDetails', dataset });
   const overview = await ask({ type: 'overview', dataset, columns: details.columns.map((c) => ({ name: c.name, typeText: c.typeText })) });
@@ -51,6 +87,15 @@ async function tableFacts() {
   return { column, stats, rowCount: overview.rowCount };
 }
 
+/**
+ * Make the state of a card. With no argument: a small card that is not pinned and shows its chart.
+ *
+ * The components under test do not read `column` of the card, so its value is the placeholder 'x'.
+ *
+ * @example
+ * card({ asTable: true })    // the card shows its chart as a table
+ * card({ expanded: true })   // the card is the detailed view of its column
+ */
 const card = (patch: Partial<Card> = {}): Card => ({ column: 'x', pinned: false, ...patch });
 
 test('continuous card: statistics, histogram sentence and histogram table', async () => {
@@ -170,6 +215,33 @@ test('identifier card: distinct count, repeated values and value lengths', async
     <IdentifierView column={column('order_id')} rowCount={rowCount} stats={stats('order_id')} approximate={false} frequency={unique} lengths={undefined} lengthEdges={undefined} card={card()} theme={theme} />
   );
   assert.ok(uniqueText.includes('Percent unique 100%') && uniqueText.includes('No value occurs more than one time.'), uniqueText);
+});
+
+test('identifier card: lengths outside the edges have their own rows, and no filter button', async () => {
+  const { column, stats, rowCount } = await tableFacts();
+  const ref = { name: 'customer_id', typeText: 'string' };
+  const frequency = await ask({ type: 'frequency', dataset, columns: [ref], top: 20 });
+  // All values have 6 characters. With a sample, the histogram can read rows that the statistics did not read.
+  const lengthEdges = makeEdges(6, 7, 1);
+  const lengths = { ...(await ask({ type: 'histogram', dataset, columns: [ref], edges: lengthEdges, measure: 'length' })), below: 5, above: 7 };
+  const props = { column: column('customer_id'), rowCount, stats: stats('customer_id'), approximate: false, frequency, lengths, lengthEdges, theme, onFilter: noop };
+
+  const text = textOf(<IdentifierView {...props} card={card({ asTable: true })} />);
+  assert.ok(text.includes('Fewer than 6 5'), text);
+  assert.ok(text.includes('7 or more 7'), text);
+  assert.ok(!text.includes('NaN'), text);
+  const html = renderToStaticMarkup(<IdentifierView {...props} card={card({ asTable: true })} />);
+  assert.ok(html.includes('aria-label="Filter the dataset to 6"'), 'the bin has a filter button');
+  assert.ok(!html.includes('aria-label="Filter the dataset to Fewer than 6"') && !html.includes('aria-label="Filter the dataset to 7 or more"'), 'the bars outside the edges have none');
+  assert.ok(!renderToStaticMarkup(<IdentifierView {...props} card={card()} />).includes('NaN'), 'the chart labels have no NaN');
+});
+
+test('large table: the question names the dataset in compare mode', () => {
+  const size = 500 * 1024 ** 3;
+  const single = textOf(<LargeTableNotice sizeBytes={size} onSample={noop} onReadAll={noop} />);
+  assert.ok(single.includes(`This table is ${formatBytes(size)}.`), single);
+  const b = textOf(<LargeTableNotice label="B" sizeBytes={size} onSample={noop} onReadAll={noop} />);
+  assert.ok(b.includes(`Dataset B is ${formatBytes(size)}.`) && b.includes('Use a 1% sample') && b.includes('Read all rows'), b);
 });
 
 test('date card: counts for each period, first and last date, empty periods', async () => {
@@ -325,10 +397,24 @@ test('card frame: the detailed view, and old numbers while new numbers load', as
 
 // ---- Compare mode ----
 
+/** Dataset A of the compare tests: `demo.shop.orders_2025`, 100,000 rows. Dataset B is `dataset`. */
 const datasetA: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2025' } };
+/** Send one request to the demo profiler. The compare functions take a function of this shape. */
 const askDemo: Ask = (request) => profiler.profile(request) as never;
 
-/** Get the columns, the overview numbers and the drift of each pair of the two demo tables. A is 2025, B is 2026. */
+/**
+ * Get the columns, the overview numbers and the drift of each pair of the two demo tables. A is 2025, B is 2026.
+ *
+ * The function does what the board does in compare mode, without React.
+ *
+ * @example
+ * const { schema, a, b, drifts } = await comparison();
+ * schema.pairs.length      // 17
+ * a.rowCount               // 100000
+ * drifts.get('store_id')   // { status: 'skip' }: the types differ, so the board does not compare the column
+ *
+ * @returns `schema`: the matched pairs of columns. `a` and `b`: the overview numbers in the form that `CompareTable` reads. `drifts`: the drift of each pair, with the name of the column in A as the key.
+ */
 async function comparison() {
   const [detailsA, detailsB] = await Promise.all([ask({ type: 'tableDetails', dataset: datasetA }), ask({ type: 'tableDetails', dataset })]);
   const refs = (columns: ColumnInfo[]) => columns.map((c) => ({ name: c.name, typeText: c.typeText }));
@@ -372,6 +458,13 @@ test('compare: the overview sorted by drift has the changed columns first', asyn
   assert.ok(text.includes('Column Type Null A Null B Distinct A Distinct B Mean A Mean B Drift'), text);
   assert.ok(text.includes('discount_pct double 5.1% 34.9% 501 501 25.0209 25.0389 0.33'), text);
   assert.ok(text.includes('channel string 0% 0% 3 4 — — 0.25'), text);
+
+  // While the numbers of B load, each cell of B shows "…". The Mean cell of a number column must not show "—".
+  const loadingB = { ...b, rowCount: undefined, stats: new Map<string, OverviewColumn>() };
+  const loadingRows = compareRows(schema, a, loadingB, new Map(), '', 'table');
+  const loading = textOf(<CompareTable rows={loadingRows} a={a} b={loadingB} open={new Set()} onOpen={noop} />);
+  assert.ok(loading.includes('discount_pct double 5.1% … 501 … 25.0209 … …'), loading);
+  assert.ok(loading.includes('channel string 0% … 3 … — … …'), loading);
   assert.ok(text.includes('store_id int → string') && text.includes('Not compared'), text);
 });
 
@@ -415,6 +508,7 @@ test('compare card of a category: the values of A and B, and a value that one da
   assert.ok(text.includes('web 59,630 59.6% 60,352 54.9% -4.8 pp'), text);
   assert.ok(text.includes('marketplace only in B 0 0% 13,283 12.1% +12.1 pp'), text);
   // Sorted by the size of the difference, the new value comes first.
+  // In a compare card, `sortBy: 'label'` selects this sort. The value 'label' has a different meaning in a card of one dataset.
   const bySize = textOf(<ValuesCompareView name="channel" a={a} b={b} topValues={20} card={card({ sortBy: 'label' })} theme={theme} onChange={noop} />);
   assert.ok(bySize.indexOf('marketplace') < bySize.indexOf('store'), bySize);
 });

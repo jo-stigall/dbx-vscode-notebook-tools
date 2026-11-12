@@ -10,15 +10,22 @@
  *
  * The chart is plain SVG. A screen reader gets a sentence that tells the
  * same facts.
+ *
+ * A thumbnail sends its request only after its row was on the screen. See
+ * useSeen() in hooks.ts.
  */
 import { binBounds, chooseGrain, makeEdges } from '../core/bins.ts';
 import type { ColumnInfo, ColumnKind, Dataset, OverviewColumn } from '../core/schema.ts';
 import { formatCount, formatNumber, formatValue } from './format.ts';
 import { useResult, useSeen, type Loadable } from './hooks.ts';
 
+/** The width of a thumbnail, in pixels. */
 const WIDTH = 132;
+/** The height of a thumbnail, in pixels. */
 const HEIGHT = 28;
+/** The number of bins in the thumbnail of a continuous column. */
 const HISTOGRAM_BINS = 20;
+/** The number of values in the thumbnail of a category column: the 8 most frequent values. */
 const TOP_VALUES = 8;
 
 /** One bar of a thumbnail: its height comes from `count`, and `label` is the text that shows when you point at it. */
@@ -27,7 +34,16 @@ interface Bar {
   label: string;
 }
 
-/** Draw bars of equal width. The tallest bar uses the full height. */
+/**
+ * Draw bars of equal width. The tallest bar uses the full height.
+ *
+ * @example
+ * <Bars bars={[{ count: 60352, label: 'web: 60,352 rows' }, { count: 30176, label: 'store: 30,176 rows' }]} summary="Top values of channel." />
+ * // two bars, each 15 pixels wide: the first is 28 pixels high, the second is 14 pixels high
+ *
+ * @param summary  One sentence that tells a screen reader what the chart shows.
+ * @param stale  true: the bars are the answer to an older request. The chart shows them dimmed.
+ */
 function Bars({ bars, summary, stale }: { bars: Bar[]; summary: string; stale?: boolean }) {
   const max = Math.max(1, ...bars.map((b) => b.count));
   // A chart with few bars does not use the full width: a bar is 16 pixels wide at most.
@@ -48,7 +64,17 @@ function Bars({ bars, summary, stale }: { bars: Bar[]; summary: string; stale?: 
   );
 }
 
-/** Show the state of a request that has no result. Returns undefined if the request is done. */
+/**
+ * Show the state of a request that has no result.
+ *
+ * | State     | What the user sees                                              |
+ * |-----------|-----------------------------------------------------------------|
+ * | loading   | A grey line that moves.                                         |
+ * | cancelled | "Cancelled"                                                     |
+ * | error     | "No chart". The message of the error shows when you point at it. |
+ *
+ * @returns undefined if the request is done.
+ */
 function pendingMark(state: Loadable<unknown, unknown>) {
   if (state.status === 'loading') return <span className="thumb-wait" aria-label="Loading" />;
   if (state.status === 'cancelled') return <span className="thumb-none">Cancelled</span>;
@@ -62,6 +88,15 @@ function pendingMark(state: Loadable<unknown, unknown>) {
   return undefined;
 }
 
+/**
+ * The thumbnail of a continuous column: a histogram with 20 bins from the smallest to the largest value.
+ *
+ * The component sends one "histogram" request. The text that shows when
+ * you point at a bar gives the range and the count of its bin, for example
+ * "0 to 250: 60,352 rows".
+ *
+ * @param stats  The overview numbers of the column. The bins come from its `min` and `max`.
+ */
 function HistogramThumb({ dataset, column, stats }: { dataset: Dataset; column: ColumnInfo; stats: OverviewColumn }) {
   const edges = makeEdges(Number(stats.min), Number(stats.max), HISTOGRAM_BINS);
   const state = useResult({ type: 'histogram', dataset, columns: [{ name: column.name, typeText: column.typeText }], edges });
@@ -76,6 +111,16 @@ function HistogramThumb({ dataset, column, stats }: { dataset: Dataset; column: 
   return <Bars bars={bars} summary={summary} stale={state.stale} />;
 }
 
+/**
+ * The thumbnail of a date column: one bar for each period that has rows.
+ *
+ * The component sends one "dateCounts" request. chooseGrain() in
+ * core/bins.ts selects the period (day, week, month or year) from the first
+ * and the last date of the column. The text that shows when you point at a
+ * bar is, for example, "month of 2026-03-01: 9,120 rows".
+ *
+ * @param stats  The overview numbers of the column. `min` is its first date and `max` is its last date.
+ */
 function DateThumb({ dataset, column, stats }: { dataset: Dataset; column: ColumnInfo; stats: OverviewColumn }) {
   const grain = chooseGrain(stats.min as string, stats.max as string);
   const state = useResult({ type: 'dateCounts', dataset, columns: [{ name: column.name, typeText: column.typeText }], grain });
@@ -86,6 +131,15 @@ function DateThumb({ dataset, column, stats }: { dataset: Dataset; column: Colum
   return <Bars bars={bars} summary={summary} stale={state.stale} />;
 }
 
+/**
+ * The thumbnail of a category column or a discrete column: one bar for each value.
+ *
+ * The component sends one "frequency" request. A category shows its 8 most
+ * frequent values, most frequent first. A discrete number shows all its
+ * values (50 at most), smallest value first.
+ *
+ * @param kind  'category' or 'discrete'.
+ */
 function ValuesThumb({ dataset, column, kind }: { dataset: Dataset; column: ColumnInfo; kind: ColumnKind }) {
   // A discrete number has 50 values at most, and the chart shows all of them in the sequence of the values.
   const top = kind === 'discrete' ? 50 : TOP_VALUES;
@@ -103,6 +157,15 @@ function ValuesThumb({ dataset, column, kind }: { dataset: Dataset; column: Colu
 
 /**
  * The thumbnail of one column.
+ *
+ * The component selects the chart from the kind of the column. See the
+ * table at the top of this file. It shows text and sends no request for a
+ * column that has no chart: "No chart for this type", "Almost all values
+ * are different" or "All rows are null". It shows a grey line while the
+ * overview loads, and until the row was on the screen.
+ *
+ * @example
+ * <Thumbnail dataset={dataset} column={{ name: 'amount', typeText: 'decimal(10,2)' }} stats={overview.stats.get('amount')} kind="continuous" />
  *
  * @param stats  The overview numbers of the column. undefined while the overview loads.
  * @param kind  The kind of the column. undefined while the overview loads.

@@ -1,13 +1,21 @@
 /**
  * The frame of a detail card: the name of the column, the buttons, and the SQL.
  *
- * Each kind of card puts its chart and its tables inside this frame.
+ * Each kind of card puts its chart and its tables inside this frame. The
+ * cards of one table (ColumnCard.tsx) and the cards of compare mode
+ * (compare/CompareCard.tsx) use the same frame.
  */
 import { useRef, type ReactNode } from 'react';
 import type { Card, ColumnInfo, ColumnKind } from '../../core/schema.ts';
 import { copyPng, exportSvg, exportTables, openSql, savePng } from '../export.ts';
 import type { RequestError } from '../rpc.ts';
 
+/**
+ * The name of each kind of column on the page: in the "Kind" column of the overview and in the kind list of a card.
+ *
+ * @example
+ * KIND_LABELS.continuous   // 'Number'
+ */
 export const KIND_LABELS: Record<ColumnKind, string> = {
   continuous: 'Number',
   discrete: 'Discrete number',
@@ -17,7 +25,15 @@ export const KIND_LABELS: Record<ColumnKind, string> = {
   complex: 'Complex',
 };
 
-/** A button that shows an icon. `label` is the text for the tooltip and for a screen reader. */
+/**
+ * A button that shows an icon. `label` is the text for the tooltip and for a screen reader.
+ *
+ * @example
+ * <IconButton icon="close" label="Close the card" onClick={onClose} />
+ *
+ * @param icon  The name of a VS Code codicon without "codicon-". Example: 'pin'.
+ * @param pressed  For a button that is on or off: true shows a border around the button.
+ */
 function IconButton(props: { icon: string; label: string; pressed?: boolean; onClick: () => void }) {
   return (
     <button type="button" className="icon-button" title={props.label} aria-label={props.label} aria-pressed={props.pressed} onClick={props.onClick}>
@@ -26,7 +42,15 @@ function IconButton(props: { icon: string; label: string; pressed?: boolean; onC
   );
 }
 
-/** Show an error from the host: the plain message, the next step, and the details on request. */
+/**
+ * Show an error from the host: the plain message, the next step, and the details on request.
+ *
+ * A click on "Details" shows the error text from Databricks and the SQL of
+ * the request that failed.
+ *
+ * @example
+ * <ErrorPanel error={new RequestError('The table does not exist.', { nextStep: 'Check the name of the table.' })} />
+ */
 export function ErrorPanel({ error }: { error: RequestError }) {
   return (
     <div className="error" role="alert">
@@ -42,18 +66,21 @@ export function ErrorPanel({ error }: { error: RequestError }) {
   );
 }
 
+/** The properties of the `CardShell` component. */
 export interface CardShellProps {
+  /** The header shows the name and the type of this column. */
   column: ColumnInfo;
-  /** The settings of the card. */
+  /** The settings of the card: pinned, detailed view, chart or table, SQL shown. */
   card: Card;
   /** The kind that the card shows now. */
   kind: ColumnKind;
-  /** The kind that the feature selected for the column. */
+  /** The kind that the feature selected for the column. The kind list marks it with "(detected)". */
   detected: ColumnKind;
-  /** The kinds that the user can select. */
+  /** The kinds that the user can select. With 0 or 1 kinds, the header has no kind list. */
   kinds: ColumnKind[];
-  /** Change settings of the card. */
+  /** The user changed settings of the card. Example: a click on the pin calls `onChange({ pinned: true, expanded: false })`. */
   onChange: (patch: Partial<Card>) => void;
+  /** The user clicked "Close the card". */
   onClose: () => void;
   /** The SQL statements behind the numbers on the card. */
   sql: string[];
@@ -65,27 +92,36 @@ export interface CardShellProps {
   loading: boolean;
   /** 'queued': the query of the card waits for a free place on Databricks. */
   progress?: 'queued' | 'running';
-  /** true if a request of the card was cancelled. */
+  /** true if the user cancelled a request of the card. The card then tells the user to click "Refresh". */
   cancelled?: boolean;
   /** Set if the dataset is a sample: the percent of the rows that the queries read. */
   samplePercent?: number;
   /** true if the card shows the numbers of an older request while a newer request runs. The card then shows them dimmed. */
   stale?: boolean;
+  /** The error of a request of the card. The card shows it above its content. */
   error?: RequestError;
+  /** The content of the card: its controls, its chart and its tables. */
   children?: ReactNode;
 }
 
 /** One number in the row of large numbers at the top of a detailed view. */
 export interface Tile {
+  /** The small text above the number. Example: 'Mean'. */
   label: string;
+  /** The number, as text. Example: '62.48'. */
   value: ReactNode;
   /** A second, smaller line. Example: the percent that belongs to a count. */
   note?: string;
 }
 
 /**
- * The row of large numbers at the top of a detailed view: the facts that a
- * person looks for first, such as the count, the nulls and the mean.
+ * The row of large numbers at the top of a detailed view.
+ *
+ * The tiles show the facts that a person looks for first, such as the
+ * count, the nulls and the mean.
+ *
+ * @example
+ * <StatTiles tiles={[{ label: 'Count', value: '109,500' }, { label: 'Nulls', value: '500', note: '0.5%' }]} />
  */
 export function StatTiles({ tiles }: { tiles: Tile[] }) {
   return (
@@ -103,6 +139,36 @@ export function StatTiles({ tiles }: { tiles: Tile[] }) {
   );
 }
 
+/**
+ * The frame of one detail card.
+ *
+ * The user sees the name and the type of the column, a row of buttons, the
+ * content of the card, and below it the note about estimates and the SQL.
+ *
+ * What the buttons do. Each one calls `onChange` with the new setting,
+ * except "Save or copy" and "Close":
+ *
+ * | Control                 | Effect                                                              |
+ * |-------------------------|---------------------------------------------------------------------|
+ * | Kind list               | Shows the column as a different kind, for example a number as a category. |
+ * | Table / chart           | Shows the numbers of the chart as a table, or the chart again.      |
+ * | Save or copy            | Opens a menu: save or copy the chart, the tables or the SQL. See export.ts. |
+ * | Show SQL                | Shows or hides the SQL statements behind the numbers.               |
+ * | Detailed view           | Changes between the detailed view and a small card.                 |
+ * | Pin                     | Keeps the card on the board when the user opens a different column. A pinned card becomes small. |
+ * | Close                   | Calls `onClose`.                                                    |
+ * | Compute exactly         | Shows only below a card that has an estimate. Asks for exact numbers. |
+ *
+ * While a request runs, the card shows a thin line that moves along its top
+ * edge. A card with no numbers yet shows a grey block with "Loading…". A
+ * card with old numbers shows them dimmed.
+ *
+ * @example
+ * <CardShell column={column} card={card} kind="continuous" detected="continuous" kinds={['continuous', 'category']}
+ *   onChange={setCard('amount')} onClose={closeCard('amount')} sql={stats.result.sql} approximate={false} hasChart loading={false}>
+ *   <ContinuousView ... />
+ * </CardShell>
+ */
 export function CardShell(props: CardShellProps) {
   const { column, card, kind, onChange } = props;
   const section = useRef<HTMLElement>(null);

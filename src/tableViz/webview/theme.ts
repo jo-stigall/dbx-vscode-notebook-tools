@@ -8,15 +8,25 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 
+/**
+ * The colors and the font that a chart uses. Each color is CSS text, for example '#3794ff'.
+ *
+ * options.ts puts these values in the settings of a chart.
+ */
 export interface Theme {
+  /** The color of normal text: the labels on the bars and the text of the tooltip. From `--vscode-foreground`. */
   foreground: string;
+  /** The color of less important text: the labels and the titles of the axes. From `--vscode-descriptionForeground`. */
   muted: string;
+  /** The color of the lines of the axes and of the grid. From `--vscode-contrastBorder` in a high contrast theme, or `--vscode-panel-border`. */
   border: string;
+  /** The color behind the tooltip: the background of the editor. From `--vscode-editor-background`. */
   background: string;
-  /** The color of dataset A. */
+  /** The color of dataset A. From `--vscode-charts-blue`. */
   a: string;
-  /** The color of dataset B. */
+  /** The color of dataset B. From `--vscode-charts-orange`. */
   b: string;
+  /** The font family of the text in a chart. From `--vscode-font-family`. */
   font: string;
 }
 
@@ -31,6 +41,15 @@ export const FALLBACK_THEME: Theme = {
   font: 'sans-serif',
 };
 
+/**
+ * Read the values of the --vscode-* variables from the `<body>` element.
+ *
+ * If a variable has no value, the function uses the color of FALLBACK_THEME.
+ * If there is no page, it returns FALLBACK_THEME.
+ *
+ * @example
+ * readTheme().a   // the value of --vscode-charts-blue, for example '#3794ff'
+ */
 function readTheme(): Theme {
   if (typeof document === 'undefined') return FALLBACK_THEME;
   const style = getComputedStyle(document.body);
@@ -46,7 +65,13 @@ function readTheme(): Theme {
   };
 }
 
-/** Get the colors of the theme. The component draws again when the user changes the theme. */
+/**
+ * Get the colors of the theme. The component draws again when the user changes the theme.
+ *
+ * @example
+ * const theme = useTheme();
+ * const option = barsOption(theme, { labels, counts, tips });   // the bars have the color `theme.a`
+ */
 export function useTheme(): Theme {
   const [version, setVersion] = useState(0);
   useEffect(() => {

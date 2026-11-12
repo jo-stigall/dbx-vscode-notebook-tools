@@ -1,3 +1,11 @@
+// The TypeScript settings for the tests of "Visualize Table", the fake servers and the test page.
+//
+// `npm run typecheck` checks these files with: tsc -p test/tableViz/tsconfig.json
+// The check writes no files ("noEmit" in tsconfig.base.json). Node.js and esbuild run the tests.
+//
+// "lib" has "dom" and "types" has the React types, because webview/cards.test.tsx and
+// the files in harness/ use the code of the webview. The folder integration/ is not in
+// "include": its files are plain JavaScript (.cjs).
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {

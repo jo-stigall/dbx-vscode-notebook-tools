@@ -30,9 +30,19 @@ import type { ColumnInfo, Request, RequestOf, Result, ResultOf, TableName } from
 import { buildStatements, renderStatement, type BuildOptions, type Statement } from '../core/sql.ts';
 import { HttpError } from './http.ts';
 
-/** What the Unity Catalog REST API tells about a table. */
+/**
+ * What the Unity Catalog REST API tells about a table.
+ *
+ * @example
+ * // {
+ * //   columns: [{ name: 'order_date', typeText: 'date', partition: true }, { name: 'amount', typeText: 'decimal(10,2)' }],
+ * //   tableType: 'table', format: 'delta', updatedAt: '2026-01-01T00:00:00.000Z',
+ * // }
+ */
 export interface TableInfo {
+  /** The columns, in the sequence of the table. */
   columns: ColumnInfo[];
+  /** 'view' for a view, a materialized view and a metric view. */
   tableType: 'table' | 'view';
   /** The storage format, in lower case. Example: 'delta'. */
   format?: string;
@@ -40,24 +50,42 @@ export interface TableInfo {
   updatedAt?: string;
 }
 
+/** What a SqlProfiler needs from the code that makes it. In the extension, the session gives these values. */
 export interface SqlProfilerDeps {
+  /** Runs the statements: the runner for a SQL warehouse or the runner for a cluster. */
   runner: QueryRunner;
   /** Reads the columns and the type of a table from Unity Catalog. Throws an HttpError if the table does not exist. */
   getTable: (table: TableName, signal?: CancelSignal) => Promise<TableInfo>;
   /** Limits the number of statements that run at the same time. */
   limiter: Limiter;
-  /** The facts that an error message needs. */
+  /**
+   * Returns the facts that an error message needs: the time limit, the compute and the workspace URL.
+   *
+   * @example
+   * // { timeoutSeconds: 300, compute: 'The warehouse "Starter Warehouse"', host: 'https://adb-123.azuredatabricks.net' }
+   */
   describe: () => Pick<ErrorContext, 'timeoutSeconds' | 'compute' | 'host'>;
   /**
    * Runs before each statement. The host uses it to ask the user before a
-   * stopped warehouse starts. It throws a ProfilerError if the statement
-   * must not run.
+   * stopped warehouse or cluster starts. It throws a ProfilerError if the
+   * statement must not run.
    */
   beforeQuery?: (signal?: CancelSignal) => Promise<void>;
   /** How statements name tables and columns. See BuildOptions. */
   names?: BuildOptions['names'];
 }
 
+/**
+ * The Profiler that runs SQL on Databricks.
+ *
+ * @example
+ * const profiler = new SqlProfiler({
+ *   runner,                                   // a StatementExecutionRunner or a ClusterRunner
+ *   getTable: (table) => workspace.getTable(table),
+ *   limiter: new Limiter(() => 4),
+ *   describe: () => ({ timeoutSeconds: 300, compute: 'The warehouse "Starter Warehouse"', host: 'https://adb-123.azuredatabricks.net' }),
+ * });
+ */
 export class SqlProfiler implements Profiler {
   private readonly deps: SqlProfilerDeps;
 
@@ -65,6 +93,27 @@ export class SqlProfiler implements Profiler {
     this.deps = deps;
   }
 
+  /**
+   * Answer one request with one statement on Databricks. "tableDetails" is different: see tableDetails().
+   *
+   * `approximate` in the result is true for "quantiles", and for "overview"
+   * and "numericStats" if the request does not have `exact: true`.
+   *
+   * @example
+   * const result = await profiler.profile({
+   *   type: 'histogram',
+   *   dataset: { profile: 'prod', table: { catalog: 'main', schema: 'shop', name: 'orders' } },
+   *   columns: [{ name: 'amount', typeText: 'decimal(10,2)' }],
+   *   edges: { lo: 0, hi: 200, bins: 4 },
+   * });
+   * // {
+   * //   type: 'histogram', counts: [55974, 36907, 10988, 3608], below: 0, above: 2523,
+   * //   sql: ['-- :c0 = ...\nSELECT ...'], approximate: false, asOf: '2026-11-12T09:30:00.000Z',
+   * // }
+   *
+   * @throws {ProfilerError}  If a statement fails. The error has a plain message, a next step and the SQL.
+   * @throws {CancelledError}  If `options.signal` stops the request.
+   */
   async profile(request: Request, options: ProfileOptions = {}): Promise<Result> {
     const statements = buildStatements(request, { names: this.deps.names });
     const context: ErrorContext = { ...this.deps.describe(), table: request.dataset.table, sql: statements.map(renderStatement) };
@@ -99,7 +148,13 @@ export class SqlProfiler implements Profiler {
     }
   }
 
-  /** Run one statement when the limiter has a free place. */
+  /**
+   * Run one statement when the limiter has a free place.
+   *
+   * The function tells `options.onProgress` the state: 'queued' while the
+   * statement waits for a place, then 'running', then 'running' with the ID
+   * of the statement when Databricks accepts it.
+   */
   private run(statement: Statement, options: ProfileOptions): Promise<QueryResult> {
     const { signal, onProgress } = options;
     return this.deps.limiter.run(

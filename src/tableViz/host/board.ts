@@ -16,23 +16,25 @@ import type { BoardDatasets, BoardSettings, BoardState, SavedView, ToHost, ToWeb
 /** The name that VS Code uses for the panels of this feature. package.json uses the same name. */
 export const VIEW_TYPE = 'dbxNotebook.tableViz.board';
 
+/** What a Board needs from the code that makes it. index.ts gives the same object to each board. */
 export interface BoardDeps {
-  /** The folder of the installed extension. */
+  /** The folder of the installed extension. The board loads the page of the webview from its `dist/tableViz` folder. */
   extensionUri: vscode.Uri;
-  /** Returns the profiler for a profile name. */
+  /** Returns the profiler for a profile name. It throws a ProfilerError if the feature cannot use the profile. */
   profilerFor: (profile: string) => Profiler;
   /** Reads the settings of the feature from the VS Code settings. */
   settings: () => BoardSettings;
+  /** The log of the extension. The board writes the type and the time of each request to it, and no value from a result. */
   log: vscode.LogOutputChannel;
-  /** The board wrote a saved view to a file. */
+  /** The board calls this function after it writes a saved view to a file. `text` is the content of the file. */
   onSaved?: (uri: vscode.Uri, text: string) => void;
-  /** The user permitted the queries of a saved view. */
+  /** The board calls this function when the user permits the queries of a saved view. */
   onApproved?: (board: Board) => void;
-  /** The panel of the board closed. */
+  /** The board calls this function when its panel closes. */
   onClosed?: (board: Board) => void;
 }
 
-/** What a board that comes from a `.tableviz.json` file has more than a new board. */
+/** The extra values of a board that comes from a `.tableviz.json` file. A new board has none of them. */
 export interface ViewOptions {
   /** The file of the saved view. "Save View" writes to it. */
   uri: vscode.Uri;
@@ -45,24 +47,41 @@ export interface ViewOptions {
 /** The folder that contains the built webview files. The webview can read no other folder. */
 const distUri = (extensionUri: vscode.Uri) => vscode.Uri.joinPath(extensionUri, 'dist', 'tableViz');
 
-/** The options that each board panel needs. */
+/** The options that each board panel needs: the webview can run scripts, and it can read files only from `dist/tableViz`. */
 export function webviewOptions(extensionUri: vscode.Uri): vscode.WebviewOptions {
   return { enableScripts: true, localResourceRoots: [distUri(extensionUri)] };
 }
 
+/**
+ * One board: a webview panel, and the dispatcher that answers the requests of its webview.
+ *
+ * The board also handles the messages that are not requests: "ready",
+ * "approve", "openSql", "export" and "saveView". When the panel closes, the
+ * board cancels all requests that run.
+ *
+ * @example
+ * const datasets = { a: { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } } };
+ * const panel = vscode.window.createWebviewPanel(VIEW_TYPE, Board.title(datasets), vscode.ViewColumn.Active);
+ * const board = new Board(panel, datasets, deps);
+ */
 export class Board {
   /** true after the webview started and asked for its datasets. */
   ready = false;
+  /** Answers the "request" and "cancel" messages of the webview. Its `exchanges` list the requests, for tests and the log. */
   readonly dispatcher: Dispatcher;
+  /** The webview panel that shows the board. */
   readonly panel: vscode.WebviewPanel;
+  /** The datasets with which the board opened: A and, in compare mode, B. The webview gets them in the "init" message. */
   readonly datasets: BoardDatasets;
-  /** The file of the saved view, if the board came from a file or was saved to one. */
+  /** The file of the saved view, if the board came from a file or if "Save View" wrote the board to one. */
   viewUri: vscode.Uri | undefined;
   /** false while a saved view waits for the permission of the user. No query runs then. */
   approved: boolean;
   private readonly deps: BoardDeps;
 
   /**
+   * Put the page of the feature in a panel and start to answer its messages.
+   *
    * @param panel  A new panel, or a panel that VS Code restored after a window reload.
    * @param datasets  The datasets that the board shows.
    * @param view  Set for a board that comes from a `.tableviz.json` file.
@@ -154,7 +173,12 @@ export class Board {
     await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
   }
 
-  /** Save a chart or the tables of a card to a file that the user selects, or copy them. */
+  /**
+   * Save a chart or the tables of a card to a file that the user selects, or copy them.
+   *
+   * The message has the content: `text` for CSV and SVG, `base64` for a PNG
+   * image. For "copy", the host copies text only.
+   */
   private async exportFile(message: Extract<ToHost, { type: 'export' }>): Promise<void> {
     if (message.action === 'copy') {
       // VS Code can copy text only. The webview copies a PNG image itself.
@@ -204,7 +228,15 @@ export class Board {
     return uri;
   }
 
-  /** The text on the tab of a board. Example: "orders_2026" or "orders_2025 ↔ orders_2026". */
+  /**
+   * Make the text on the tab of a board.
+   *
+   * @example
+   * const a = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2025' } };
+   * const b = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
+   * Board.title({ a })      // 'orders_2025'
+   * Board.title({ a, b })   // 'orders_2025 ↔ orders_2026'
+   */
   static title(datasets: BoardDatasets): string {
     return datasets.b ? `${datasets.a.table.name} ↔ ${datasets.b.table.name}` : datasets.a.table.name;
   }

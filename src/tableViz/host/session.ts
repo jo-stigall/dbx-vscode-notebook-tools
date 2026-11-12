@@ -25,45 +25,112 @@ import { SqlProfiler } from './sqlProfiler.ts';
 import { StatementExecutionRunner } from './statementRunner.ts';
 import { DemoWorkspaceClient, RestWorkspaceClient, type WorkspaceClient } from './workspace.ts';
 
+/** The name of the profile that shows the built-in demo tables. It needs no workspace and no login. */
 export const DEMO_PROFILE = 'Demo';
+/** The name of the profile that uses the connection of the notebooks. src/client.js has the same name. */
 export const WORKSPACE_PROFILE = '@workspace';
+/**
+ * The start of the name of a profile whose token is in the secret store of VS Code. The workspace URL follows.
+ *
+ * @example
+ * // '@token:https://adb-123.azuredatabricks.net'
+ */
 export const TOKEN_PROFILE_PREFIX = '@token:';
 
-/** The part of the Connection class in src/client.js that the feature uses. */
+/**
+ * The part of the Connection class in src/client.js that the feature uses.
+ *
+ * src/client.js has the full description of each function. In each
+ * function, `uri` is a file or folder of the project, and `profile` is a
+ * profile name from the table at the top of this file.
+ */
 export interface HostConnection {
+  /**
+   * Finds the workspace URL and, if a file or a setting has one, the token of a profile.
+   *
+   * @example
+   * conn.resolve(folder, 'prod')
+   * // { host: 'https://adb-456.azuredatabricks.net', token: '', clusterId: '', cliPath: 'databricks' }
+   *
+   * @returns A value is an empty string if the function did not find it.
+   */
   resolve(uri: vscode.Uri | undefined, profile?: string): { host: string; token: string; clusterId: string; cliPath: string };
+  /** Gets the login token of a profile. `fresh: true` asks for a new token, because Databricks refused the last one. */
   getToken(uri: vscode.Uri | undefined, options?: { profile?: string; fresh?: boolean }): Promise<string>;
+  /**
+   * Lists the profiles in `~/.databrickscfg`.
+   *
+   * @example
+   * conn.listProfiles()   // [{ name: 'prod', host: 'https://adb-456.azuredatabricks.net', auth: 'databricks-cli' }]
+   */
   listProfiles(): { name: string; host: string; auth: string }[];
+  /** Keeps a personal access token in the secret store of VS Code. Returns the profile name: '@token:' and the workspace URL. */
   storeToken(host: string, token: string): Promise<string>;
+  /** Lists the workspace URLs that have a token in the secret store. */
   storedHosts(): string[];
 }
 
-/** The compute that runs the queries of a profile: a SQL warehouse or an all-purpose cluster. */
+/**
+ * The compute that runs the queries of a profile: a SQL warehouse or an all-purpose cluster.
+ *
+ * @example
+ * const compute: Compute = { kind: 'warehouse', id: 'abc123def456', name: 'Starter Warehouse' };
+ */
 export interface Compute {
   kind: 'warehouse' | 'cluster';
+  /** The ID of the warehouse or the cluster in Databricks. */
   id: string;
+  /** The name that the status bar and the error messages show. */
   name: string;
 }
 
-/** What VS Code stores: the selected profile, and the compute that the user selected for each profile. */
+/**
+ * What VS Code stores: the selected profile, and the compute that the user selected for each profile.
+ *
+ * @example
+ * // { profile: 'prod', compute: { prod: { kind: 'warehouse', id: 'abc123def456', name: 'Starter Warehouse' } } }
+ */
 interface Stored {
+  /** The name of the selected profile. Not set if the user selected none. */
   profile?: string;
+  /** Profile name -> the compute that the user selected for that profile. */
   compute?: Record<string, Compute>;
 }
 
+/** The name under which VS Code stores the selection (a `Stored` object) for the open workspace. */
 const SELECTION_KEY = 'dbxNotebook.tableViz.selection';
 /** The start of the name under which VS Code stores an HTTP path that the user typed. The cluster ID follows. */
 const HTTP_PATH_KEY = 'dbxNotebook.tableViz.httpPath:';
 /** How long the session waits for a cluster to start, in milliseconds. */
 const CLUSTER_START_MS = 20 * 60_000;
-/** After this time, the session asks Databricks again if the warehouse runs. A warehouse can stop when it is not used. */
+/**
+ * After this time, in milliseconds, the session asks Databricks again if the compute runs.
+ * A warehouse or a cluster can stop when nobody uses it.
+ */
 const STATE_CHECK_MS = 120_000;
 
+/**
+ * Keeps the selected profile and compute, and makes the profiler and the REST clients of each profile.
+ *
+ * The feature has one session. The boards, the tree, the status bar and
+ * the lists of "Select Profile and Compute for Tables" read it.
+ *
+ * @example
+ * const session = new Session(context, conn, log);
+ * session.profile                        // 'Demo', on a computer with no Databricks setup
+ * await session.select('prod', { kind: 'warehouse', id: 'abc123def456', name: 'Starter Warehouse' });
+ * session.profile                        // 'prod'
+ * const profiler = session.profilerFor('prod');   // runs SQL on the warehouse "Starter Warehouse"
+ */
 export class Session {
+  /** The session stores the selection in the `workspaceState` of this context. */
   private readonly context: vscode.ExtensionContext;
+  /** Finds the workspace URL and the token of each profile. */
   private readonly conn: HostConnection;
   private readonly log: vscode.LogOutputChannel;
+  /** The one demo profiler. The Demo profile needs no compute. */
   private readonly demo = new DemoProfiler();
+  /** Profile name -> the profiler of that profile. select() empties the map. */
   private readonly profilers = new Map<string, Profiler>();
   private readonly changed = new vscode.EventEmitter<void>();
   /** Fires when the user selects a different profile or compute, and when the state of the compute changes. */
@@ -81,6 +148,10 @@ export class Session {
    */
   loadDriver: () => DriverModule | Promise<DriverModule> = () => require('./driver.js') as DriverModule;
 
+  /**
+   * @param conn  The Connection of the extension (src/client.js).
+   * @param log  The log of the extension. The session writes the ID, the time and the number of rows of each statement to it.
+   */
   constructor(context: vscode.ExtensionContext, conn: HostConnection, log: vscode.LogOutputChannel) {
     this.context = context;
     this.conn = conn;
@@ -93,11 +164,21 @@ export class Session {
     return vscode.workspace.workspaceFolders?.[0]?.uri;
   }
 
+  /** What VS Code stored for the open workspace. An empty object if the user selected nothing. */
   private get stored(): Stored {
     return this.context.workspaceState.get<Stored>(SELECTION_KEY) ?? {};
   }
 
-  /** Read the settings "dbxNotebook.tableViz.*". */
+  /**
+   * Read the settings "dbxNotebook.tableViz.*" that the host uses.
+   *
+   * A number that is not set, or that is 0 or less, gets its default.
+   *
+   * @example
+   * session.settings()
+   * // With the default settings:
+   * // { warehouseId: '', confirmComputeStart: true, maxConcurrentQueries: 0, queryTimeoutSeconds: 300, largeTableWarningGB: 100 }
+   */
   settings() {
     const config = vscode.workspace.getConfiguration('dbxNotebook.tableViz');
     const positive = (name: string, fallback: number) => {
@@ -125,7 +206,16 @@ export class Session {
     return this.stored.profile ?? (this.conn.resolve(this.folder).host ? WORKSPACE_PROFILE : DEMO_PROFILE);
   }
 
-  /** The compute of a profile: the one that the user selected, or the warehouse in the settings. */
+  /**
+   * The compute of a profile: the one that the user selected, or the warehouse in the settings.
+   *
+   * @example
+   * session.compute('prod')   // { kind: 'warehouse', id: 'abc123def456', name: 'Starter Warehouse' }
+   * session.compute('Demo')   // undefined: the Demo profile needs no compute
+   *
+   * @returns undefined if the user selected no compute and the setting "dbxNotebook.tableViz.warehouseId" is empty.
+   *   For the warehouse in the settings, `name` is the ID, because the session does not know its name.
+   */
   compute(profile: string): Compute | undefined {
     if (profile === DEMO_PROFILE) return undefined;
     const selected = this.stored.compute?.[profile];
@@ -134,7 +224,18 @@ export class Session {
     return warehouseId ? { kind: 'warehouse', id: warehouseId, name: warehouseId } : undefined;
   }
 
-  /** Store the profile and its compute. All profilers and their caches are made again. */
+  /**
+   * Store the selected profile and its compute.
+   *
+   * The session then forgets all profilers and their caches, closes the
+   * connections to clusters, and fires `onDidChange`.
+   *
+   * @example
+   * await session.select('prod', { kind: 'cluster', id: '0101-123456-abcdefgh', name: 'Team cluster' });
+   * await session.select('Demo');
+   *
+   * @param compute  If you omit it, the profile keeps the compute that the user selected before.
+   */
   async select(profile: string, compute?: Compute): Promise<void> {
     const stored = this.stored;
     await this.context.workspaceState.update(SELECTION_KEY, {
@@ -159,13 +260,19 @@ export class Session {
     this.reset();
   }
 
-  /** Store the last state of the compute and tell the status bar. */
+  /** Store the last state of the compute and fire `onDidChange`, so that the status bar shows it. Example: 'RUNNING'. */
   setComputeState(state: string | undefined): void {
     this.computeState = state;
     this.changed.fire();
   }
 
-  /** The workspace URL of a profile. Empty for the Demo profile and for a profile that does not exist. */
+  /**
+   * The workspace URL of a profile. Empty for the Demo profile and for a profile that does not exist.
+   *
+   * @example
+   * session.hostOf('prod')   // 'https://adb-456.azuredatabricks.net'
+   * session.hostOf('Demo')   // ''
+   */
   hostOf(profile: string): string {
     if (profile === DEMO_PROFILE) return '';
     return this.conn.resolve(this.folder, profile).host;
@@ -185,7 +292,16 @@ export class Session {
     return profile;
   }
 
-  /** The REST client of a profile. */
+  /**
+   * Make the function that sends REST requests to the workspace of a profile.
+   *
+   * The function also stores the ID of the workspace, which Databricks
+   * sends in each answer. httpPath() needs the ID for a cluster.
+   *
+   * @example
+   * const http = session.http('prod');
+   * await http('GET', '/api/2.0/sql/warehouses')   // { warehouses: [...] }
+   */
   http(profile: string): Http {
     return createHttp({
       host: () => this.hostOf(profile),
@@ -194,15 +310,24 @@ export class Session {
     });
   }
 
-  /** The client that lists the warehouses, catalogs, schemas and tables of a profile. */
+  /** Make the client that lists the warehouses, clusters, catalogs, schemas and tables of a profile. */
   workspace(profile: string): WorkspaceClient {
     return profile === DEMO_PROFILE ? new DemoWorkspaceClient() : new RestWorkspaceClient(this.http(profile));
   }
 
   /**
-   * The profiler of a profile.
+   * Get the profiler of a profile. The session makes it the first time and keeps it until the next select().
    *
-   * @throws {ProfilerError}  If the profile has no workspace URL or no compute.
+   * The Demo profile gets the demo profiler. Each other profile gets a SQL
+   * profiler with a cache in front of it. The SQL profiler runs its
+   * statements on the selected compute: a StatementExecutionRunner for a
+   * SQL warehouse, a ClusterRunner for a cluster.
+   *
+   * At most 4 statements run at the same time on a warehouse, and 2 on a
+   * cluster. The setting "dbxNotebook.tableViz.maxConcurrentQueries"
+   * changes that number.
+   *
+   * @throws {ProfilerError}  If the profile has no workspace URL or no compute, or if the Node.js in this VS Code is too old for the SQL driver for clusters.
    */
   profilerFor(profile: string): Profiler {
     if (profile === DEMO_PROFILE) return this.demo;
@@ -287,6 +412,8 @@ export class Session {
    * Many statements can start at the same time. They share one check and
    * one question to the user. After a check that passed, the next check
    * runs two minutes later at the earliest.
+   *
+   * @param check  checkWarehouse or checkCluster for the compute of the profile. It throws if the statement must not run.
    */
   private shared(check: () => Promise<void>): (signal?: CancelSignal) => Promise<void> {
     let checkedAt = 0;
@@ -304,12 +431,28 @@ export class Session {
     };
   }
 
-  /** Ask the user before a query starts stopped compute. Returns true if the user permits it, or if the setting turns the question off. */
+  /**
+   * Ask the user before a query starts stopped compute.
+   *
+   * @param message  The first line of the question. Example: 'The warehouse "Starter Warehouse" is stopped.'
+   * @param detail  The text below the first line.
+   * @param button  The text of the button that permits the start. Example: 'Start the Warehouse'.
+   * @returns true if the user permits it, or if the setting "dbxNotebook.tableViz.confirmComputeStart" turns the question off.
+   */
   private async mayStart(message: string, detail: string, button: string): Promise<boolean> {
     if (!this.settings().confirmComputeStart) return true;
     return (await vscode.window.showWarningMessage(message, { modal: true, detail }, button)) === button;
   }
 
+  /**
+   * Make the error for a warehouse or a cluster that does not exist in Databricks any more.
+   *
+   * @example
+   * this.goneError({ kind: 'cluster', id: '0101-123456-abcdefgh', name: 'Team cluster' }).message
+   * // 'The cluster "Team cluster" does not exist now.'
+   *
+   * @param raw  The error text from Databricks, if there is one.
+   */
   private goneError(compute: Compute, raw?: string): ProfilerError {
     return new ProfilerError(`The ${compute.kind} "${compute.name}" does not exist now.`, {
       nextStep: 'Run "Databricks Notebook: Select Profile and Compute for Tables" and select a different one.',
@@ -323,6 +466,8 @@ export class Session {
    * A statement starts a stopped warehouse, and a warehouse that runs costs
    * money. Thus the check asks the user first. The setting
    * "dbxNotebook.tableViz.confirmComputeStart" turns the question off.
+   *
+   * @throws {ProfilerError}  If the warehouse does not exist any more, or if the user does not permit the start.
    */
   private async checkWarehouse(compute: Compute, workspace: WorkspaceClient): Promise<void> {
     let state: string;
@@ -354,6 +499,11 @@ export class Session {
    * 2. If the cluster is stopped, ask the user, then start it and wait until it runs.
    *    A connection to a stopped cluster starts it without a question, so the
    *    check must come before the connection.
+   *
+   * The wait for a cluster that starts ends after 20 minutes. The user can
+   * stop it earlier.
+   *
+   * @throws {ProfilerError}  If the feature cannot use the cluster, if the user does not permit the start, or if the cluster does not start.
    */
   private async checkCluster(compute: Compute, workspace: WorkspaceClient): Promise<void> {
     let cluster;
@@ -423,6 +573,12 @@ export class Session {
    * The path contains the ID of the workspace. The session knows the ID
    * from the answers of the REST API, or from an Azure workspace URL. If it
    * knows neither, it asks the user for the path one time and stores it.
+   *
+   * @example
+   * await this.httpPath('https://adb-1234567890123456.7.azuredatabricks.net', { kind: 'cluster', id: '0101-123456-abcdefgh', name: 'Team cluster' })
+   * // 'sql/protocolv1/o/1234567890123456/0101-123456-abcdefgh'
+   *
+   * @throws {ProfilerError}  If the session does not know the ID of the workspace and the user closes the box.
    */
   private async httpPath(host: string, compute: Compute): Promise<string> {
     const typed = this.context.workspaceState.get<string>(HTTP_PATH_KEY + compute.id);
