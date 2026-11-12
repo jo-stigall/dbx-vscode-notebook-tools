@@ -81,7 +81,7 @@ in `tableViz/unit/` directly. It cannot run the `.tsx` file in
 The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 94
+ℹ pass 112
 ℹ fail 0
 ```
 
@@ -103,6 +103,9 @@ The tests make sure of these things:
 - The SQL profiler gives the same numbers as the demo profiler for each
   request type. A fake warehouse answers its statements from the demo tables.
 - Browsing the catalog sends no SQL statement.
+- The drift maths gives the values that are computed by hand in the test,
+  and a comparison of the two demo tables puts the known differences first.
+- A change of dataset B runs no query for dataset A.
 - The cluster runner gives the same rows as the warehouse runner. It cancels
   a statement on request and after the time limit, and it connects again
   with a new token when the token expired or the session ended. A fake of
@@ -147,6 +150,7 @@ ok   reopening as text sticks
 ok   tableViz: Visualize Table opens a board
 ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
 ok   tableViz: a statistics request gives numbers and the SQL behind them
+ok   tableViz: Compare Tables opens a board that reads A and B
 ok   tableViz: a bad table name opens no board
 ok   tableViz: a missing table shows a plain error
 ok   tableViz: the tree lists catalogs, schemas and tables without SQL
@@ -235,10 +239,12 @@ http://localhost:8791/index.html?theme=dark
 http://localhost:8791/index.html?theme=light&table=demo.shop.orders_2025
 http://localhost:8791/index.html?theme=hc
 http://localhost:8791/index.html?cards=amount,region,order_date&sql=1
+http://localhost:8791/index.html?table=demo.shop.orders_2025&b=demo.shop.orders_2026&cards=amount,channel
 ```
 
 `cards` opens detail cards at the start. `sql=1` shows the SQL of each card.
-`large=1` makes the board ask before it reads all rows.
+`large=1` makes the board ask before it reads all rows. `b` names a second
+table: the board then compares the two tables.
 
 ## Try the extension
 

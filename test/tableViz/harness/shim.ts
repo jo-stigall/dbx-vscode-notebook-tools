@@ -12,6 +12,7 @@
  * `theme` is dark (default), light or hc (high contrast).
  *
  * `cards` opens detail cards at the start. Example: `cards=amount,region`.
+ * `b` names a second table. The board then compares the two tables.
  * `large=1` makes the board ask before it reads all rows of the table.
  * `kind=identifier` sets the kind of the first card, `astable=1` shows its
  * chart as a table, and `sql=1` shows the SQL of each card.
@@ -25,7 +26,9 @@ const params = new URLSearchParams(location.search);
 const table = parseTableName(params.get('table') ?? '') ?? { catalog: 'demo', schema: 'shop', name: 'orders_2026' };
 document.documentElement.dataset.theme = params.get('theme') ?? 'dark';
 
-const datasets: BoardDatasets = { a: { profile: 'Demo', table } };
+// `b=demo.shop.orders_2026` puts a second table on the board: compare mode.
+const tableB = parseTableName(params.get('b') ?? '');
+const datasets: BoardDatasets = { a: { profile: 'Demo', table }, ...(tableB ? { b: { profile: 'Demo', table: tableB } } : {}) };
 const profiler = new DemoProfiler();
 const post = (message: ToWebview) => window.postMessage(message, '*');
 const dispatcher = createDispatcher({

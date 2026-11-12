@@ -457,3 +457,128 @@ table.data {
   white-space: nowrap;
   vertical-align: middle;
 }
+
+/* Compare mode */
+.chip {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0 5px;
+  border-radius: 3px;
+  text-align: center;
+  font-family: var(--vscode-font-family);
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--vscode-editor-background);
+}
+.chip-a {
+  background: var(--tv-a);
+}
+.chip-b {
+  background: var(--tv-b);
+}
+.versus {
+  font-size: 0.75em;
+  font-weight: normal;
+  color: var(--tv-muted);
+}
+.dataset-name {
+  margin: 0 0 4px;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+.dataset-name .link {
+  margin-left: 10px;
+  font-family: var(--vscode-font-family);
+}
+.dataset-b {
+  padding-top: 8px;
+  border-top: 1px solid var(--tv-border);
+}
+.dataset-bar .version {
+  width: 9em;
+}
+.compare-with {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: -6px 0 14px;
+}
+.compare-with input {
+  width: 260px;
+  padding: 3px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--tv-border));
+  border-radius: 2px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: inherit;
+}
+.compare-with input[aria-invalid='true'] {
+  border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+}
+.compare-with button {
+  padding: 3px 10px;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, transparent);
+  border: 1px solid var(--vscode-button-border, var(--tv-border));
+  border-radius: 2px;
+  font: inherit;
+  cursor: pointer;
+}
+.compare-with button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.schema {
+  margin: 0 0 14px;
+  padding: 6px 12px;
+  border: 1px solid var(--tv-border);
+  border-radius: 4px;
+}
+.schema summary {
+  cursor: pointer;
+}
+.schema dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 8px 0 2px;
+}
+.schema dt {
+  color: var(--tv-muted);
+}
+.schema dd {
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+.schema dd label {
+  font-family: var(--vscode-font-family);
+}
+.drift-fill {
+  fill: var(--tv-b);
+}
+.muted {
+  color: var(--tv-muted);
+}
+.drift {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--tv-border);
+}
+.drift p {
+  margin: 2px 0;
+}
+.sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.side {
+  min-width: 0;
+}
+.side-name {
+  margin: 0;
+}
+.data .tag {
+  font-style: normal;
+}

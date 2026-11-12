@@ -85,6 +85,19 @@ exports.main = async function main(log) {
   assert.strictEqual(exchanges.length, count);
   log('tableViz: a statistics request gives numbers and the SQL behind them');
 
+  // 2c. Compare mode: a board with two tables asks for the numbers of A and B and for the drift bins.
+  const compared = await vscode.commands.executeCommand('dbxNotebook.tableViz.compareTables', 'demo.shop.orders_2025', 'demo.shop.orders_2026');
+  assert.strictEqual(compared.panel.title, 'orders_2025 ↔ orders_2026');
+  const sent = (type, table) => compared.dispatcher.exchanges.filter((x) => x.request.type === type && x.request.dataset.table.name === table && x.response && x.response.type === 'result');
+  await until('the overviews of A and B', () => sent('overview', 'orders_2025').length && sent('overview', 'orders_2026').length);
+  // The page computes the drift of each pair. For a number column it asks for the deciles of A, then for the bins of A and B.
+  await until('the drift bins of A and B', () => sent('driftBins', 'orders_2025').length >= 5 && sent('driftBins', 'orders_2026').length >= 5);
+  assert.strictEqual(sent('quantiles', 'orders_2026').length, 0, 'the cut points come from A only');
+  assert.ok(sent('frequency', 'orders_2025').length >= 4 && sent('frequency', 'orders_2026').length >= 4);
+  assert.ok(!compared.dispatcher.exchanges.some((x) => x.response && x.response.type === 'error'), 'no request failed');
+  compared.panel.dispose();
+  log('tableViz: Compare Tables opens a board that reads A and B');
+
   // 3. A name that is not a three-part name opens no board.
   const tabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview).length;
   const before = tabs();

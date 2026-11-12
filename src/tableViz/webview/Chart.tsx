@@ -6,12 +6,12 @@
  * ECharts draws on a canvas, which the Content Security Policy permits.
  */
 import { BarChart } from 'echarts/charts';
-import { AriaComponent, GridComponent, TooltipComponent } from 'echarts/components';
+import { AriaComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import { useEffect, useRef } from 'react';
 
-echarts.use([BarChart, GridComponent, TooltipComponent, AriaComponent, CanvasRenderer]);
+echarts.use([BarChart, GridComponent, TooltipComponent, LegendComponent, AriaComponent, CanvasRenderer]);
 
 /** The settings of a chart, in the format of ECharts. options.ts makes them. */
 export type ChartOption = Parameters<echarts.ECharts['setOption']>[0];

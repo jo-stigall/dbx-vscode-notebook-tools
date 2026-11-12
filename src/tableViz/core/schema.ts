@@ -307,7 +307,7 @@ export const DEFAULT_SETTINGS: BoardSettings = { defaultBins: 30, topValues: 20,
 /** What the webview stores so that a board comes back after a window reload. It contains no data and no token. */
 export const boardStateSchema = z.strictObject({
   datasets: boardDatasetsSchema,
-  ui: z.strictObject({ search: z.string(), sort: z.enum(['table', 'nulls', 'distinct']) }).optional(),
+  ui: z.strictObject({ search: z.string(), sort: z.enum(['table', 'nulls', 'distinct', 'drift']) }).optional(),
   cards: z.array(cardSchema).optional(),
   /** true: the user chose to scan a table that is larger than the size limit. */
   scanLarge: z.boolean().optional(),

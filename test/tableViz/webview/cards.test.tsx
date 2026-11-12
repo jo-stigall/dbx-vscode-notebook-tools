@@ -14,10 +14,16 @@ import { test } from 'node:test';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { chooseGrain, makeEdges } from '../../../src/tableViz/core/bins.ts';
+import { columnDrift, compareKind, comparedFrequency, type Ask } from '../../../src/tableViz/core/compare.ts';
+import type { Drift } from '../../../src/tableViz/core/drift.ts';
+import { matchColumns } from '../../../src/tableViz/core/match.ts';
 import type { Card, ColumnInfo, Dataset, OverviewColumn, Request, ResultOf } from '../../../src/tableViz/core/schema.ts';
 import { DemoProfiler } from '../../../src/tableViz/demo/demoProfiler.ts';
 import { CardShell, type CardShellProps } from '../../../src/tableViz/webview/cards/CardShell.tsx';
 import { ComplexView, ContinuousView, DateView, IdentifierView, ValuesView } from '../../../src/tableViz/webview/cards/views.tsx';
+import { CompareTable, compareRows, SchemaPanel } from '../../../src/tableViz/webview/compare/CompareOverview.tsx';
+import type { DriftState } from '../../../src/tableViz/webview/compare/useCompare.ts';
+import { ContinuousCompareView, DateCompareView, DriftLine, formatPoints, ValuesCompareView } from '../../../src/tableViz/webview/compare/views.tsx';
 import { FALLBACK_THEME as theme } from '../../../src/tableViz/webview/theme.ts';
 
 const dataset: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
@@ -223,4 +229,112 @@ test('card frame: buttons, kind override, SQL and the estimate note', async () =
   // A card without a chart has no table button. A card with one kind has no kind list.
   const plain = renderToStaticMarkup(<CardShell {...base} kinds={['complex']} hasChart={false} />);
   assert.ok(!plain.includes('Show the chart as a table') && !plain.includes('Kind of column'));
+});
+
+// ---- Compare mode ----
+
+const datasetA: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2025' } };
+const askDemo: Ask = (request) => profiler.profile(request) as never;
+
+/** Get the columns, the overview numbers and the drift of each pair of the two demo tables. A is 2025, B is 2026. */
+async function comparison() {
+  const [detailsA, detailsB] = await Promise.all([ask({ type: 'tableDetails', dataset: datasetA }), ask({ type: 'tableDetails', dataset })]);
+  const refs = (columns: ColumnInfo[]) => columns.map((c) => ({ name: c.name, typeText: c.typeText }));
+  const [overviewA, overviewB] = await Promise.all([
+    ask({ type: 'overview', dataset: datasetA, columns: refs(detailsA.columns) }),
+    ask({ type: 'overview', dataset, columns: refs(detailsB.columns) }),
+  ]);
+  const schema = matchColumns(detailsA.columns, detailsB.columns);
+  const stateOf = (o: typeof overviewA) => ({ rowCount: o.rowCount, stats: new Map(o.columns.map((c) => [c.name, c])), approximate: false, sql: new Map<string, string[]>() });
+  const a = stateOf(overviewA);
+  const b = stateOf(overviewB);
+  const drifts = new Map<string, DriftState>();
+  for (const pair of schema.pairs) {
+    const sa = a.stats.get(pair.a.name) as OverviewColumn;
+    const sb = b.stats.get(pair.b.name) as OverviewColumn;
+    const kind = compareKind(pair, sa, sb, false);
+    const drift = await columnDrift(askDemo, datasetA, dataset, pair, kind, a.rowCount, sa, b.rowCount, sb);
+    drifts.set(pair.a.name, drift ? { status: 'done', drift, kind } : { status: 'skip' });
+  }
+  return { schema, a, b, drifts };
+}
+
+test('compare: the list of columns shows what is in one dataset only and which types differ', async () => {
+  const { schema } = await comparison();
+  const text = textOf(<SchemaPanel schema={schema} asText={[]} onAsText={noop} />);
+  assert.ok(text.includes('Columns: 17 in A and B · 1 only in A · 1 only in B · 1 with different types'), text);
+  assert.ok(text.includes('Only in A coupon_code (string) Only in B loyalty_tier (string)'), text);
+  assert.ok(text.includes('store_id: int in A, string in B. Compare as text'), text);
+  const html = renderToStaticMarkup(<SchemaPanel schema={schema} asText={['store_id']} onAsText={noop} />);
+  assert.match(html, /<input type="checkbox" checked=""/);
+});
+
+test('compare: the overview sorted by drift has the changed columns first', async () => {
+  const { schema, a, b, drifts } = await comparison();
+  const rows = compareRows(schema, a, b, drifts, '', 'drift');
+  assert.deepEqual(rows.slice(0, 5).map((r) => r.name).sort(), ['amount', 'channel', 'discount_pct', 'order_date', 'order_ts']);
+  assert.equal(rows.at(-1)?.name, 'store_id', 'a column that is not compared goes last');
+  assert.deepEqual(compareRows(schema, a, b, drifts, 'ORDER_', 'table').map((r) => r.name), ['order_id', 'order_ts', 'order_date']);
+
+  const text = textOf(<CompareTable rows={rows} a={a} b={b} open={new Set(['channel'])} onOpen={noop} />);
+  assert.ok(text.includes('Column Type Null A Null B Distinct A Distinct B Mean A Mean B Drift'), text);
+  assert.ok(text.includes('discount_pct double 5.1% 34.9% 501 501 25.0209 25.0389 0.33'), text);
+  assert.ok(text.includes('channel string 0% 0% 3 4 — — 0.25'), text);
+  assert.ok(text.includes('store_id int → string') && text.includes('Not compared'), text);
+});
+
+test('compare: the drift in words, with the null rate on its own line', async () => {
+  const { drifts } = await comparison();
+  const discount = (drifts.get('discount_pct') as { drift: Drift }).drift;
+  const text = textOf(<DriftLine drift={discount} />);
+  assert.ok(text.includes('Drift score 0.33 (Jensen-Shannon distance over 10 bins cut at the deciles of A'), text);
+  assert.match(text, /Population Stability Index \d+\.\d\d/);
+  assert.ok(text.includes('Null rate: 5.1% in A, 34.9% in B (+29.8 pp)'), text);
+  assert.equal(formatPoints(0), '0 pp');
+  assert.equal(formatPoints(-0.048), '-4.8 pp');
+});
+
+test('compare card of a number: the same bins for A and B, and the statistics side by side', async () => {
+  const ref = { name: 'amount', typeText: 'decimal(10,2)' };
+  const [statsA, statsB] = await Promise.all([ask({ type: 'numericStats', dataset: datasetA, columns: [ref] }), ask({ type: 'numericStats', dataset, columns: [ref] })]);
+  const edges = makeEdges(Math.min(Number(statsA.min), Number(statsB.min)), Math.max(Number(statsA.max), Number(statsB.max)), 10);
+  const [histogramA, histogramB] = await Promise.all([ask({ type: 'histogram', dataset: datasetA, columns: [ref], edges }), ask({ type: 'histogram', dataset, columns: [ref], edges })]);
+  assert.equal(histogramA.below + histogramA.above + histogramB.below + histogramB.above, 0, 'the shared bins contain all values of A and B');
+  const props = { name: 'amount', statsA, statsB, histogramA, histogramB, edges, bins: 10, theme, onChange: noop, onBins: noop };
+
+  assert.match(renderToStaticMarkup(<ContinuousCompareView {...props} card={card()} />), /aria-label="Histogram of amount with the same 10 bins for A and B\. Dataset A and dataset B\."/);
+  const table = textOf(<ContinuousCompareView {...props} card={card({ asTable: true })} />);
+  assert.ok(table.includes('Range A rows A % B rows B % Difference'), table);
+  assert.ok(table.includes(`${histogramA.counts[0]?.toLocaleString('en-US')}`) && table.includes(`${histogramB.counts[0]?.toLocaleString('en-US')}`), table);
+  assert.ok(table.includes('Statistic A B Difference Change'), table);
+  assert.ok(table.includes('Count 100,000 110,000 +10,000 +10.0%'), table);
+  assert.ok(table.includes('Mean 46.7535 63.0015 +16.248 +34.8%'), table);
+  // Side by side: two charts.
+  const sides = renderToStaticMarkup(<ContinuousCompareView {...props} card={card({ sideBySide: true })} />);
+  assert.equal(sides.split('class="chart"').length - 1, 2);
+});
+
+test('compare card of a category: the values of A and B, and a value that one dataset lacks', async () => {
+  const pair = matchColumns([{ name: 'channel', typeText: 'string' }], [{ name: 'channel', typeText: 'string' }]).pairs[0];
+  assert.ok(pair);
+  const { a, b } = await comparedFrequency(askDemo, datasetA, dataset, pair, 200);
+  const text = textOf(<ValuesCompareView name="channel" a={a} b={b} topValues={20} card={card()} theme={theme} onChange={noop} />);
+  assert.ok(text.includes('Value A rows A % B rows B % Difference'), text);
+  assert.ok(text.includes('web 59,630 59.6% 60,352 54.9% -4.8 pp'), text);
+  assert.ok(text.includes('marketplace only in B 0 0% 13,283 12.1% +12.1 pp'), text);
+  // Sorted by the size of the difference, the new value comes first.
+  const bySize = textOf(<ValuesCompareView name="channel" a={a} b={b} topValues={20} card={card({ sortBy: 'label' })} theme={theme} onChange={noop} />);
+  assert.ok(bySize.indexOf('marketplace') < bySize.indexOf('store'), bySize);
+});
+
+test('compare card of a date: one axis for A and B', async () => {
+  const { a, b } = await comparison();
+  const ref = { name: 'order_date', typeText: 'date' };
+  const [countsA, countsB] = await Promise.all([ask({ type: 'dateCounts', dataset: datasetA, columns: [ref], grain: 'month' }), ask({ type: 'dateCounts', dataset, columns: [ref], grain: 'month' })]);
+  const props = { name: 'order_date', statsA: a.stats.get('order_date') as OverviewColumn, statsB: b.stats.get('order_date') as OverviewColumn, countsA, countsB, grain: 'month' as const, theme, onChange: noop };
+  assert.match(renderToStaticMarkup(<DateCompareView {...props} card={card()} />), /Rows of order_date for each month, 24 periods\./);
+  const text = textOf(<DateCompareView {...props} card={card({ asTable: true })} />);
+  // A has rows in 2025 only, B in 2026 only.
+  assert.ok(text.includes(`2025-01-01 ${countsA.buckets[0]?.count.toLocaleString('en-US')}`) && text.includes('2026-01-01 0 0%'), text);
+  assert.ok(text.includes('Earliest 2025-01-01 2026-01-01') && text.includes('Latest 2025-12-31 2026-12-31'), text);
 });

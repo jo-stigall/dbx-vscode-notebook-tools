@@ -28,6 +28,13 @@ export interface TableVizApi {
   visualizeTableUnderCursor(): Promise<Board | undefined>;
   /** Open a board for a table of the tree. */
   visualizeNode(node: Node): Promise<Board | undefined>;
+  /**
+   * Open a board that compares two tables. This is "Compare With..." on a table of the tree, and the command "Compare Tables".
+   *
+   * @param a  The name of dataset A, or a table of the tree. If you omit it, the function asks for the name.
+   * @param b  The name of dataset B. If you omit it, the function shows a list.
+   */
+  compareTables(a?: string | Node, b?: string): Promise<Board | undefined>;
   /** Show a board again after VS Code reloads the window. `state` is what the webview stored. */
   restoreBoard(panel: vscode.WebviewPanel, state: unknown): Promise<void>;
   /** The command "Select Profile and Compute for Tables". */
@@ -100,20 +107,59 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
    * "Select Profile and Compute for Tables" first. It returns undefined if
    * the user closes a list.
    */
-  const open = async (table: TableName): Promise<Board | undefined> => {
+  const open = async (table: TableName, tableB?: TableName): Promise<Board | undefined> => {
     if (session.profile !== DEMO_PROFILE && !session.compute(session.profile)) {
       if (!(await selectProfileAndCompute(session, conn))) return undefined;
     }
-    const datasets: BoardDatasets = { a: { profile: session.profile, table } };
-    log.info(`tableViz: open ${displayTableName(table)} with the profile ${session.label(session.profile)}`);
+    const datasets: BoardDatasets = { a: { profile: session.profile, table }, ...(tableB ? { b: { profile: session.profile, table: tableB } } : {}) };
+    log.info(`tableViz: open ${displayTableName(table)}${tableB ? ` and ${displayTableName(tableB)}` : ''} with the profile ${session.label(session.profile)}`);
     void tree.addRecent(table);
     const panel = vscode.window.createWebviewPanel(VIEW_TYPE, Board.title(datasets), vscode.ViewColumn.Active);
     return new Board(panel, datasets, deps);
   };
 
+  /** Ask for a three-part table name. Returns undefined if the user closes the box. */
+  const askTable = async (title: string, value: string): Promise<TableName | undefined> => {
+    const text = await vscode.window.showInputBox({
+      title,
+      prompt: `Type the name of the table: catalog.schema.table (profile: ${session.label(session.profile)})`,
+      value,
+      validateInput: (input) => (parseTableName(input) ? undefined : 'Type three parts: catalog.schema.table'),
+    });
+    return text === undefined ? undefined : parseTableName(text);
+  };
+
+  /** Let the user select dataset B: the same table, a recent or favorite table, or a name that the user types. */
+  const pickSecond = async (a: TableName): Promise<TableName | undefined> => {
+    const same = `$(versions) ${displayTableName(a)}`;
+    const type = '$(edit) Type a table name…';
+    const names = [...new Set([...tree.recents, ...tree.favorites])].filter((name) => name !== displayTableName(a));
+    const picked = await vscode.window.showQuickPick(
+      [
+        { label: same, detail: 'The same table. On the board, give dataset B a different filter or version.' },
+        ...names.map((name) => ({ label: `$(table) ${name}`, detail: undefined })),
+        { label: type, detail: undefined },
+      ],
+      { title: `Compare ${displayTableName(a)} with`, placeHolder: 'Select dataset B' }
+    );
+    if (!picked) return undefined;
+    if (picked.label === same) return a;
+    if (picked.label === type) return askTable('Dataset B', session.profile === DEMO_PROFILE ? 'demo.shop.orders_2026' : '');
+    return parseTableName(picked.label.replace('$(table) ', ''));
+  };
+
   return {
     tree,
     session,
+
+    async compareTables(a, b) {
+      const first =
+        typeof a === 'string' ? parseTableName(a) : a?.kind === 'table' ? a.table : await askTable('Dataset A', session.profile === DEMO_PROFILE ? 'demo.shop.orders_2025' : (tree.recents[0] ?? ''));
+      if (!first) return undefined;
+      const second = b === undefined ? await pickSecond(first) : parseTableName(b);
+      if (!second) return undefined;
+      return open(first, second);
+    },
 
     async visualizeTable(name) {
       const example = session.profile === DEMO_PROFILE ? 'demo.shop.orders_2026' : (tree.recents[0] ?? '');

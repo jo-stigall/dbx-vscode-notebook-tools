@@ -6,7 +6,7 @@
  */
 import { binBounds, formatDay } from './bins.ts';
 import { typeFamily, type TypeFamily } from './kinds.ts';
-import type { BinEdges, Card, ColumnKind, Grain, ResultOf } from './schema.ts';
+import { datasetVersionSchema, type BinEdges, type Card, type ColumnKind, type DatasetVersion, type Grain, type ResultOf } from './schema.ts';
 
 /** One row of a frequency table. */
 export interface FrequencyRow {
@@ -220,4 +220,43 @@ export function missesPartition(filter: string | undefined, partitionColumns: st
     // The name must be a full word: "date" is not in "update_date".
     return at >= 0 && !/[\p{L}\p{N}_]/u.test(text[at - 1] ?? ' ') && !/[\p{L}\p{N}_]/u.test(text[at + name.length] ?? ' ');
   });
+}
+
+/**
+ * Put the date counts of A and B on one list of periods, for a chart with a shared axis.
+ *
+ * The list has each period from the first period of the two datasets to the
+ * last one. A period that a dataset has no rows in gets the count 0.
+ *
+ * @example
+ * sharedPeriods([{ start: '2026-01-01', count: 4 }], [{ start: '2026-03-01', count: 7 }], 'month')
+ * // { starts: ['2026-01-01', '2026-02-01', '2026-03-01'], a: [4, 0, 0], b: [0, 0, 7] }
+ */
+export function sharedPeriods(
+  a: { start: string; count: number }[],
+  b: { start: string; count: number }[],
+  grain: Grain
+): { starts: string[]; a: number[]; b: number[] } {
+  const countsA = new Map(a.map((bucket) => [bucket.start, bucket.count]));
+  const countsB = new Map(b.map((bucket) => [bucket.start, bucket.count]));
+  const all = [...new Set([...countsA.keys(), ...countsB.keys()])].sort();
+  const { periods } = fillPeriods(all.map((start) => ({ start, count: 0 })), grain);
+  const starts = periods.map((period) => period.start);
+  return { starts, a: starts.map((start) => countsA.get(start) ?? 0), b: starts.map((start) => countsB.get(start) ?? 0) };
+}
+
+/**
+ * Read the text of the "Version" box of a dataset.
+ *
+ * @example
+ * parseVersion('')                      // undefined: the newest version
+ * parseVersion('42')                    // { kind: 'version', n: '42' }
+ * parseVersion('2026-11-01 02:05')      // { kind: 'timestamp', ts: '2026-11-01 02:05' }
+ * parseVersion('yesterday')             // 'invalid'
+ */
+export function parseVersion(text: string): DatasetVersion | undefined | 'invalid' {
+  const value = text.trim();
+  if (!value) return undefined;
+  const parsed = datasetVersionSchema.safeParse(/^\d+$/.test(value) ? { kind: 'version', n: value } : { kind: 'timestamp', ts: value });
+  return parsed.success ? parsed.data : 'invalid';
 }

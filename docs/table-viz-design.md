@@ -265,6 +265,36 @@ behaves in an esbuild bundle, and all live queries.
 - **A change of compute applies to open boards.** Their next request goes
   to the new compute.
 
+## Decisions in milestone 6
+
+- **The date columns of the demo tables rank first.** The two tables hold
+  different years, so their dates differ. That is a true difference. The
+  three planted differences in the values (`discount_pct`, `channel`,
+  `amount`) come next, and all other columns have a score near 0.
+- **The drift of a date** uses the date as a number of days
+  (`unix_date`), so that the same decile method works for numbers and dates.
+- **A discrete number** (50 values or fewer) uses the value method, as a
+  category does. A column of numbers with more values uses the deciles.
+- **An ID column or a complex type** has no values to compare. Its score is
+  over "null" and "not null" only.
+- **A column whose types differ** is not compared until the user selects
+  "Compare as text". This is the opt-in that the brief asks for. If the two
+  types are numbers, the column is compared as numbers with no question.
+- **"B must not re-run A" has one exception:** a histogram with shared bins.
+  Its bins come from the range of A and B together, so a different B can
+  need a different histogram of A. All requests for the overview and the
+  drift score name one dataset only; a test proves that a change of B runs
+  none of them again for A.
+- **Three new requests:** `quantiles` (the deciles of A), `driftBins`
+  (counts between cut points), and `valueCounts` (exact counts for the
+  values that one top list lacks).
+- **The drift of each matched column is computed when the board opens**,
+  because the sort by drift needs all scores. A table with many columns
+  sends many queries; the queue of the host limits how many run at one time.
+- **The question for a very large table** looks at dataset A only.
+- **Dataset B uses the profile of dataset A.** Two workspaces are out of
+  scope, but the dataset type has the profile.
+
 ## Proposals
 
 None yet.

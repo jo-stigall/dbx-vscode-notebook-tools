@@ -97,6 +97,12 @@
         "title": "Remove from Favorites",
         "category": "Databricks Notebook",
         "icon": "$(star-full)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.compareTables",
+        "title": "Compare Tables",
+        "category": "Databricks Notebook",
+        "icon": "$(diff)"
       }
     ],
     "menus": {
@@ -185,6 +191,16 @@
           "command": "dbxNotebook.tableViz.visualizeNode",
           "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
           "group": "1_table@1"
+        },
+        {
+          "command": "dbxNotebook.tableViz.compareTables",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "dbxNotebook.tableViz.compareTables",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "group": "1_table@2"
         }
       ],
       "editor/context": [
@@ -265,6 +281,11 @@
           "default": 100,
           "minimum": 0.001,
           "markdownDescription": "\"Visualize Table\" asks before the first full scan of a table that is larger than this size, in GB."
+        },
+        "dbxNotebook.tableViz.matchColumnsCaseSensitive": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When you compare two tables, match the column `Region` only with `Region`. If this is off, `Region` also matches `region`."
         }
       }
     },

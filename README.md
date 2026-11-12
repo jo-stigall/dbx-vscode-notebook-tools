@@ -140,8 +140,8 @@ different values it has, and charts of its values. Databricks computes all
 numbers. The extension never downloads the rows of the table.
 
 This part is not complete, and no person has run it on a real workspace. It
-works with SQL warehouses and with all-purpose clusters. It cannot compare
-two tables yet. [docs/table-viz-design.md](docs/table-viz-design.md)
+works with SQL warehouses and with all-purpose clusters, and it can compare
+two tables. [docs/table-viz-design.md](docs/table-viz-design.md)
 has the plan.
 
 ### Select the login and the compute
@@ -217,6 +217,48 @@ Above the cards:
 
 "≈" before a number shows that Databricks estimated it.
 
+### Compare two tables
+
+Compare mode puts a second dataset, B, next to the first dataset, A. It
+compares each column whose name is in A and in B.
+
+| To do this | Do this |
+|---|---|
+| Compare two tables | Run "Databricks Notebook: Compare Tables", or click the compare icon on a table in the view "Databricks Tables". You can also type the second table in the box "Compare with" on a board. |
+| Compare one table under two filters | Click "Compare with this table" on the board. Then type a different filter for A and for B. |
+| Compare one table at two Delta versions | Click "Compare with this table". Then type a version number, or a date and time, in the box "Version" of B. |
+
+The board then shows these things:
+
+- **The columns.** Which columns are in A and in B, which are in one
+  dataset only, and which have a different type. If two types are both
+  numbers, the board compares the values as numbers. For other type
+  differences, select "Compare as text" to compare the column.
+- **One row for each column**, with the percent of nulls, the distinct count
+  and the mean for A and for B, and the drift score. The rows with the
+  highest drift score come first.
+- **A detail card** when you click a column. Its chart shows A and B for the
+  same bins, values or periods. The tables show A, B and the difference.
+
+The chart of a card shows the percent of the rows of each dataset, because A
+and B usually have different sizes. Select "Row counts" to see counts, and
+"Side by side" to see one chart for each dataset.
+
+**The drift score** tells how different a column is in A and B. It is the
+Jensen-Shannon distance: 0 means that the column is the same, 1 means that
+A and B have nothing in common. For a category, the board computes it over
+the values. For a number or a date, it computes it over 10 bins that each
+contain one tenth of the values of A. The score ranks the columns. It is
+not a test of significance: with millions of rows, each small difference
+would be "significant".
+
+A card also shows the Population Stability Index, and the change of the null
+rate on its own line.
+
+A change of B does not run the queries of A again. One exception: a
+histogram with shared bins, because its bins depend on the range of A and B
+together.
+
 ### What the feature sends to Databricks
 
 - Only `SELECT` and `DESCRIBE` statements. Each statement returns counts and
@@ -262,6 +304,7 @@ Above the cards:
 | `dbxNotebook.tableViz.maxConcurrentQueries` | 0 | The largest number of queries that run at the same time. `0` means 4 on a warehouse and 2 on a cluster. |
 | `dbxNotebook.tableViz.queryTimeoutSeconds` | 300 | The time limit of one query, in seconds. |
 | `dbxNotebook.tableViz.largeTableWarningGB` | 100 | The board asks before the first full scan of a table that is larger than this size. |
+| `dbxNotebook.tableViz.matchColumnsCaseSensitive` | off | Compare mode: match the column `Region` only with `Region`. If off, `Region` also matches `region`. |
 
 ## Limits
 

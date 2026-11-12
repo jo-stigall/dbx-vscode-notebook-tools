@@ -7,10 +7,14 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { openCard } from '../core/derive.ts';
-import { displayTableName } from '../core/names.ts';
+import { matchColumns } from '../core/match.ts';
+import { displayTableName, parseTableName } from '../core/names.ts';
 import type { BoardDatasets, BoardSettings, Card, Dataset } from '../core/schema.ts';
 import { ErrorPanel } from './cards/CardShell.tsx';
 import { ColumnCard } from './cards/ColumnCard.tsx';
+import { CompareCard } from './compare/CompareCard.tsx';
+import { CompareTable, compareRows, SchemaPanel } from './compare/CompareOverview.tsx';
+import { useDrifts } from './compare/useCompare.ts';
 import { DatasetBar } from './DatasetBar.tsx';
 import { formatBytes, formatCount, formatTime } from './format.ts';
 import { useResult } from './hooks.ts';
@@ -44,7 +48,9 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
   const saved = useMemo(() => loadState(), []);
   // The user can change the filter and the sample of the dataset. The table and the profile do not change.
   const [dataset, setDataset] = useState<Dataset>(initial.a);
-  const datasets = useMemo(() => ({ ...initial, a: dataset }), [initial, dataset]);
+  // Dataset B is set in compare mode only. The user can add it and remove it.
+  const [datasetB, setDatasetB] = useState<Dataset | undefined>(initial.b);
+  const datasets = useMemo<BoardDatasets>(() => ({ a: dataset, ...(datasetB ? { b: datasetB } : {}) }), [dataset, datasetB]);
 
   const details = useResult({ type: 'tableDetails', dataset });
   const facts = details.status === 'done' ? details.result : undefined;
@@ -60,12 +66,38 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
   const tooLarge = facts?.sizeBytes !== undefined && facts.sizeBytes > settings.largeTableBytes && !dataset.filter && !dataset.sample && !scanLarge;
   const overview = useOverview(pinned, tooLarge ? undefined : columns);
 
+  // Compare mode: the same steps for dataset B. Each request names one dataset, so the answers for A stay when B changes.
+  const detailsB = useResult(datasetB ? { type: 'tableDetails', dataset: datasetB } : undefined);
+  const factsB = datasetB && detailsB.status === 'done' ? detailsB.result : undefined;
+  const versionB = factsB?.version;
+  const pinnedB = useMemo<Dataset | undefined>(
+    () => (datasetB && versionB && !datasetB.version ? { ...datasetB, version: { kind: 'version', n: versionB } } : datasetB),
+    [datasetB, versionB]
+  );
+  const overviewB = useOverview(pinnedB ?? pinned, pinnedB && !tooLarge ? factsB?.columns : undefined);
+  const schema = useMemo(
+    () => (columns && factsB ? matchColumns(columns, factsB.columns, { caseSensitive: settings.matchColumnsCaseSensitive }) : undefined),
+    [columns, factsB, settings.matchColumnsCaseSensitive]
+  );
+  const [asText, setAsText] = useState<string[]>(saved?.asText ?? []);
+  const drifts = useDrifts(pinned, pinnedB ?? pinned, schema?.pairs ?? [], overview, overviewB, asText);
+
   const [search, setSearch] = useState(saved?.ui?.search ?? '');
-  const [sort, setSort] = useState<Sort>(saved?.ui?.sort ?? 'table');
+  // In compare mode, the columns that changed most come first.
+  const [sort, setSort] = useState<Sort>(saved?.ui?.sort ?? (initial.b ? 'drift' : 'table'));
   const [cards, setCards] = useState<Card[]>(saved?.cards ?? []);
-  useEffect(() => saveState({ datasets, ui: { search, sort }, cards, scanLarge }), [datasets, search, sort, cards, scanLarge]);
+  useEffect(() => saveState({ datasets, ui: { search, sort }, cards, scanLarge, asText }), [datasets, search, sort, cards, scanLarge, asText]);
+
+  /** Put a table on the board as dataset B, or remove dataset B. */
+  const compareWith = (next: Dataset | undefined) => {
+    setDatasetB(next);
+    setSort(next ? 'drift' : 'table');
+  };
+  const [compareDraft, setCompareDraft] = useState('');
+  const compareTable = parseTableName(compareDraft);
 
   const rows = useMemo(() => (columns ? overviewRows(columns, overview, search, sort) : []), [columns, overview, search, sort]);
+  const pairRows = useMemo(() => (schema ? compareRows(schema, overview, overviewB, drifts, search, sort) : []), [schema, overview, overviewB, drifts, search, sort]);
   const open = useMemo(() => new Set(cards.map((c) => c.column)), [cards]);
 
   // When the user opens a card, bring the cards into view.
@@ -87,6 +119,85 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
     );
   }
   const sample = dataset.sample?.percent;
+  const setCard = (column: string) => (patch: Partial<Card>) => setCards((list) => list.map((c) => (c.column === column ? { ...c, ...patch } : c)));
+  const closeCard = (column: string) => () => setCards((list) => list.filter((c) => c.column !== column));
+  const toolbar = (shown: number, total: number | undefined, what: string) => (
+    <div className="toolbar">
+      <input type="search" placeholder="Search columns" aria-label="Search columns by name" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <label>
+        Sort by{' '}
+        <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+          {datasetB && <option value="drift">Drift score</option>}
+          <option value="table">Table order</option>
+          <option value="nulls">Percent null</option>
+          <option value="distinct">Distinct count</option>
+        </select>
+      </label>
+      <span className="count" role="status">
+        {total === undefined ? 'Loading columns…' : `${shown} of ${total} ${what}`}
+      </span>
+    </div>
+  );
+
+  if (datasetB && pinnedB) {
+    const difference = overview.rowCount !== undefined && overviewB.rowCount !== undefined ? overviewB.rowCount - overview.rowCount : undefined;
+    return (
+      <main>
+        <header className="board-header">
+          <h1>
+            <span className="chip chip-a">A</span> {name} <span className="versus">compared with</span> <span className="chip chip-b">B</span> {displayTableName(datasetB.table)}{' '}
+            <span className="badge">{profileLabel(dataset.profile)}</span>
+          </h1>
+          <dl className="facts">
+            <Fact label="Rows in A">{overview.rowCount === undefined ? '…' : formatCount(overview.rowCount)}</Fact>
+            <Fact label="Rows in B">{overviewB.rowCount === undefined ? '…' : formatCount(overviewB.rowCount)}</Fact>
+            <Fact label="Difference (B − A)">
+              {difference === undefined
+                ? '…'
+                : `${difference > 0 ? '+' : ''}${formatCount(difference)}${overview.rowCount ? ` (${difference > 0 ? '+' : ''}${((difference / overview.rowCount) * 100).toFixed(1)}%)` : ''}`}
+            </Fact>
+          </dl>
+        </header>
+
+        <DatasetBar label="A" dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} />
+        <DatasetBar label="B" dataset={datasetB} pinned={pinnedB} facts={factsB} asOf={overviewB.asOf} onChange={setDatasetB} onRemove={() => compareWith(undefined)} hideActions />
+
+        {detailsB.status === 'error' && <ErrorPanel error={detailsB.error} />}
+        {overview.error && <ErrorPanel error={overview.error} />}
+        {overviewB.error && <ErrorPanel error={overviewB.error} />}
+        {schema && <SchemaPanel schema={schema} asText={asText} onAsText={setAsText} />}
+
+        {schema && cards.length > 0 && (
+          <div className="cards" ref={cardsElement}>
+            {cards.map((card) => {
+              const pair = schema.pairs.find((p) => p.a.name === card.column);
+              if (!pair) return null; // The column is not in the two datasets.
+              return (
+                <CompareCard
+                  key={card.column}
+                  a={pinned}
+                  b={pinnedB}
+                  pair={pair}
+                  statsA={overview.stats.get(pair.a.name)}
+                  statsB={overviewB.stats.get(pair.b.name)}
+                  rowsA={overview.rowCount}
+                  rowsB={overviewB.rowCount}
+                  drift={drifts.get(pair.a.name) ?? { status: 'loading' }}
+                  card={card}
+                  settings={settings}
+                  onChange={setCard(card.column)}
+                  onClose={closeCard(card.column)}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {toolbar(pairRows.length, schema?.pairs.length, 'columns that A and B have')}
+        <CompareTable rows={pairRows} a={overview} b={overviewB} open={open} onOpen={(column) => setCards((list) => openCard(list, column))} />
+      </main>
+    );
+  }
 
   return (
     <main>
@@ -111,6 +222,31 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
       </header>
 
       <DatasetBar dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} />
+
+      <form
+        className="compare-with"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (compareTable) compareWith({ profile: dataset.profile, table: compareTable });
+        }}
+      >
+        <label htmlFor="compare-table">Compare with</label>
+        <input
+          id="compare-table"
+          type="text"
+          spellCheck={false}
+          placeholder="catalog.schema.table"
+          value={compareDraft}
+          aria-invalid={compareDraft.trim() !== '' && !compareTable}
+          onChange={(e) => setCompareDraft(e.target.value)}
+        />
+        <button type="submit" disabled={!compareTable}>
+          Compare
+        </button>
+        <button type="button" title="Compare this table with itself. Then give dataset B a different filter or version." onClick={() => compareWith({ profile: dataset.profile, table: dataset.table })}>
+          Compare with this table
+        </button>
+      </form>
 
       {tooLarge && (
         <div className="notice" role="alert">
@@ -147,29 +283,15 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
                 overviewSql={overview.sql.get(column.name) ?? []}
                 card={card}
                 settings={settings}
-                onChange={(patch) => setCards((list) => list.map((c) => (c.column === card.column ? { ...c, ...patch } : c)))}
-                onClose={() => setCards((list) => list.filter((c) => c.column !== card.column))}
+                onChange={setCard(card.column)}
+                onClose={closeCard(card.column)}
               />
             );
           })}
         </div>
       )}
 
-      <div className="toolbar">
-        <input type="search" placeholder="Search columns" aria-label="Search columns by name" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <label>
-          Sort by{' '}
-          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
-            <option value="table">Table order</option>
-            <option value="nulls">Percent null</option>
-            <option value="distinct">Distinct count</option>
-          </select>
-        </label>
-        <span className="count" role="status">
-          {columns ? `${rows.length} of ${columns.length} columns` : 'Loading columns…'}
-        </span>
-      </div>
-
+      {toolbar(rows.length, columns?.length, 'columns')}
       <OverviewTable dataset={pinned} rows={rows} overview={overview} open={open} onOpen={(column) => setCards((list) => openCard(list, column))} />
     </main>
   );

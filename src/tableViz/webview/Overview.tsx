@@ -15,7 +15,7 @@ import { Thumbnail } from './Thumbnail.tsx';
 /** The number of columns in one overview request. */
 const BATCH = 25;
 
-export type Sort = 'table' | 'nulls' | 'distinct';
+export type Sort = 'table' | 'nulls' | 'distinct' | 'drift';
 
 export interface OverviewState {
   rowCount?: number;
