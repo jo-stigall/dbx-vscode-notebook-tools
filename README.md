@@ -217,6 +217,40 @@ Above the cards:
 
 "≈" before a number shows that Databricks estimated it.
 
+### Filter with a click
+
+Click a bar of a chart to keep only the rows of that bar. On a histogram or
+a date chart, you can also drag across some bars to keep a range. The filter
+shows as a chip above the cards, for example `channel = store` or
+`amount: 42.36 to 242.45`. All cards then show the filtered rows.
+
+Each chip has a button that removes it. Two or more chips combine with AND.
+To do the same with the keyboard, show the chart as a table: each row has a
+filter button.
+
+### Save, copy and reuse
+
+The "Save or copy" button of a card has these commands:
+
+| Command | What you get |
+|---|---|
+| Save chart as PNG, Save chart as SVG | An image file of the chart. |
+| Copy chart | The chart as an image on the clipboard. |
+| Save tables as CSV, Copy tables | The tables of the card as CSV text. Numbers have no separators between groups of digits. |
+| Open SQL in Editor | The SQL of the card in a new editor, with the values in the text, so that you can run it in Databricks. |
+
+"Save View" writes the board to a file with the extension `.tableviz.json`.
+The file holds the datasets, the filters, the open cards and their settings.
+It holds no data and no token, so you can commit it or send it to a
+colleague. Open the file in VS Code to get the board again; the board runs
+its queries again.
+
+A filter in such a file is SQL, and it runs with your Databricks login.
+Thus, when you open a view that you did not save yourself, the board first
+shows the datasets and the filters, and it runs no query until you click
+"Run the Queries". In a project that you did not trust, VS Code does not
+start the extension.
+
 ### Compare two tables
 
 Compare mode puts a second dataset, B, next to the first dataset, A. It

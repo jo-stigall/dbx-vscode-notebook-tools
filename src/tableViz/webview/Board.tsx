@@ -6,10 +6,10 @@
  * can sit side by side.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { openCard } from '../core/derive.ts';
+import { addChip, openCard } from '../core/derive.ts';
 import { matchColumns } from '../core/match.ts';
 import { displayTableName, parseTableName } from '../core/names.ts';
-import type { BoardDatasets, BoardSettings, Card, Dataset } from '../core/schema.ts';
+import type { BoardDatasets, BoardSettings, BoardState, Card, Chip, Dataset } from '../core/schema.ts';
 import { ErrorPanel } from './cards/CardShell.tsx';
 import { ColumnCard } from './cards/ColumnCard.tsx';
 import { CompareCard } from './compare/CompareCard.tsx';
@@ -19,7 +19,7 @@ import { DatasetBar } from './DatasetBar.tsx';
 import { formatBytes, formatCount, formatTime } from './format.ts';
 import { useResult } from './hooks.ts';
 import { OverviewTable, overviewRows, useOverview, type Sort } from './Overview.tsx';
-import { loadState, saveState } from './rpc.ts';
+import { loadState, saveState, send } from './rpc.ts';
 
 /**
  * The name of a profile for a person to read.
@@ -44,8 +44,9 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-export function Board({ datasets: initial, settings }: { datasets: BoardDatasets; settings: BoardSettings }) {
-  const saved = useMemo(() => loadState(), []);
+export function Board({ datasets: initial, settings, initialState }: { datasets: BoardDatasets; settings: BoardSettings; initialState?: BoardState }) {
+  // The cards and settings: from a saved view, or from the state that the page stored before a window reload.
+  const saved = useMemo(() => initialState ?? loadState(), [initialState]);
   // The user can change the filter and the sample of the dataset. The table and the profile do not change.
   const [dataset, setDataset] = useState<Dataset>(initial.a);
   // Dataset B is set in compare mode only. The user can add it and remove it.
@@ -86,7 +87,10 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
   // In compare mode, the columns that changed most come first.
   const [sort, setSort] = useState<Sort>(saved?.ui?.sort ?? (initial.b ? 'drift' : 'table'));
   const [cards, setCards] = useState<Card[]>(saved?.cards ?? []);
-  useEffect(() => saveState({ datasets, ui: { search, sort }, cards, scanLarge, asText }), [datasets, search, sort, cards, scanLarge, asText]);
+  const state = useMemo<BoardState>(() => ({ datasets, ui: { search, sort }, cards, scanLarge, asText }), [datasets, search, sort, cards, scanLarge, asText]);
+  useEffect(() => saveState(state), [state]);
+  /** Write the board to a `.tableviz.json` file. The host asks for the file. */
+  const saveView = () => send({ type: 'saveView', state });
 
   /** Put a table on the board as dataset B, or remove dataset B. */
   const compareWith = (next: Dataset | undefined) => {
@@ -121,6 +125,8 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
   const sample = dataset.sample?.percent;
   const setCard = (column: string) => (patch: Partial<Card>) => setCards((list) => list.map((c) => (c.column === column ? { ...c, ...patch } : c)));
   const closeCard = (column: string) => () => setCards((list) => list.filter((c) => c.column !== column));
+  // A click on a bar adds a filter chip to the dataset. All cards then ask for their numbers again.
+  const addFilter = (chip: Chip) => setDataset((d) => addChip(d, chip));
   const toolbar = (shown: number, total: number | undefined, what: string) => (
     <div className="toolbar">
       <input type="search" placeholder="Search columns" aria-label="Search columns by name" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -159,7 +165,7 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
           </dl>
         </header>
 
-        <DatasetBar label="A" dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} />
+        <DatasetBar label="A" dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} onSaveView={saveView} />
         <DatasetBar label="B" dataset={datasetB} pinned={pinnedB} facts={factsB} asOf={overviewB.asOf} onChange={setDatasetB} onRemove={() => compareWith(undefined)} hideActions />
 
         {detailsB.status === 'error' && <ErrorPanel error={detailsB.error} />}
@@ -187,6 +193,13 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
                   settings={settings}
                   onChange={setCard(card.column)}
                   onClose={closeCard(card.column)}
+                  onFilter={(make) => {
+                    // The same selection filters A and B. The column can have a different name or type in B.
+                    const chipA = make({ name: pair.a.name, typeText: pair.a.typeText });
+                    const chipB = make({ name: pair.b.name, typeText: pair.b.typeText });
+                    if (chipA) addFilter(chipA);
+                    if (chipB) setDatasetB((d) => d && addChip(d, chipB));
+                  }}
                 />
               );
             })}
@@ -211,7 +224,7 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
           )}
         </h1>
         <dl className="facts">
-          <Fact label={sample === undefined ? (dataset.filter ? 'Rows (filtered)' : 'Rows') : 'Rows in the sample'}>
+          <Fact label={sample === undefined ? (dataset.filter || dataset.chips?.length ? 'Rows (filtered)' : 'Rows') : 'Rows in the sample'}>
             {overview.rowCount === undefined ? (tooLarge ? '—' : '…') : formatCount(overview.rowCount)}
           </Fact>
           <Fact label="Size on disk">{facts?.sizeBytes === undefined ? '—' : formatBytes(facts.sizeBytes)}</Fact>
@@ -221,7 +234,7 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
         </dl>
       </header>
 
-      <DatasetBar dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} />
+      <DatasetBar dataset={dataset} pinned={pinned} facts={facts} asOf={overview.asOf} onChange={setDataset} onSaveView={saveView} />
 
       <form
         className="compare-with"
@@ -285,6 +298,7 @@ export function Board({ datasets: initial, settings }: { datasets: BoardDatasets
                 settings={settings}
                 onChange={setCard(card.column)}
                 onClose={closeCard(card.column)}
+                onFilter={addFilter}
               />
             );
           })}

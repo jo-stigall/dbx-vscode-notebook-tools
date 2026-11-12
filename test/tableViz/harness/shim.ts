@@ -29,6 +29,8 @@ document.documentElement.dataset.theme = params.get('theme') ?? 'dark';
 // `b=demo.shop.orders_2026` puts a second table on the board: compare mode.
 const tableB = parseTableName(params.get('b') ?? '');
 const datasets: BoardDatasets = { a: { profile: 'Demo', table }, ...(tableB ? { b: { profile: 'Demo', table: tableB } } : {}) };
+let approved = params.get('confirm') !== '1';
+const sent: unknown[] = [];
 const profiler = new DemoProfiler();
 const post = (message: ToWebview) => window.postMessage(message, '*');
 const dispatcher = createDispatcher({
@@ -39,7 +41,16 @@ const dispatcher = createDispatcher({
     return { signal: controller.signal, cancel: () => controller.abort() };
   },
   // `large=1` sets the size limit to 1 MB, so that the demo table is "too large" and the board asks before it reads all rows.
-  onOther: () => post({ type: 'init', datasets, settings: { ...DEFAULT_SETTINGS, ...(params.get('large') === '1' ? { largeTableBytes: 1024 ** 2 } : {}) } }),
+  onOther: (message) => {
+    // `confirm=1` shows the question that a saved view asks. A click on its button sends "approve".
+    if (message.type === 'approve') approved = true;
+    if (message.type === 'ready' || message.type === 'approve') {
+      post({ type: 'init', datasets, settings: { ...DEFAULT_SETTINGS, ...(params.get('large') === '1' ? { largeTableBytes: 1024 ** 2 } : {}) }, ...(approved ? {} : { confirm: true }) });
+    } else {
+      // The test page cannot write files. Keep the message so that a person can look at it.
+      sent.push(message);
+    }
+  },
 });
 
 // The cards from the page URL go into the stored state, as if the board was open before a reload.
@@ -65,4 +76,6 @@ Object.assign(window, {
   }),
   /** The requests that the webview sent. A test can read this list. */
   tableVizExchanges: dispatcher.exchanges,
+  /** The messages that are not requests: export, open SQL, save view. */
+  tableVizSent: sent,
 });

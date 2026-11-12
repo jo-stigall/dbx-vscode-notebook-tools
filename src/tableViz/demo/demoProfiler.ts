@@ -13,7 +13,7 @@ import { binIndex, formatDay, truncateDay } from '../core/bins.ts';
 import { isNumeric } from '../core/kinds.ts';
 import { displayTableName } from '../core/names.ts';
 import { CancelledError, ProfilerError, type ProfileOptions, type Profiler } from '../core/profiler.ts';
-import { PERCENTILES, type ColumnRef, type Dataset, type Measure, type OverviewColumn, type Request, type RequestOf, type Result, type ResultOf } from '../core/schema.ts';
+import { PERCENTILES, type Chip, type ColumnRef, type Dataset, type Measure, type OverviewColumn, type Request, type RequestOf, type Result, type ResultOf } from '../core/schema.ts';
 import { buildStatements, renderStatement } from '../core/sql.ts';
 import { demoTable, formatDemoValue, type DemoColumn, type DemoTable } from './data.ts';
 
@@ -45,7 +45,43 @@ function sampleOf(table: DemoTable, percent: number): DemoTable {
   return sample;
 }
 
-/** Find the demo table of a dataset. If the dataset has a sample, the result has only the sampled rows. */
+/** Copies of the demo tables that have only the rows of some filter chips. The key is the table name, the sample and the chips. */
+const filtered = new Map<string, DemoTable>();
+
+/** Tell if a value of a column meets the condition of a chip. */
+function meets(column: DemoColumn, value: DemoColumn['values'][number], chip: Chip): boolean {
+  if (chip.op === 'null') return value === null;
+  if (value === null) return false;
+  if (chip.op === 'eq') return formatDemoValue(column, value) === chip.value;
+  let x: number;
+  if (chip.measure === 'length') x = formatDemoValue(column, value).length;
+  else if (chip.measure === 'day') x = column.family === 'timestamp' ? Math.floor((value as number) / DAY_MS) : (value as number);
+  else x = toNumber(column, value as number);
+  return x >= chip.lo && (chip.includeHi ? x <= chip.hi : x < chip.hi);
+}
+
+/** Make a copy of a table that has only the rows that meet all chips. */
+function chipsOf(table: DemoTable, key: string, chips: Chip[]): DemoTable {
+  let result = filtered.get(key);
+  if (!result) {
+    const tests = chips.map((chip) => ({ chip, column: columnOf(table, chip.column) }));
+    const rows: number[] = [];
+    for (let i = 0; i < table.rowCount; i++) if (tests.every(({ chip, column }) => meets(column, column.values[i] ?? null, chip))) rows.push(i);
+    result = { ...table, rowCount: rows.length, columns: table.columns.map((c) => ({ ...c, values: rows.map((i) => c.values[i] ?? null) })) };
+    // Keep the 20 newest copies. A user who clicks many filters does not fill the memory.
+    if (filtered.size >= 20) filtered.delete(filtered.keys().next().value as string);
+    filtered.set(key, result);
+  }
+  return result;
+}
+
+/**
+ * Find the demo table of a dataset. If the dataset has a sample or filter chips, the result has only those rows.
+ *
+ * The Demo profile cannot run SQL, so it cannot use a filter that the user
+ * typed. It can use filter chips, because a chip is a column, an operator
+ * and values, not SQL.
+ */
 function tableOf(dataset: Dataset): DemoTable {
   const table = demoTable(dataset.table);
   if (!table) {
@@ -54,9 +90,13 @@ function tableOf(dataset: Dataset): DemoTable {
     });
   }
   if (dataset.filter?.trim()) {
-    throw new ProfilerError('The Demo profile cannot use a filter yet.', { nextStep: 'Remove the filter.' });
+    throw new ProfilerError('The Demo profile cannot use a filter that you type, because it cannot run SQL.', {
+      nextStep: 'Remove the filter. To filter the demo tables, click a bar of a chart.',
+    });
   }
-  return dataset.sample && dataset.sample.percent < 100 ? sampleOf(table, dataset.sample.percent) : table;
+  const sampled = dataset.sample && dataset.sample.percent < 100 ? sampleOf(table, dataset.sample.percent) : table;
+  if (!dataset.chips?.length) return sampled;
+  return chipsOf(sampled, JSON.stringify([table.name.name, dataset.sample?.percent, dataset.chips]), dataset.chips);
 }
 
 /** Find a column of a demo table. */
@@ -165,7 +205,7 @@ export class DemoProfiler implements Profiler {
 
   private tableDetails(request: RequestOf<'tableDetails'>): Omit<ResultOf<'tableDetails'>, 'sql' | 'approximate' | 'asOf'> {
     // The facts of a table do not depend on the sample.
-    const table = tableOf({ ...request.dataset, sample: undefined });
+    const table = tableOf({ ...request.dataset, sample: undefined, chips: undefined });
     return {
       type: 'tableDetails',
       columns: table.columns.map((c) => ({ name: c.name, typeText: c.typeText, ...(c.partition ? { partition: true } : {}) })),

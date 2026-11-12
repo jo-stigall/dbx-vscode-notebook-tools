@@ -32,7 +32,8 @@ interface VsCodeApi {
 }
 declare function acquireVsCodeApi(): VsCodeApi;
 
-const vscode = acquireVsCodeApi();
+// A test that draws components in Node.js has no VS Code. It gets an object that does nothing.
+const vscode: VsCodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage: () => {}, getState: () => undefined, setState: () => {} };
 
 /** An error from the host that the UI can show. */
 export class RequestError extends Error {
@@ -49,6 +50,21 @@ export class RequestError extends Error {
     this.sql = details.sql ?? [];
     this.cancelled = details.cancelled ?? false;
   }
+}
+
+/** What the host sends when the webview starts. */
+export interface Init {
+  datasets: BoardDatasets;
+  settings: BoardSettings;
+  /** The cards and settings of a saved view. */
+  state?: BoardState;
+  /** true: ask the user before any query runs. */
+  confirm?: boolean;
+}
+
+/** Send a message that is not a request to the host: save a file, open SQL, save the view, permit a saved view. */
+export function send(message: Exclude<ToHost, { type: 'request' | 'cancel' | 'ready' }>): void {
+  vscode.postMessage(message);
 }
 
 /** The state of a query on Databricks: it waits for a free place, or it runs. */
@@ -71,7 +87,7 @@ interface Entry {
 const entries = new Map<string, Entry>();
 const byId = new Map<string, { key: string; entry: Entry }>();
 let lastId = 0;
-let onInit: ((datasets: BoardDatasets, settings: BoardSettings) => void) | undefined;
+let onInit: ((init: Init) => void) | undefined;
 
 /** Increases with each click on "Refresh". */
 let generation = 0;
@@ -102,12 +118,13 @@ export function useRequests(): { generation: number; pending: number } {
   );
 }
 
-window.addEventListener('message', (event: MessageEvent) => {
+const page = typeof window === 'undefined' ? undefined : window;
+page?.addEventListener('message', (event: MessageEvent) => {
   const parsed = toWebviewSchema.safeParse(event.data);
   if (!parsed.success) return; // Ignore a message that does not have a known shape.
   const message = parsed.data;
   if (message.type === 'init') {
-    onInit?.(message.datasets, message.settings);
+    onInit?.(message);
     return;
   }
   const found = byId.get(message.id);
@@ -132,9 +149,10 @@ window.addEventListener('message', (event: MessageEvent) => {
 /**
  * Tell the host that the webview started. The host answers with the datasets of the board.
  *
- * @param callback  Gets the datasets and the settings of the feature.
+ * @param callback  Gets the datasets, the settings of the feature, and for a saved view its cards and whether to ask the user first.
+ *   The host can call it a second time, after the user permitted the queries of a saved view.
  */
-export function start(callback: (datasets: BoardDatasets, settings: BoardSettings) => void): void {
+export function start(callback: (init: Init) => void): void {
   onInit = callback;
   vscode.postMessage({ type: 'ready' });
 }

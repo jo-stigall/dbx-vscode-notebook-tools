@@ -13,7 +13,7 @@ import { CardShell } from '../cards/CardShell.tsx';
 import { useDebounced, useResult, type Loadable } from '../hooks.ts';
 import { useTheme } from '../theme.ts';
 import { ask, useAsync, type DriftState } from './useCompare.ts';
-import { ContinuousCompareView, DateCompareView, DriftLine, SimpleCompareView, ValuesCompareView } from './views.tsx';
+import { ContinuousCompareView, DateCompareView, DriftLine, SimpleCompareView, ValuesCompareView, type ChipMaker } from './views.tsx';
 
 /** The number of values that the frequency table of a compare card reads from each dataset. */
 const TABLE_VALUES = 200;
@@ -32,6 +32,8 @@ export interface CompareCardProps {
   settings: BoardSettings;
   onChange: (patch: Partial<Card>) => void;
   onClose: () => void;
+  /** The user selected bars of a chart. The board adds the chip to dataset A and to dataset B. */
+  onFilter?: (make: ChipMaker) => void;
 }
 
 interface KindProps extends CompareCardProps {
@@ -119,6 +121,7 @@ function ContinuousCompareCard(props: KindProps) {
           theme={theme}
           onChange={onChange}
           onBins={setBins}
+          onFilter={props.onFilter}
         />
       )}
     </Frame>
@@ -132,7 +135,7 @@ function ValuesCompareCard(props: KindProps) {
   const done = frequency.status === 'done' ? frequency.value : undefined;
   return (
     <Frame {...props} sql={done ? [...done.a.sql, ...done.b.sql] : []} hasChart loading={frequency.status === 'loading'} error={frequency.status === 'error' ? frequency.error : undefined}>
-      {done && <ValuesCompareView name={pair.a.name} a={done.a} b={done.b} topValues={props.settings.topValues} card={card} theme={theme} onChange={props.onChange} />}
+      {done && <ValuesCompareView name={pair.a.name} a={done.a} b={done.b} topValues={props.settings.topValues} card={card} theme={theme} onChange={props.onChange} onFilter={props.onFilter} />}
     </Frame>
   );
 }
@@ -159,6 +162,7 @@ function DateCompareCard(props: KindProps) {
         card={card}
         theme={theme}
         onChange={props.onChange}
+        onFilter={props.onFilter}
       />
     </Frame>
   );

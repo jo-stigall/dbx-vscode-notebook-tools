@@ -81,7 +81,7 @@ in `tableViz/unit/` directly. It cannot run the `.tsx` file in
 The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 112
+ℹ pass 122
 ℹ fail 0
 ```
 
@@ -106,6 +106,10 @@ The tests make sure of these things:
 - The drift maths gives the values that are computed by hand in the test,
   and a comparison of the two demo tables puts the known differences first.
 - A change of dataset B runs no query for dataset A.
+- A filter chip becomes SQL with parameters only, and in the Demo profile it
+  selects the same rows as a direct count.
+- The host runs no request while a saved view waits for the permission of
+  the user. A saved view with a field that is not known is refused.
 - The cluster runner gives the same rows as the warehouse runner. It cancels
   a statement on request and after the time limit, and it connects again
   with a new token when the token expired or the session ended. A fake of
@@ -151,6 +155,9 @@ ok   tableViz: Visualize Table opens a board
 ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
 ok   tableViz: a statistics request gives numbers and the SQL behind them
 ok   tableViz: Compare Tables opens a board that reads A and B
+ok   tableViz: a saved view opens again with its filter and its card
+ok   tableViz: a saved view from a different person asks before it runs a query
+ok   tableViz: a workspace that is not trusted asks each time, and a wrong file makes no board
 ok   tableViz: a bad table name opens no board
 ok   tableViz: a missing table shows a plain error
 ok   tableViz: the tree lists catalogs, schemas and tables without SQL
@@ -244,7 +251,11 @@ http://localhost:8791/index.html?table=demo.shop.orders_2025&b=demo.shop.orders_
 
 `cards` opens detail cards at the start. `sql=1` shows the SQL of each card.
 `large=1` makes the board ask before it reads all rows. `b` names a second
-table: the board then compares the two tables.
+table: the board then compares the two tables. `confirm=1` shows the
+question that a saved view asks before it runs.
+
+The test page has no extension host, so it cannot write files. The export
+commands and "Save View" do nothing visible there.
 
 ## Try the extension
 

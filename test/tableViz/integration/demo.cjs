@@ -98,6 +98,85 @@ exports.main = async function main(log) {
   compared.panel.dispose();
   log('tableViz: Compare Tables opens a board that reads A and B');
 
+  // 2d. A saved view. Save a board with a filter chip and a card, then open the file.
+  const fs = require('fs');
+  const path = require('path');
+  const viewFile = vscode.Uri.file(path.join(process.env.DBX_E2E_DIR, 'orders.tableviz.json'));
+  const chip = { op: 'eq', column: { name: 'region', typeText: 'string' }, value: 'EMEA' };
+  const state = {
+    datasets: { a: { ...dataset, chips: [chip] } },
+    ui: { search: '', sort: 'nulls' },
+    cards: [{ column: 'amount', pinned: true, bins: 12 }],
+  };
+  await board.saveView(state, viewFile);
+  const written = JSON.parse(fs.readFileSync(viewFile.fsPath, 'utf8'));
+  assert.deepStrictEqual(written, { tableViz: 1, ...state });
+  assert.ok(!/token|rowCount|"values"/.test(fs.readFileSync(viewFile.fsPath, 'utf8')), 'the file has no token and no data');
+
+  // The board saved this file, so the extension knows its content: it opens with no question.
+  const boardOf = async (uri) => until('the board of the view', () => [...api.boards].find((b) => b.viewUri && b.viewUri.fsPath === uri.fsPath && b !== board));
+  await vscode.commands.executeCommand('vscode.openWith', viewFile, 'dbxNotebook.tableViz.view');
+  const restored = await boardOf(viewFile);
+  assert.strictEqual(restored.approved, true);
+  const done = (b, type) => b.dispatcher.exchanges.find((x) => x.request.type === type && x.response && x.response.type === 'result');
+  // The page asks for the numbers of the saved card, with the saved filter chip and the saved number of bins.
+  const histogram = await until('the histogram of the saved card', () => restored.dispatcher.exchanges.find((x) => x.request.type === 'histogram' && x.request.edges.bins === 12 && x.response));
+  assert.deepStrictEqual(histogram.request.dataset.chips, [chip]);
+  // The row count of the filtered board is the count of the value EMEA in the board that has no filter.
+  await board.dispatcher.handle({ type: 'request', id: 'emea', request: { type: 'frequency', dataset, columns: [{ name: 'region', typeText: 'string' }], top: 10 } });
+  const emea = exchanges.find((x) => x.id === 'emea').response.result.values.find((v) => v.value === 'EMEA').count;
+  assert.strictEqual((await until('the overview of the saved view', () => done(restored, 'overview'))).response.result.rowCount, emea);
+  restored.panel.dispose();
+  log('tableViz: a saved view opens again with its filter and its card');
+
+  // A file that the extension did not see before: the board shows the datasets and runs nothing until the user permits it.
+  const foreign = vscode.Uri.file(path.join(process.env.DBX_E2E_DIR, 'from-a-colleague.tableviz.json'));
+  fs.writeFileSync(foreign.fsPath, JSON.stringify({ tableViz: 1, datasets: { a: { ...dataset, filter: '1 = 1' } }, cards: [{ column: 'channel', pinned: false }] }));
+  await vscode.commands.executeCommand('vscode.openWith', foreign, 'dbxNotebook.tableViz.view');
+  const waiting = await boardOf(foreign);
+  await until('the page of the view', () => waiting.ready);
+  assert.strictEqual(waiting.approved, false);
+  await sleep(700);
+  assert.strictEqual(waiting.dispatcher.exchanges.length, 0, 'the page sends no request before the user permits it');
+  // A request that arrives too early is refused. No profiler runs.
+  await waiting.dispatcher.handle({ type: 'request', id: 'early', request: { type: 'tableDetails', dataset } });
+  assert.strictEqual(waiting.dispatcher.exchanges.length, 0);
+  // The button "Run the Queries" sends this message.
+  await waiting.dispatcher.handle({ type: 'approve' });
+  assert.strictEqual(waiting.approved, true);
+  await until('the requests after the permission', () => waiting.dispatcher.exchanges.some((x) => x.request.type === 'tableDetails'));
+  waiting.panel.dispose();
+  log('tableViz: a saved view from a different person asks before it runs a query');
+
+  // After the permission, the same file opens with no question. In a workspace that is not trusted, it asks each time.
+  await vscode.commands.executeCommand('vscode.openWith', foreign, 'dbxNotebook.tableViz.view');
+  const again = await boardOf(foreign);
+  assert.strictEqual(again.approved, true);
+  again.panel.dispose();
+  await until('the board to close', () => ![...api.boards].includes(again));
+  const trusted = api.isTrusted;
+  api.isTrusted = () => false;
+  try {
+    await vscode.commands.executeCommand('vscode.openWith', viewFile, 'dbxNotebook.tableViz.view');
+    const untrusted = await boardOf(viewFile);
+    assert.strictEqual(untrusted.approved, false, 'a workspace that is not trusted asks, also for a file that was permitted');
+    await until('the page of the view', () => untrusted.ready);
+    await sleep(500);
+    assert.strictEqual(untrusted.dispatcher.exchanges.length, 0);
+    untrusted.panel.dispose();
+  } finally {
+    api.isTrusted = trusted;
+  }
+  // A file that is not a saved view opens a page with a message, not a board.
+  const broken = vscode.Uri.file(path.join(process.env.DBX_E2E_DIR, 'broken.tableviz.json'));
+  fs.writeFileSync(broken.fsPath, '{ "tableViz": 1, "datasets": { "a": { "profile": "Demo", "table": "x" } }, "token": "dapi" }');
+  const boardsBefore = api.boards.size;
+  await vscode.commands.executeCommand('vscode.openWith', broken, 'dbxNotebook.tableViz.view');
+  await sleep(500);
+  assert.strictEqual(api.boards.size, boardsBefore, 'a file with a wrong shape makes no board');
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  log('tableViz: a workspace that is not trusted asks each time, and a wrong file makes no board');
+
   // 3. A name that is not a three-part name opens no board.
   const tabs = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputWebview).length;
   const before = tabs();

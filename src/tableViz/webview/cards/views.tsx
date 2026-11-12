@@ -14,9 +14,9 @@
  * | complex    | ComplexView    | None                     | Type and percent null          |
  */
 import { useState, type ReactNode } from 'react';
-import { fillPeriods, frequencyRows, histogramBars, spanDays, type FrequencyRow } from '../../core/derive.ts';
+import { chipForBins, chipForPeriods, chipForValue, fillPeriods, frequencyRows, histogramBars, spanDays, type FrequencyRow } from '../../core/derive.ts';
 import { isNumeric, typeFamily } from '../../core/kinds.ts';
-import type { BinEdges, Card, ColumnInfo, Grain, OverviewColumn, ResultOf } from '../../core/schema.ts';
+import type { BinEdges, Card, Chip, ColumnInfo, Grain, OverviewColumn, ResultOf } from '../../core/schema.ts';
 import { Chart } from '../Chart.tsx';
 import { formatCount, formatNumber, formatPercent, formatStat, formatValue } from '../format.ts';
 import { barsOption } from '../options.ts';
@@ -38,8 +38,21 @@ function StatsTable({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
-/** A table of counts: one row for each bar of a chart. */
-function CountTable({ head, rows, total }: { head: string; rows: { label: string; count: number }[]; total: number }) {
+/** A button in a table row that adds a filter chip for that row. It does with the keyboard what a click on a bar does. */
+export function RowFilter({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="icon-button row-filter" title="Filter the dataset to this row" aria-label={`Filter the dataset to ${label}`} onClick={onClick}>
+      <span className="codicon codicon-filter" aria-hidden="true" />
+    </button>
+  );
+}
+
+/**
+ * A table of counts: one row for each bar of a chart.
+ *
+ * @param onRow  If set, each row has a filter button. The function gets the position of the row. Return false from `canFilter` for a row that has no button.
+ */
+function CountTable({ head, rows, total, onRow, canFilter }: { head: string; rows: { label: string; count: number }[]; total: number; onRow?: (index: number) => void; canFilter?: (index: number) => boolean }) {
   return (
     <div className="scroll">
       <table className="data">
@@ -57,7 +70,10 @@ function CountTable({ head, rows, total }: { head: string; rows: { label: string
         <tbody>
           {rows.map((row, i) => (
             <tr key={i}>
-              <td>{row.label}</td>
+              <td>
+                {onRow && (canFilter?.(i) ?? true) && <RowFilter label={row.label} onClick={() => onRow(i)} />}
+                {row.label}
+              </td>
               <td className="num">{formatCount(row.count)}</td>
               <td className="num">{formatPercent(row.count, total)}</td>
             </tr>
@@ -91,6 +107,8 @@ export interface ContinuousViewProps {
   onChange: (patch: Partial<Card>) => void;
   /** The user moved the slider. The card asks for a new histogram a moment later. */
   onBins: (bins: number) => void;
+  /** The user selected bins of the histogram. The board adds the chip to the dataset. */
+  onFilter?: (chip: Chip) => void;
 }
 
 /** A number column with many values: a histogram and a table of statistics. */
@@ -100,6 +118,17 @@ export function ContinuousView(props: ContinuousViewProps) {
   const bars = histogram && edges ? histogramBars(histogram, edges) : undefined;
   const label = (bar: { role: string; from?: number; to?: number }) =>
     bar.role === 'below' ? `Below ${formatNumber(bar.to as number)}` : bar.role === 'above' ? `Above ${formatNumber(bar.from as number)}` : `${formatNumber(bar.from as number)} to ${formatNumber(bar.to as number)}`;
+
+  /** Make a chip from the selected bars. The bars "below" and "above" are not bins, so they cannot be selected. */
+  const select = (first: number, last: number) => {
+    if (!bars || !edges || !props.onFilter) return;
+    const offset = bars[0]?.role === 'below' ? 1 : 0;
+    const from = Math.max(0, first - offset);
+    const to = Math.min(edges.bins - 1, last - offset);
+    if (to < from) return;
+    props.onFilter(chipForBins({ name: column.name, typeText: column.typeText }, edges, from, to));
+  };
+  const onSelect = props.onFilter ? select : undefined;
 
   const rows: [string, ReactNode][] = [
     ['Count', formatCount(stats.nonNull)],
@@ -135,9 +164,11 @@ export function ContinuousView(props: ContinuousViewProps) {
           Loading the histogram…
         </p>
       ) : card.asTable ? (
-        <CountTable head="Range" rows={bars.map((b) => ({ label: label(b), count: b.count }))} total={stats.nonNull} />
+        <CountTable head="Range" rows={bars.map((b) => ({ label: label(b), count: b.count }))} total={stats.nonNull} onRow={onSelect && ((i) => select(i, i))} canFilter={(i) => bars[i]?.role === 'bin'} />
       ) : (
         <Chart
+          onSelect={onSelect}
+          range
           label={`Histogram of ${column.name} with ${bars.length} bars.`}
           option={barsOption(props.theme, {
             labels: bars.map((b) => (b.role === 'below' ? 'below' : b.role === 'above' ? 'above' : formatNumber(b.from as number))),
@@ -153,8 +184,8 @@ export function ContinuousView(props: ContinuousViewProps) {
   );
 }
 
-/** The table of values: value, count, percent and cumulative percent. */
-function FrequencyTable({ rows, total }: { rows: FrequencyRow[]; total: number }) {
+/** The table of values: value, count, percent and cumulative percent. If `onRow` is set, each value row and the null row has a filter button. */
+function FrequencyTable({ rows, total, onRow }: { rows: FrequencyRow[]; total: number; onRow?: (row: FrequencyRow) => void }) {
   return (
     <div className="scroll">
       <table className="data">
@@ -175,7 +206,10 @@ function FrequencyTable({ rows, total }: { rows: FrequencyRow[]; total: number }
         <tbody>
           {rows.map((row) => (
             <tr key={row.role + row.label} className={row.role === 'value' ? undefined : 'muted'}>
-              <td>{row.label}</td>
+              <td>
+                {onRow && row.role !== 'other' && <RowFilter label={row.label} onClick={() => onRow(row)} />}
+                {row.label}
+              </td>
               <td className="num">{formatCount(row.count)}</td>
               <td className="num">{formatPercent(row.count, total)}</td>
               <td className="num">{row.cumulative === undefined ? '' : formatPercent(Math.round(row.cumulative * total), total)}</td>
@@ -199,6 +233,8 @@ export interface ValuesViewProps {
   card: Card;
   theme: Theme;
   onChange: (patch: Partial<Card>) => void;
+  /** The user selected a value. The board adds the chip to the dataset. */
+  onFilter?: (chip: Chip) => void;
 }
 
 /** A column with few different values: a bar for each value and a frequency table. */
@@ -213,6 +249,10 @@ export function ValuesView(props: ValuesViewProps) {
   const needle = search.trim().toLowerCase();
   const tableRows = needle ? allRows.filter((r) => r.role === 'value' && r.label.toLowerCase().includes(needle)) : allRows;
   const hidden = props.distinct !== undefined ? props.distinct - frequency.values.length : 0;
+  const filter = (row: FrequencyRow | undefined) => {
+    const chip = row && chipForValue({ name: column.name, typeText: column.typeText }, row.role, row.label);
+    if (chip) props.onFilter?.(chip);
+  };
 
   return (
     <>
@@ -229,6 +269,8 @@ export function ValuesView(props: ValuesViewProps) {
       )}
       {!card.asTable && (
         <Chart
+          onSelect={props.onFilter && ((i) => filter(chartRows[i]))}
+          horizontal={kind === 'category'}
           label={`${kind === 'discrete' ? 'Rows for each value' : 'Most frequent values'} of ${column.name}, ${chartRows.length} bars.`}
           option={barsOption(props.theme, {
             labels: chartRows.map((r) => r.label),
@@ -248,7 +290,7 @@ export function ValuesView(props: ValuesViewProps) {
           </span>
         )}
       </div>
-      <FrequencyTable rows={tableRows} total={frequency.rowCount} />
+      <FrequencyTable rows={tableRows} total={frequency.rowCount} onRow={props.onFilter && filter} />
     </>
   );
 }
@@ -266,6 +308,8 @@ export interface IdentifierViewProps {
   lengthEdges: BinEdges | undefined;
   card: Card;
   theme: Theme;
+  /** The user selected a value or a range of lengths. The board adds the chip to the dataset. */
+  onFilter?: (chip: Chip) => void;
 }
 
 /** A column where almost every row has a different value: statistics, the values that repeat, and the lengths of the values. */
@@ -276,6 +320,9 @@ export function IdentifierView(props: IdentifierViewProps) {
   const bars = lengths && lengthEdges ? histogramBars(lengths, lengthEdges) : undefined;
   // The length of a value is a whole number. Show "6" for a bin that holds one length, and "6 to 8" for a wider bin.
   const lengthLabel = (from: number, to: number) => (to - from <= 1 ? String(Math.floor(from)) : `${Math.floor(from)} to ${Math.ceil(to) - 1}`);
+  const ref = { name: column.name, typeText: column.typeText };
+  const { onFilter } = props;
+  const selectLengths = onFilter && lengthEdges ? (first: number, last: number) => onFilter(chipForBins(ref, lengthEdges, first, last, 'length')) : undefined;
 
   return (
     <>
@@ -294,7 +341,7 @@ export function IdentifierView(props: IdentifierViewProps) {
       ) : repeated.length === 0 ? (
         <p className="status">No value occurs more than one time.</p>
       ) : (
-        <CountTable head="Value" rows={repeated.map((v) => ({ label: v.value, count: v.count }))} total={rowCount} />
+        <CountTable head="Value" rows={repeated.map((v) => ({ label: v.value, count: v.count }))} total={rowCount} onRow={onFilter && ((i) => onFilter({ op: 'eq', column: ref, value: (repeated[i] as { value: string }).value }))} />
       )}
       <h3>Length of the values</h3>
       {!bars ? (
@@ -302,9 +349,11 @@ export function IdentifierView(props: IdentifierViewProps) {
           Loading…
         </p>
       ) : props.card.asTable ? (
-        <CountTable head="Characters" rows={bars.map((b) => ({ label: lengthLabel(b.from as number, b.to as number), count: b.count }))} total={stats.nonNull} />
+        <CountTable head="Characters" rows={bars.map((b) => ({ label: lengthLabel(b.from as number, b.to as number), count: b.count }))} total={stats.nonNull} onRow={selectLengths && ((i) => selectLengths(i, i))} />
       ) : (
         <Chart
+          onSelect={selectLengths}
+          range
           label={`Histogram of the number of characters in the values of ${column.name}.`}
           option={barsOption(props.theme, {
             labels: bars.map((b) => lengthLabel(b.from as number, b.to as number)),
@@ -330,6 +379,8 @@ export interface DateViewProps {
   card: Card;
   theme: Theme;
   onChange: (patch: Partial<Card>) => void;
+  /** The user selected periods. The board adds the chip to the dataset. */
+  onFilter?: (chip: Chip) => void;
 }
 
 /** A date or timestamp column: the number of rows in each period, and the first and last date. */
@@ -337,6 +388,15 @@ export function DateView(props: DateViewProps) {
   const { column, stats, rowCount, dateCounts, grain, card, onChange } = props;
   const filled = dateCounts ? fillPeriods(dateCounts.buckets, grain) : undefined;
   const hasDates = stats.min !== undefined && stats.max !== undefined;
+  const { onFilter } = props;
+  const select =
+    onFilter && filled
+      ? (first: number, last: number) => {
+          const from = filled.periods[Math.max(0, first)];
+          const to = filled.periods[Math.min(filled.periods.length - 1, last)];
+          if (from && to) onFilter(chipForPeriods({ name: column.name, typeText: column.typeText }, from.start, to.start, grain));
+        }
+      : undefined;
 
   return (
     <>
@@ -362,9 +422,11 @@ export function DateView(props: DateViewProps) {
           Loading…
         </p>
       ) : card.asTable ? (
-        <CountTable head={`Start of the ${grain}`} rows={filled.periods.map((p) => ({ label: p.start, count: p.count }))} total={stats.nonNull} />
+        <CountTable head={`Start of the ${grain}`} rows={filled.periods.map((p) => ({ label: p.start, count: p.count }))} total={stats.nonNull} onRow={select && ((i) => select(i, i))} />
       ) : (
         <Chart
+          onSelect={select}
+          range
           label={`Rows of ${column.name} for each ${grain}, ${filled.periods.length} periods.`}
           option={barsOption(props.theme, {
             labels: filled.periods.map((p) => p.start),

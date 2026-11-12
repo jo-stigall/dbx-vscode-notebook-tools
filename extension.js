@@ -215,6 +215,12 @@ function activate(context) {
     vscode.commands.registerCommand('dbxNotebook.tableViz.refreshTables', () => tableTree().refresh()),
     vscode.commands.registerCommand('dbxNotebook.tableViz.addFavorite', (node) => node && node.kind === 'table' && tableTree().addFavorite(node.table)),
     vscode.commands.registerCommand('dbxNotebook.tableViz.removeFavorite', (node) => node && node.kind === 'table' && tableTree().removeFavorite(node.table)),
+    // A file "*.tableviz.json" is a saved view. VS Code opens it as a board.
+    vscode.window.registerCustomEditorProvider('dbxNotebook.tableViz.view', {
+      resolveCustomTextEditor: async (document, panel) => {
+        await loadTableViz().resolveView(document, panel);
+      },
+    }),
     // For tests: get the feature object.
     vscode.commands.registerCommand('dbxNotebook.tableViz._api', () => loadTableViz()),
     treeChanged,

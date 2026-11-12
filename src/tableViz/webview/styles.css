@@ -582,3 +582,141 @@ table.data {
 .data .tag {
   font-style: normal;
 }
+
+/* Filter chips */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 8px;
+  border: 1px solid var(--tv-border);
+  border-radius: 10px;
+  background: var(--vscode-badge-background, transparent);
+  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em;
+}
+.dataset-bar .filter-chip button {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.chart.selectable {
+  cursor: pointer;
+}
+.row-filter {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  vertical-align: middle;
+  opacity: 0.55;
+}
+.row-filter:hover,
+.row-filter:focus-visible {
+  opacity: 1;
+}
+
+/* The "Save or copy" menu of a card */
+.menu {
+  position: relative;
+}
+.menu summary {
+  list-style: none;
+  cursor: pointer;
+}
+.menu summary::-webkit-details-marker {
+  display: none;
+}
+.menu-items {
+  position: absolute;
+  right: 0;
+  top: 26px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--tv-border));
+  border-radius: 4px;
+  background: var(--vscode-menu-background, var(--vscode-editor-background));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+}
+.menu-items button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.menu-items button:hover:not(:disabled),
+.menu-items button:focus-visible {
+  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+}
+.menu-items button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The question before a saved view runs */
+.confirm {
+  max-width: 760px;
+}
+.confirm-dataset {
+  margin: 12px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--tv-border);
+  border-radius: 4px;
+}
+.confirm-dataset h2 {
+  margin: 0 0 6px;
+  font-size: 1.05em;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+.confirm-dataset dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+.confirm-dataset dt {
+  color: var(--tv-muted);
+}
+.confirm-dataset dd {
+  margin: 0;
+}
+.confirm-dataset pre {
+  margin: 0;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--tv-border));
+  background: var(--vscode-textCodeBlock-background, transparent);
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+button.primary {
+  padding: 5px 14px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  color: var(--vscode-button-foreground, var(--vscode-foreground));
+  background: var(--vscode-button-background, transparent);
+  font: inherit;
+  cursor: pointer;
+}
+button.primary:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-list-hoverBackground));
+}

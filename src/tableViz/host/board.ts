@@ -7,9 +7,11 @@
  */
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
+import { fileName } from '../core/derive.ts';
 import { displayTableName } from '../core/names.ts';
 import { createDispatcher, type Dispatcher, type Profiler } from '../core/profiler.ts';
-import type { BoardDatasets, BoardSettings, ToWebview } from '../core/schema.ts';
+import { inlineRendered } from '../core/sql.ts';
+import type { BoardDatasets, BoardSettings, BoardState, SavedView, ToHost, ToWebview } from '../core/schema.ts';
 
 /** The name that VS Code uses for the panels of this feature. package.json uses the same name. */
 export const VIEW_TYPE = 'dbxNotebook.tableViz.board';
@@ -22,6 +24,22 @@ export interface BoardDeps {
   /** Reads the settings of the feature from the VS Code settings. */
   settings: () => BoardSettings;
   log: vscode.LogOutputChannel;
+  /** The board wrote a saved view to a file. */
+  onSaved?: (uri: vscode.Uri, text: string) => void;
+  /** The user permitted the queries of a saved view. */
+  onApproved?: (board: Board) => void;
+  /** The panel of the board closed. */
+  onClosed?: (board: Board) => void;
+}
+
+/** What a board that comes from a `.tableviz.json` file has more than a new board. */
+export interface ViewOptions {
+  /** The file of the saved view. "Save View" writes to it. */
+  uri: vscode.Uri;
+  /** The cards and settings of the view. */
+  state: BoardState;
+  /** true: show the datasets and filters, and run no query until the user permits it. */
+  needsApproval: boolean;
 }
 
 /** The folder that contains the built webview files. The webview can read no other folder. */
@@ -38,14 +56,23 @@ export class Board {
   readonly dispatcher: Dispatcher;
   readonly panel: vscode.WebviewPanel;
   readonly datasets: BoardDatasets;
+  /** The file of the saved view, if the board came from a file or was saved to one. */
+  viewUri: vscode.Uri | undefined;
+  /** false while a saved view waits for the permission of the user. No query runs then. */
+  approved: boolean;
+  private readonly deps: BoardDeps;
 
   /**
    * @param panel  A new panel, or a panel that VS Code restored after a window reload.
    * @param datasets  The datasets that the board shows.
+   * @param view  Set for a board that comes from a `.tableviz.json` file.
    */
-  constructor(panel: vscode.WebviewPanel, datasets: BoardDatasets, deps: BoardDeps) {
+  constructor(panel: vscode.WebviewPanel, datasets: BoardDatasets, deps: BoardDeps, view?: ViewOptions) {
     this.panel = panel;
     this.datasets = datasets;
+    this.deps = deps;
+    this.viewUri = view?.uri;
+    this.approved = !view?.needsApproval;
     const post = (message: ToWebview) => void panel.webview.postMessage(message);
     const started = new Map<string, number>();
     this.dispatcher = createDispatcher({
@@ -66,10 +93,34 @@ export class Board {
         const controller = new AbortController();
         return { signal: controller.signal, cancel: () => controller.abort() };
       },
-      onOther: () => {
-        this.ready = true;
-        post({ type: 'init', datasets, settings: deps.settings() });
+      onOther: async (message) => {
+        const init = (): ToWebview => ({ type: 'init', datasets, settings: deps.settings(), ...(view ? { state: view.state } : {}), ...(this.approved ? {} : { confirm: true }) });
+        try {
+          switch (message.type) {
+            case 'ready':
+              this.ready = true;
+              post(init());
+              break;
+            case 'approve':
+              this.approved = true;
+              deps.onApproved?.(this);
+              post(init());
+              break;
+            case 'openSql':
+              await this.openSql(message.sql);
+              break;
+            case 'export':
+              await this.exportFile(message);
+              break;
+            case 'saveView':
+              await this.saveView(message.state);
+              break;
+          }
+        } catch (e) {
+          void vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
+        }
       },
+      blocked: () => (this.approved ? undefined : 'This saved view waits for your permission. Read its datasets and filters, then click "Run the Queries".'),
     });
 
     panel.webview.options = webviewOptions(deps.extensionUri);
@@ -78,7 +129,79 @@ export class Board {
     panel.onDidDispose(() => {
       listener.dispose();
       this.dispatcher.cancelAll();
+      deps.onClosed?.(this);
     });
+  }
+
+  /** A folder for the "Save" dialogs: the first folder of the workspace. */
+  private get folder(): vscode.Uri | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri;
+  }
+
+  /**
+   * Open the SQL of a card in a text editor.
+   *
+   * The extension runs each statement with named parameters. The editor
+   * gets the same statements with the values in the text, so that a person
+   * can run them as they are.
+   */
+  private async openSql(statements: string[]): Promise<void> {
+    const content =
+      '-- The SQL behind a card of "Visualize Table".\n-- The extension runs each statement with named parameters. Here the values are in the text.\n\n' +
+      statements.map(inlineRendered).join(';\n\n') +
+      ';\n';
+    const document = await vscode.workspace.openTextDocument({ language: 'sql', content });
+    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+  }
+
+  /** Save a chart or the tables of a card to a file that the user selects, or copy them. */
+  private async exportFile(message: Extract<ToHost, { type: 'export' }>): Promise<void> {
+    if (message.action === 'copy') {
+      // VS Code can copy text only. The webview copies a PNG image itself.
+      if (message.text === undefined) return;
+      await vscode.env.clipboard.writeText(message.text);
+      vscode.window.setStatusBarMessage(message.format === 'csv' ? 'Copied the tables' : 'Copied the chart as SVG text', 3000);
+      return;
+    }
+    const names = { csv: 'CSV', svg: 'SVG image', png: 'PNG image' };
+    const name = fileName([message.name.replace(/\.[a-z]+$/, '')], message.format);
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: this.folder ? vscode.Uri.joinPath(this.folder, name) : vscode.Uri.file(name),
+      filters: { [names[message.format]]: [message.format] },
+    });
+    if (!target) return;
+    const bytes = message.base64 !== undefined ? Buffer.from(message.base64, 'base64') : Buffer.from(message.text ?? '', 'utf8');
+    await vscode.workspace.fs.writeFile(target, bytes);
+  }
+
+  /**
+   * Write the board to a `.tableviz.json` file.
+   *
+   * The file holds the datasets, the filters, the cards and their settings.
+   * It holds no data and no token.
+   *
+   * @param state  What the webview shows now.
+   * @param target  The file to write. If you omit it, the function writes to the file of the view, or asks for a file.
+   * @returns The file, or undefined if the user closed the dialog.
+   */
+  async saveView(state: BoardState, target?: vscode.Uri): Promise<vscode.Uri | undefined> {
+    const name = fileName([state.datasets.a.table.name, ...(state.datasets.b ? ['vs', state.datasets.b.table.name] : [])], 'tableviz.json');
+    const uri =
+      target ??
+      this.viewUri ??
+      (await vscode.window.showSaveDialog({
+        defaultUri: this.folder ? vscode.Uri.joinPath(this.folder, name) : vscode.Uri.file(name),
+        filters: { 'Table visualization view': ['json'] },
+      }));
+    if (!uri) return undefined;
+    const view: SavedView = { tableViz: 1, datasets: state.datasets, ui: state.ui, cards: state.cards, asText: state.asText };
+    const text = JSON.stringify(view, null, 2) + '\n';
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(text, 'utf8'));
+    this.viewUri = uri;
+    this.deps.onSaved?.(uri, text);
+    this.deps.log.info(`tableViz: saved the view to ${uri.fsPath}`);
+    vscode.window.setStatusBarMessage(`Saved the view to ${uri.fsPath}`, 4000);
+    return uri;
   }
 
   /** The text on the tab of a board. Example: "orders_2026" or "orders_2025 ↔ orders_2026". */

@@ -1,14 +1,14 @@
 /** The top of the page: wait for the datasets and the settings from the host, then show the board. */
 import { useEffect, useState } from 'react';
-import type { BoardDatasets, BoardSettings } from '../core/schema.ts';
 import { Board } from './Board.tsx';
-import { start } from './rpc.ts';
+import { ConfirmView } from './ConfirmView.tsx';
+import { send, start, type Init } from './rpc.ts';
 
 export function App() {
-  const [init, setInit] = useState<{ datasets: BoardDatasets; settings: BoardSettings }>();
+  const [init, setInit] = useState<Init>();
 
   useEffect(() => {
-    start((datasets, settings) => setInit({ datasets, settings }));
+    start(setInit);
   }, []);
 
   if (!init) {
@@ -18,5 +18,7 @@ export function App() {
       </p>
     );
   }
-  return <Board datasets={init.datasets} settings={init.settings} />;
+  // A saved view that the extension did not see before: show its datasets and filters, and run nothing.
+  if (init.confirm) return <ConfirmView datasets={init.datasets} onApprove={() => send({ type: 'approve' })} />;
+  return <Board datasets={init.datasets} settings={init.settings} initialState={init.state} />;
 }

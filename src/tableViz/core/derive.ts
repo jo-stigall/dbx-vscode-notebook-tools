@@ -6,7 +6,7 @@
  */
 import { binBounds, formatDay } from './bins.ts';
 import { typeFamily, type TypeFamily } from './kinds.ts';
-import { datasetVersionSchema, type BinEdges, type Card, type ColumnKind, type DatasetVersion, type Grain, type ResultOf } from './schema.ts';
+import { datasetVersionSchema, type BinEdges, type Card, type Chip, type ColumnKind, type ColumnRef, type Dataset, type DatasetVersion, type Grain, type Measure, type ResultOf } from './schema.ts';
 
 /** One row of a frequency table. */
 export interface FrequencyRow {
@@ -259,4 +259,122 @@ export function parseVersion(text: string): DatasetVersion | undefined | 'invali
   if (!value) return undefined;
   const parsed = datasetVersionSchema.safeParse(/^\d+$/.test(value) ? { kind: 'version', n: value } : { kind: 'timestamp', ts: value });
   return parsed.success ? parsed.data : 'invalid';
+}
+
+/**
+ * Make the filter chip for a click on a bar of a value.
+ *
+ * @param role  What the bar is: one value, the null rows, or "Other".
+ * @returns The chip, or undefined for "Other": "all values that the chart does not show" is not one condition.
+ */
+export function chipForValue(column: ColumnRef, role: 'value' | 'null' | 'other', label: string): Chip | undefined {
+  if (role === 'other') return undefined;
+  return role === 'null' ? { op: 'null', column } : { op: 'eq', column, value: label };
+}
+
+/**
+ * Make the filter chip for a click on a bin of a histogram, or a drag across some bins.
+ *
+ * @example
+ * chipForBins(amount, { lo: 0, hi: 100, bins: 4 }, 1, 2)   // { op: 'range', column: amount, lo: 25, hi: 75 }
+ * chipForBins(amount, { lo: 0, hi: 100, bins: 4 }, 3, 3)   // { op: 'range', column: amount, lo: 75, hi: 100, includeHi: true }
+ *
+ * @param first  The number of the first selected bin, from 0.
+ * @param last  The number of the last selected bin.
+ * @param measure  What the histogram measures. Omit it for the value of a number column.
+ */
+export function chipForBins(column: ColumnRef, edges: BinEdges, first: number, last: number, measure?: Measure): Chip {
+  const from = Math.max(0, Math.min(first, last));
+  const to = Math.min(edges.bins - 1, Math.max(first, last));
+  const lo = binBounds(edges, from)[0];
+  const hi = binBounds(edges, to)[1];
+  // The last bin contains the value `hi`. See binIndex().
+  return { op: 'range', column, lo, hi, ...(measure ? { measure } : {}), ...(to === edges.bins - 1 ? { includeHi: true } : {}) };
+}
+
+/**
+ * Make the filter chip for a click on a period of a date chart, or a drag across some periods.
+ *
+ * @example
+ * chipForPeriods(orderDate, '2026-01-01', '2026-02-01', 'month')
+ * // { op: 'range', column: orderDate, measure: 'day', lo: <day of 2026-01-01>, hi: <day of 2026-03-01> }
+ *
+ * @param first  The start of the first selected period, as YYYY-MM-DD.
+ * @param last  The start of the last selected period.
+ */
+export function chipForPeriods(column: ColumnRef, first: string, last: string, grain: Grain): Chip {
+  const [from, to] = [dayOf(first), dayOf(last)].sort((x, y) => x - y) as [number, number];
+  return { op: 'range', column, measure: 'day', lo: from, hi: nextPeriod(to, grain) };
+}
+
+/**
+ * Write a filter chip for a person to read.
+ *
+ * @example
+ * chipLabel({ op: 'eq', column: region, value: 'EMEA' })                       // 'region = EMEA'
+ * chipLabel({ op: 'null', column: discount })                                  // 'discount_pct is null'
+ * chipLabel({ op: 'range', column: amount, lo: 25, hi: 75 })                   // 'amount: 25 to 75'
+ * chipLabel({ op: 'range', column: orderDate, measure: 'day', lo: 20454, hi: 20485 })   // 'order_date: 2026-01-01 to 2026-01-31'
+ */
+export function chipLabel(chip: Chip): string {
+  const name = chip.column.name;
+  if (chip.op === 'eq') return `${name} = ${chip.value}`;
+  if (chip.op === 'null') return `${name} is null`;
+  const number = (x: number) => String(Number(x.toPrecision(6)));
+  // A date range ends on the day before `hi`.
+  if (chip.measure === 'day') return `${name}: ${formatDay(chip.lo)} to ${formatDay(chip.hi - 1)}`;
+  return `${chip.measure === 'length' ? `length of ${name}` : name}: ${number(chip.lo)} to ${number(chip.hi)}`;
+}
+
+/**
+ * Add a chip to a dataset. A chip that the dataset has is not added a second time.
+ *
+ * @returns A new dataset. The same dataset if it has the chip, or has 20 chips.
+ */
+export function addChip(dataset: Dataset, chip: Chip): Dataset {
+  const chips = dataset.chips ?? [];
+  const key = JSON.stringify(chip);
+  if (chips.length >= 20 || chips.some((c) => JSON.stringify(c) === key)) return dataset;
+  return { ...dataset, chips: [...chips, chip] };
+}
+
+/** Remove the chip at a position from a dataset. */
+export function removeChip(dataset: Dataset, index: number): Dataset {
+  const chips = (dataset.chips ?? []).filter((_, i) => i !== index);
+  return { ...dataset, chips: chips.length ? chips : undefined };
+}
+
+/**
+ * Write rows of cells as CSV text.
+ *
+ * A cell that contains a comma, a quotation mark or a line break is between
+ * quotation marks, and each quotation mark in it is written two times. A
+ * cell that starts with =, +, - or @ gets an apostrophe before it, so that a
+ * spreadsheet program does not run it as a formula. A negative number keeps
+ * its minus sign.
+ *
+ * @example
+ * toCsv([['Value', 'Rows'], ['web, mobile', '60,352'], ['say "hi"', '1']])
+ * // 'Value,Rows\r\n"web, mobile","60,352"\r\n"say ""hi""",1\r\n'
+ */
+export function toCsv(rows: string[][]): string {
+  const cell = (text: string) => {
+    const safe = /^[=+@]/.test(text) || (/^-/.test(text) && !/^-[\d.,]+%?$/.test(text)) ? `'${text}` : text;
+    return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  };
+  return rows.map((row) => row.map(cell).join(',') + '\r\n').join('');
+}
+
+/**
+ * Make a file name from parts. The name has only letters, digits, "-", "_" and ".".
+ *
+ * @example
+ * fileName(['orders 2026', 'unit/price'], 'csv')   // 'orders_2026_unit_price.csv'
+ */
+export function fileName(parts: string[], extension: string): string {
+  const base = parts
+    .map((part) => part.replace(/[^\p{L}\p{N}_.-]+/gu, '_').replace(/^_+|_+$/g, ''))
+    .filter(Boolean)
+    .join('_');
+  return `${base || 'table'}.${extension}`;
 }

@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { chooseGrain, makeEdges } from '../../core/bins.ts';
 import { kindsFor } from '../../core/derive.ts';
 import { detectKind } from '../../core/kinds.ts';
-import type { BoardSettings, Card, ColumnInfo, ColumnKind, Dataset, OverviewColumn } from '../../core/schema.ts';
+import type { BoardSettings, Card, Chip, ColumnInfo, ColumnKind, Dataset, OverviewColumn } from '../../core/schema.ts';
 import { useDebounced, useResult, type Loadable } from '../hooks.ts';
 import { useTheme } from '../theme.ts';
 import { CardShell, type CardShellProps } from './CardShell.tsx';
@@ -38,6 +38,8 @@ export interface ColumnCardProps {
   settings: BoardSettings;
   onChange: (patch: Partial<Card>) => void;
   onClose: () => void;
+  /** The user selected bars of a chart. The board adds the chip to the dataset. */
+  onFilter?: (chip: Chip) => void;
 }
 
 /** The properties that each kind of card gets. */
@@ -105,6 +107,7 @@ function ContinuousCard(props: KindProps) {
           theme={theme}
           onChange={onChange}
           onBins={setBins}
+          onFilter={props.onFilter}
         />
       )}
     </CardShell>
@@ -128,6 +131,7 @@ function ValuesCard(props: KindProps & { valuesKind: 'discrete' | 'category' }) 
           card={card}
           theme={theme}
           onChange={props.onChange}
+          onFilter={props.onFilter}
         />
       )}
     </CardShell>
@@ -173,6 +177,7 @@ function IdentifierCard(props: KindProps) {
         lengthEdges={edges}
         card={card}
         theme={theme}
+        onFilter={props.onFilter}
       />
     </CardShell>
   );
@@ -195,6 +200,7 @@ function DateCard(props: KindProps) {
         card={card}
         theme={theme}
         onChange={props.onChange}
+        onFilter={props.onFilter}
       />
     </CardShell>
   );

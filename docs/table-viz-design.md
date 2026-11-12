@@ -295,6 +295,39 @@ behaves in an esbuild bundle, and all live queries.
 - **Dataset B uses the profile of dataset A.** Two workspaces are out of
   scope, but the dataset type has the profile.
 
+## Decisions in milestone 7
+
+- **A filter chip is data, not SQL.** A chip is a column, an operator
+  (`eq`, `null`, `range`) and values. The builders make its SQL with
+  parameters. A saved view thus cannot bring SQL into a chip. The typed
+  filter stays the only free SQL.
+- **The Demo profile can use chips**, because it can test a chip on each
+  row. It still cannot use a typed filter, because it cannot run SQL.
+- **In compare mode, a click filters A and B.**
+- **A drag selects a range** with the brush of ECharts. A click selects one
+  bar. The tables have a filter button in each row, for the keyboard.
+- **Export.** The page makes the content (CSV from the tables that it
+  shows, PNG from the canvas, SVG from a second chart that draws to text)
+  and the host writes the file. The host can copy text only, so the page
+  copies a PNG itself; if the browser refuses, it saves the PNG.
+- **"Open SQL in Editor" puts the values into the SQL text.** The card
+  still shows the statement with its parameters, which is what ran.
+- **A saved view is `{ "tableViz": 1, datasets, ui, cards, asText }`.** The
+  schema refuses each other field.
+- **The question before a saved view runs.** The extension remembers a hash
+  of the path and the content of each view that the user saved or
+  permitted. A view with a different hash shows its datasets and filters
+  first. The host refuses each request until the user clicks the button.
+- **A workspace that is not trusted.** The extension has no
+  `untrustedWorkspaces` declaration, so VS Code does not start it there.
+  That is stricter than the brief asks. I did not add the declaration,
+  because it would also start the notebook kernel in a project that is not
+  trusted, and that kernel reads the workspace URL from a project file. The
+  code also checks `workspace.isTrusted` and asks each time if it is false;
+  a test covers that path.
+- **Export uses the first chart of a card.** In "Side by side" mode the
+  card has two charts; switch that mode off to get A and B in one image.
+
 ## Proposals
 
 None yet.

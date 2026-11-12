@@ -11,9 +11,10 @@
 import { useState, type ReactNode } from 'react';
 import { binBounds } from '../../core/bins.ts';
 import { comparedValues, type ComparedValue } from '../../core/compare.ts';
-import { sharedPeriods, spanDays } from '../../core/derive.ts';
+import { chipForBins, chipForPeriods, chipForValue, sharedPeriods, spanDays } from '../../core/derive.ts';
 import type { Drift } from '../../core/drift.ts';
-import type { BinEdges, Card, Grain, OverviewColumn, ResultOf } from '../../core/schema.ts';
+import type { BinEdges, Card, Chip, ColumnRef, Grain, OverviewColumn, ResultOf } from '../../core/schema.ts';
+import { RowFilter } from '../cards/views.tsx';
 import { Chart } from '../Chart.tsx';
 import { formatCount, formatNumber, formatPercent, formatStat, formatValue } from '../format.ts';
 import { barsOption, compareBarsOption } from '../options.ts';
@@ -53,6 +54,15 @@ export function DriftLine({ drift }: { drift: Drift }) {
   );
 }
 
+/**
+ * Makes the filter chip of a selection for one column.
+ *
+ * In compare mode a selection filters dataset A and dataset B. The column
+ * can have a different name or type in B, so the board calls this function
+ * one time with the column of A and one time with the column of B.
+ */
+export type ChipMaker = (column: ColumnRef) => Chip | undefined;
+
 /** One line of a chart or table that shows A and B: a bin, a value or a period. */
 export interface PairRow {
   label: string;
@@ -77,10 +87,16 @@ export interface PairViewProps {
   card: Card;
   theme: Theme;
   horizontal?: boolean;
+  /** The user selected rows: a click on one bar, a drag across some bars, or the filter button of a table row. */
+  onSelect?: (first: number, last: number) => void;
+  /** true: a drag across the chart selects a range. */
+  range?: boolean;
+  /** Returns false for a row that cannot be a filter, for example "Other". */
+  canFilter?: (index: number) => boolean;
 }
 
 /** A chart of A and B for the same rows, or the same numbers as a table. */
-export function PairView({ rows, totalA, totalB, head, label, card, theme, horizontal }: PairViewProps) {
+export function PairView({ rows, totalA, totalB, head, label, card, theme, horizontal, onSelect, range, canFilter }: PairViewProps) {
   const share = (count: number, total: number) => (total === 0 ? 0 : (count / total) * 100);
   const percent = !card.rawCounts;
   const a = rows.map((r) => (percent ? share(r.a, totalA) : r.a));
@@ -114,9 +130,10 @@ export function PairView({ rows, totalA, totalB, head, label, card, theme, horiz
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {rows.map((r, i) => (
               <tr key={r.label} className={r.muted ? 'muted' : undefined}>
                 <td>
+                  {onSelect && (canFilter?.(i) ?? true) && <RowFilter label={r.label} onClick={() => onSelect(i, i)} />}
                   {r.label}
                   {r.onlyIn && <span className="tag">only in {r.onlyIn.toUpperCase()}</span>}
                 </td>
@@ -141,6 +158,9 @@ export function PairView({ rows, totalA, totalB, head, label, card, theme, horiz
           <span className={`chip chip-${name.toLowerCase()}`}>{name}</span>
         </p>
         <Chart
+          onSelect={onSelect}
+          range={range}
+          horizontal={horizontal}
           label={`${label} Dataset ${name}.`}
           height={height}
           option={barsOption(theme, { labels: rows.map((r) => r.label), counts: values, tips, logScale: card.logScale, horizontal, gap: 10, color: name === 'A' ? theme.a : theme.b, max: card.logScale ? undefined : max, axisFormat })}
@@ -154,7 +174,7 @@ export function PairView({ rows, totalA, totalB, head, label, card, theme, horiz
       </div>
     );
   }
-  return <Chart label={`${label} Dataset A and dataset B.`} height={height} option={compareBarsOption(theme, { labels: rows.map((r) => r.label), a, b, tips, nameA: 'A', nameB: 'B', logScale: card.logScale, horizontal, axisFormat })} />;
+  return <Chart onSelect={onSelect} range={range} horizontal={horizontal} label={`${label} Dataset A and dataset B.`} height={height} option={compareBarsOption(theme, { labels: rows.map((r) => r.label), a, b, tips, nameA: 'A', nameB: 'B', logScale: card.logScale, horizontal, axisFormat })} />;
 }
 
 /** The controls that each compare card has: percent or counts, one chart or two. */
@@ -239,6 +259,8 @@ export interface ContinuousCompareViewProps {
   theme: Theme;
   onChange: (patch: Partial<Card>) => void;
   onBins: (bins: number) => void;
+  /** The user selected bins. The board adds the chip to A and to B. */
+  onFilter?: (make: ChipMaker) => void;
 }
 
 /** A number column in A and B: two histograms with the same bins, and the statistics side by side. */
@@ -253,6 +275,17 @@ export function ContinuousCompareView(props: ContinuousCompareViewProps) {
     if (histogramA.below > 0 || histogramB.below > 0) rows.unshift({ label: `Below ${formatNumber(edges.lo)}`, a: histogramA.below, b: histogramB.below, muted: true });
     if (histogramA.above > 0 || histogramB.above > 0) rows.push({ label: `Above ${formatNumber(edges.hi)}`, a: histogramA.above, b: histogramB.above, muted: true });
   }
+  // The row "Below ..." is not a bin. If it is there, the bins start at position 1.
+  const offset = rows?.[0]?.label.startsWith('Below ') && rows[0].muted ? 1 : 0;
+  const { onFilter } = props;
+  const select =
+    onFilter && edges
+      ? (first: number, last: number) => {
+          const from = Math.max(0, first - offset);
+          const to = Math.min(edges.bins - 1, last - offset);
+          if (to >= from) onFilter((column) => chipForBins(column, edges, from, to));
+        }
+      : undefined;
   const num = (text: string | undefined) => (text === undefined ? undefined : Number(text));
   const stats: StatRow[] = [
     { label: 'Count', a: statsA.nonNull, b: statsB.nonNull, count: true },
@@ -285,7 +318,7 @@ export function ContinuousCompareView(props: ContinuousCompareViewProps) {
           Loading the histograms…
         </p>
       ) : (
-        <PairView rows={rows} totalA={statsA.nonNull} totalB={statsB.nonNull} head="Range" label={`Histogram of ${props.name} with the same ${edges?.bins} bins for A and B.`} card={card} theme={props.theme} />
+        <PairView rows={rows} totalA={statsA.nonNull} totalB={statsB.nonNull} head="Range" label={`Histogram of ${props.name} with the same ${edges?.bins} bins for A and B.`} card={card} theme={props.theme} onSelect={select} range canFilter={(i) => !rows?.[i]?.muted} />
       )}
       <CompareStatsTable rows={stats} />
     </>
@@ -301,10 +334,12 @@ export interface ValuesCompareViewProps {
   card: Card;
   theme: Theme;
   onChange: (patch: Partial<Card>) => void;
+  /** The user selected a value. The board adds the chip to A and to B. */
+  onFilter?: (make: ChipMaker) => void;
 }
 
 /** A column with few values in A and B: the values of the two datasets, ranked by the larger share. */
-export function ValuesCompareView({ name, a, b, topValues, card, theme, onChange }: ValuesCompareViewProps) {
+export function ValuesCompareView({ name, a, b, topValues, card, theme, onChange, onFilter }: ValuesCompareViewProps) {
   const [search, setSearch] = useState('');
   const toRow = (v: ComparedValue): PairRow => ({ label: v.label, a: v.countA, b: v.countB, onlyIn: v.onlyIn, muted: v.role !== 'value' });
   const chart = comparedValues(a, b, topValues).map(toRow);
@@ -313,10 +348,18 @@ export function ValuesCompareView({ name, a, b, topValues, card, theme, onChange
   let table = needle ? all.filter((v) => v.role === 'value' && v.label.toLowerCase().includes(needle)) : all;
   // 'label' sorts by the size of the difference, largest first. The default is the rank by the larger share.
   if (card.sortBy === 'label') table = [...table].sort((x, y) => Math.abs(y.shareB - y.shareA) - Math.abs(x.shareB - x.shareA));
+  const selectIn = (list: ComparedValue[]) =>
+    onFilter &&
+    ((first: number) => {
+      const value = list[first];
+      if (value && value.role !== 'other') onFilter((column) => chipForValue(column, value.role, value.label));
+    });
   return (
     <>
       <CompareControls card={card} onChange={onChange} />
-      {!card.asTable && <PairView rows={chart} totalA={a.rowCount} totalB={b.rowCount} head="Value" label={`The most frequent values of ${name}, ${chart.length} bars.`} card={card} theme={theme} horizontal />}
+      {!card.asTable && (
+        <PairView rows={chart} totalA={a.rowCount} totalB={b.rowCount} head="Value" label={`The most frequent values of ${name}, ${chart.length} bars.`} card={card} theme={theme} horizontal onSelect={selectIn(comparedValues(a, b, topValues))} />
+      )}
       <div className="controls">
         <input type="search" placeholder="Search values" aria-label="Search values" value={search} onChange={(e) => setSearch(e.target.value)} />
         <label>
@@ -327,7 +370,7 @@ export function ValuesCompareView({ name, a, b, topValues, card, theme, onChange
           </select>
         </label>
       </div>
-      <PairView rows={table.map(toRow)} totalA={a.rowCount} totalB={b.rowCount} head="Value" label="" card={{ ...card, asTable: true }} theme={theme} />
+      <PairView rows={table.map(toRow)} totalA={a.rowCount} totalB={b.rowCount} head="Value" label="" card={{ ...card, asTable: true }} theme={theme} onSelect={selectIn(table)} canFilter={(i) => table[i]?.role !== 'other'} />
     </>
   );
 }
@@ -345,13 +388,23 @@ export interface DateCompareViewProps {
   card: Card;
   theme: Theme;
   onChange: (patch: Partial<Card>) => void;
+  /** The user selected periods. The board adds the chip to A and to B. */
+  onFilter?: (make: ChipMaker) => void;
 }
 
 /** A date column in A and B: the rows of each period on one axis, and the first and last date of each dataset. */
-export function DateCompareView({ name, statsA, statsB, countsA, countsB, grain, card, theme, onChange }: DateCompareViewProps) {
+export function DateCompareView({ name, statsA, statsB, countsA, countsB, grain, card, theme, onChange, onFilter }: DateCompareViewProps) {
   const shared = countsA && countsB ? sharedPeriods(countsA.buckets, countsB.buckets, grain) : undefined;
   const span = (stats: OverviewColumn) => (stats.min !== undefined && stats.max !== undefined ? spanDays(stats.min, stats.max) : undefined);
   const day = (text: string | undefined) => (text === undefined ? undefined : text.slice(0, 10));
+  const select =
+    onFilter && shared
+      ? (first: number, last: number) => {
+          const from = shared.starts[Math.max(0, first)];
+          const to = shared.starts[Math.min(shared.starts.length - 1, last)];
+          if (from && to) onFilter((column) => chipForPeriods(column, from, to, grain));
+        }
+      : undefined;
   return (
     <>
       <CompareControls card={card} onChange={onChange}>
@@ -382,6 +435,8 @@ export function DateCompareView({ name, statsA, statsB, countsA, countsB, grain,
           label={`Rows of ${name} for each ${grain}, ${shared.starts.length} periods.`}
           card={card}
           theme={theme}
+          onSelect={select}
+          range
         />
       )}
       <CompareStatsTable

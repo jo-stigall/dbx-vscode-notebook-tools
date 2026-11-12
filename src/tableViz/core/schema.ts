@@ -40,9 +40,53 @@ export const datasetVersionSchema = z.discriminatedUnion('kind', [
 ]);
 export type DatasetVersion = z.infer<typeof datasetVersionSchema>;
 
+/** A column in a request: its name and its Databricks type, for example "decimal(10,2)". */
+export const columnRefSchema = z.strictObject({ name: z.string().min(1), typeText: z.string().min(1) });
+export type ColumnRef = z.infer<typeof columnRefSchema>;
+
 /**
- * A table or view plus three optional modifiers. All charts and tables in the
- * feature show a dataset.
+ * What a request measures in a column.
+ *
+ * - 'value': the value, for a number column.
+ * - 'length': the number of characters of the value as text. The card of an
+ *   identifier column shows a histogram of the lengths.
+ * - 'day': the date of the value, as a number of days after 1970-01-01. The
+ *   drift score of a date column uses it.
+ */
+export const measureSchema = z.enum(['value', 'length', 'day']);
+export type Measure = z.infer<typeof measureSchema>;
+
+/**
+ * One condition that the user made with a click on a chart. The conditions of a dataset combine with AND.
+ *
+ * | op      | Meaning                                   | Made by                          |
+ * |---------|-------------------------------------------|----------------------------------|
+ * | 'eq'    | the column, as text, is equal to `value`  | a click on a bar of a value      |
+ * | 'null'  | the column is null                        | a click on the "(null)" bar      |
+ * | 'range' | the column is from `lo` to `hi`           | a click or a drag on a histogram or a date chart |
+ *
+ * A chip has no SQL text. The builders make the SQL from its parts, with
+ * parameters, so a chip cannot contain SQL from a file.
+ */
+export const chipSchema = z.discriminatedUnion('op', [
+  z.strictObject({ op: z.literal('eq'), column: columnRefSchema, value: z.string() }),
+  z.strictObject({ op: z.literal('null'), column: columnRefSchema }),
+  z.strictObject({
+    op: z.literal('range'),
+    column: columnRefSchema,
+    /** What `lo` and `hi` measure. 'day' for a date column: days after 1970-01-01. */
+    measure: measureSchema.optional(),
+    lo: z.number(),
+    hi: z.number(),
+    /** true: a value equal to `hi` is in the range. The last bin of a histogram uses it. */
+    includeHi: z.boolean().optional(),
+  }),
+]);
+export type Chip = z.infer<typeof chipSchema>;
+
+/**
+ * A table or view plus optional modifiers: a filter, filter chips, a version
+ * and a sample. All charts and tables in the feature show a dataset.
  *
  * `profile` is the name of the Databricks login. It is part of the dataset so
  * that a later version can compare two workspaces.
@@ -52,6 +96,8 @@ export const datasetSchema = z.strictObject({
   table: tableNameSchema,
   /** A SQL boolean expression. Example: "region = 'EMEA'". */
   filter: z.string().optional(),
+  /** Conditions from clicks on charts. They combine with AND, and with the filter. */
+  chips: z.array(chipSchema).max(20).optional(),
   version: datasetVersionSchema.optional(),
   /** When set, queries read this percent of the rows, and counts are estimates. */
   sample: z.strictObject({ percent: z.number().gte(0.01).lte(100) }).optional(),
@@ -61,10 +107,6 @@ export type Dataset = z.infer<typeof datasetSchema>;
 /** How the feature shows a column. See detectKind() in kinds.ts. */
 export const columnKindSchema = z.enum(['continuous', 'discrete', 'category', 'identifier', 'date', 'complex']);
 export type ColumnKind = z.infer<typeof columnKindSchema>;
-
-/** A column in a request: its name and its Databricks type, for example "decimal(10,2)". */
-export const columnRefSchema = z.strictObject({ name: z.string().min(1), typeText: z.string().min(1) });
-export type ColumnRef = z.infer<typeof columnRefSchema>;
 
 /** One column of a table, as the table overview shows it. */
 export const columnInfoSchema = z.strictObject({
@@ -87,18 +129,6 @@ export const grainSchema = z.enum(['day', 'week', 'month', 'year']);
 export type Grain = z.infer<typeof grainSchema>;
 
 const oneColumn = z.tuple([columnRefSchema]);
-
-/**
- * What a request measures in a column.
- *
- * - 'value': the value, for a number column.
- * - 'length': the number of characters of the value as text. The card of an
- *   identifier column shows a histogram of the lengths.
- * - 'day': the date of the value, as a number of days after 1970-01-01. The
- *   drift score of a date column uses it.
- */
-export const measureSchema = z.enum(['value', 'length', 'day']);
-export type Measure = z.infer<typeof measureSchema>;
 
 /** The percentiles in the statistics of a number column. */
 export const PERCENTILES = [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99] as const;
@@ -316,10 +346,50 @@ export const boardStateSchema = z.strictObject({
 });
 export type BoardState = z.infer<typeof boardStateSchema>;
 
+/**
+ * A saved view: the content of a `.tableviz.json` file.
+ *
+ * The file holds what the board shows, not what the tables contain: the
+ * datasets with their filters, the open cards and their settings. It has
+ * no data and no token.
+ *
+ * The filter of a dataset is SQL text, and it runs with the login of the
+ * person who opens the file. Thus the extension shows the filters and asks
+ * before it runs the queries of a view that it did not see before.
+ */
+export const savedViewSchema = z.strictObject({
+  /** The version of the file format. */
+  tableViz: z.literal(1),
+  datasets: boardDatasetsSchema,
+  ui: boardStateSchema.shape.ui,
+  cards: z.array(cardSchema).max(50).optional(),
+  asText: z.array(z.string()).optional(),
+});
+export type SavedView = z.infer<typeof savedViewSchema>;
+
 /** A message from the webview to the extension host. */
 export const toHostSchema = z.discriminatedUnion('type', [
   /** The webview started and can receive messages. */
   z.strictObject({ type: z.literal('ready') }),
+  /** Open SQL statements of a card in a text editor. The webview got these statements in results. */
+  z.strictObject({ type: z.literal('openSql'), sql: z.array(z.string().max(200_000)).min(1).max(50) }),
+  /**
+   * Save a chart or the tables of a card to a file, or copy them.
+   * `text` holds CSV or SVG. `base64` holds a PNG image.
+   */
+  z.strictObject({
+    type: z.literal('export'),
+    action: z.enum(['save', 'copy']),
+    /** A file name without a folder. Example: 'orders_2026_amount.csv'. */
+    name: z.string().min(1).max(200),
+    format: z.enum(['csv', 'svg', 'png']),
+    text: z.string().max(20_000_000).optional(),
+    base64: z.string().max(30_000_000).optional(),
+  }),
+  /** Write the board to a `.tableviz.json` file. */
+  z.strictObject({ type: z.literal('saveView'), state: boardStateSchema }),
+  /** The user read the datasets and filters of a saved view and permits its queries. */
+  z.strictObject({ type: z.literal('approve') }),
   /** Run a request. `refresh: true` ignores the cache. */
   z.strictObject({ type: z.literal('request'), id: z.string().min(1), request: requestSchema, refresh: z.boolean().optional() }),
   /** Stop the request with this id. */
@@ -330,7 +400,15 @@ export type ToHost = z.infer<typeof toHostSchema>;
 /** A message from the extension host to the webview. */
 export const toWebviewSchema = z.discriminatedUnion('type', [
   /** The answer to "ready": the datasets that the board shows. */
-  z.strictObject({ type: z.literal('init'), datasets: boardDatasetsSchema, settings: boardSettingsSchema }),
+  z.strictObject({
+    type: z.literal('init'),
+    datasets: boardDatasetsSchema,
+    settings: boardSettingsSchema,
+    /** The cards and settings of a saved view. Not set for a new board. */
+    state: boardStateSchema.optional(),
+    /** true: show the datasets and filters and ask the user, before any query runs. For a saved view that the extension did not see before. */
+    confirm: z.boolean().optional(),
+  }),
   z.strictObject({ type: z.literal('result'), id: z.string(), result: resultSchema }),
   z.strictObject({ type: z.literal('progress'), id: z.string(), state: z.enum(['queued', 'running']), statementId: z.string().optional() }),
   z.strictObject({

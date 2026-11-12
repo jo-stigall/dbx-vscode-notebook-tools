@@ -5,9 +5,10 @@
  * or a panel of the feature. Thus the feature does not make the start of the
  * extension slower.
  */
+import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import { displayTableName, parseTableName, tableNameAt } from '../core/names.ts';
-import { boardSettingsSchema, boardStateSchema, DEFAULT_SETTINGS, type BoardDatasets, type BoardSettings, type TableName } from '../core/schema.ts';
+import { boardSettingsSchema, boardStateSchema, DEFAULT_SETTINGS, savedViewSchema, type BoardDatasets, type BoardSettings, type TableName } from '../core/schema.ts';
 import { Board, VIEW_TYPE } from './board.ts';
 import { selectProfileAndCompute } from './picker.ts';
 import { DEMO_PROFILE, Session, type HostConnection } from './session.ts';
@@ -39,6 +40,19 @@ export interface TableVizApi {
   restoreBoard(panel: vscode.WebviewPanel, state: unknown): Promise<void>;
   /** The command "Select Profile and Compute for Tables". */
   selectCompute(): Promise<boolean>;
+  /**
+   * Show a `.tableviz.json` file as a board. VS Code calls this function when the user opens such a file.
+   *
+   * The filters in the file are SQL that runs with the login of the user.
+   * The first time that the extension sees the content of a file, the board
+   * shows the datasets and filters and runs nothing until the user permits
+   * it. In a workspace that the user did not trust, the board asks each time.
+   */
+  resolveView(document: vscode.TextDocument, panel: vscode.WebviewPanel): Promise<Board | undefined>;
+  /** The boards that are open. */
+  boards: Set<Board>;
+  /** Tells if the user trusted the workspace. A test can replace it. */
+  isTrusted: () => boolean;
   /** The data of the view "Databricks Tables". */
   tree: TableTree;
   /** The selected profile and compute. Tests use it. */
@@ -98,7 +112,40 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
     });
     return parsed.success ? parsed.data : DEFAULT_SETTINGS;
   };
-  const deps = { extensionUri: context.extensionUri, profilerFor: (profile: string) => session.profilerFor(profile), settings, log };
+  const boards = new Set<Board>();
+  // The views that the user permitted, or saved from a board: a hash of the file path and the content.
+  const APPROVED_KEY = 'dbxNotebook.tableViz.approvedViews';
+  const hashOf = (uri: vscode.Uri, text: string) => createHash('sha256').update(uri.toString()).update('\n').update(text).digest('hex');
+  const remember = (uri: vscode.Uri, text: string) => {
+    const list = context.workspaceState.get<string[]>(APPROVED_KEY, []);
+    const hash = hashOf(uri, text);
+    if (!list.includes(hash)) void context.workspaceState.update(APPROVED_KEY, [...list, hash].slice(-200));
+  };
+  // The text of each view that waits for permission, to remember it when the user permits it.
+  const waiting = new Map<Board, { uri: vscode.Uri; text: string }>();
+  const api = { isTrusted: () => vscode.workspace.isTrusted };
+
+  const deps = {
+    extensionUri: context.extensionUri,
+    profilerFor: (profile: string) => session.profilerFor(profile),
+    settings,
+    log,
+    onSaved: remember,
+    onApproved: (board: Board) => {
+      const view = waiting.get(board);
+      // In a workspace that is not trusted, do not remember the permission: ask again the next time.
+      if (view && api.isTrusted()) remember(view.uri, view.text);
+      waiting.delete(board);
+    },
+    onClosed: (board: Board) => {
+      boards.delete(board);
+      waiting.delete(board);
+    },
+  };
+  const track = (board: Board): Board => {
+    boards.add(board);
+    return board;
+  };
 
   /**
    * Open a board for a table with the selected profile.
@@ -115,7 +162,7 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
     log.info(`tableViz: open ${displayTableName(table)}${tableB ? ` and ${displayTableName(tableB)}` : ''} with the profile ${session.label(session.profile)}`);
     void tree.addRecent(table);
     const panel = vscode.window.createWebviewPanel(VIEW_TYPE, Board.title(datasets), vscode.ViewColumn.Active);
-    return new Board(panel, datasets, deps);
+    return track(new Board(panel, datasets, deps));
   };
 
   /** Ask for a three-part table name. Returns undefined if the user closes the box. */
@@ -204,7 +251,40 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
         return;
       }
       panel.title = Board.title(parsed.data.datasets);
-      new Board(panel, parsed.data.datasets, deps);
+      track(new Board(panel, parsed.data.datasets, deps));
+    },
+
+    async resolveView(document, panel) {
+      const text = document.getText();
+      let parsed;
+      try {
+        parsed = savedViewSchema.safeParse(JSON.parse(text));
+      } catch {
+        parsed = undefined;
+      }
+      if (!parsed?.success) {
+        // Not a saved view. Show a page with no script, and tell the user how to see the text.
+        panel.webview.options = { enableScripts: false };
+        panel.webview.html =
+          '<!DOCTYPE html><html lang="en"><body><h2>This file is not a saved view of "Visualize Table"</h2>' +
+          '<p>The file must contain JSON that "Save View" made. To see the text of the file, right-click its tab, select "Reopen Editor With...", then "Text Editor".</p></body></html>';
+        return undefined;
+      }
+      const view = parsed.data;
+      const needsApproval = !api.isTrusted() || !context.workspaceState.get<string[]>(APPROVED_KEY, []).includes(hashOf(document.uri, text));
+      const state = { datasets: view.datasets, ui: view.ui, cards: view.cards, asText: view.asText };
+      const board = track(new Board(panel, view.datasets, deps, { uri: document.uri, state, needsApproval }));
+      if (needsApproval) waiting.set(board, { uri: document.uri, text });
+      log.info(`tableViz: open the saved view ${document.uri.fsPath}${needsApproval ? ' (waits for permission)' : ''}`);
+      return board;
+    },
+
+    boards,
+    get isTrusted() {
+      return api.isTrusted;
+    },
+    set isTrusted(value: () => boolean) {
+      api.isTrusted = value;
     },
 
     selectCompute: () => selectProfileAndCompute(session, conn),

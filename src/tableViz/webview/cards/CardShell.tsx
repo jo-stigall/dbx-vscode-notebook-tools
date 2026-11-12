@@ -3,8 +3,9 @@
  *
  * Each kind of card puts its chart and its tables inside this frame.
  */
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import type { Card, ColumnInfo, ColumnKind } from '../../core/schema.ts';
+import { copyPng, exportSvg, exportTables, openSql, savePng } from '../export.ts';
 import type { RequestError } from '../rpc.ts';
 
 export const KIND_LABELS: Record<ColumnKind, string> = {
@@ -74,8 +75,15 @@ export interface CardShellProps {
 
 export function CardShell(props: CardShellProps) {
   const { column, card, kind, onChange } = props;
+  const section = useRef<HTMLElement>(null);
+  const menu = useRef<HTMLDetailsElement>(null);
+  /** Run an export function on this card, then close the menu. */
+  const run = (action: (card: Element) => void) => () => {
+    if (section.current) action(section.current);
+    if (menu.current) menu.current.open = false;
+  };
   return (
-    <section className="card" aria-label={`Column ${column.name}`}>
+    <section className="card" aria-label={`Column ${column.name}`} ref={section}>
       <header className="card-header">
         <h2>{column.name}</h2>
         <span className="type">{column.typeText}</span>
@@ -107,6 +115,35 @@ export function CardShell(props: CardShellProps) {
             onClick={() => onChange({ asTable: !card.asTable })}
           />
         )}
+        <details className="menu" ref={menu}>
+          <summary className="icon-button" title="Save or copy" aria-label="Save or copy the chart, the tables or the SQL of this card">
+            <span className="codicon codicon-export" aria-hidden="true" />
+          </summary>
+          <div className="menu-items">
+            {props.hasChart && !card.asTable && (
+              <>
+                <button type="button" onClick={run((el) => savePng(el, column.name))}>
+                  Save chart as PNG
+                </button>
+                <button type="button" onClick={run((el) => exportSvg(el, column.name, 'save'))}>
+                  Save chart as SVG
+                </button>
+                <button type="button" onClick={run((el) => void copyPng(el, column.name))}>
+                  Copy chart
+                </button>
+              </>
+            )}
+            <button type="button" onClick={run((el) => exportTables(el, column.name, 'save'))}>
+              Save tables as CSV
+            </button>
+            <button type="button" onClick={run((el) => exportTables(el, column.name, 'copy'))}>
+              Copy tables
+            </button>
+            <button type="button" disabled={props.sql.length === 0} onClick={run(() => openSql(props.sql))}>
+              Open SQL in Editor
+            </button>
+          </div>
+        </details>
         <IconButton icon="code" label={card.showSql ? 'Hide SQL' : 'Show SQL'} pressed={card.showSql === true} onClick={() => onChange({ showSql: !card.showSql })} />
         <IconButton
           icon={card.pinned ? 'pinned' : 'pin'}
@@ -137,7 +174,18 @@ export function CardShell(props: CardShellProps) {
       )}
       {card.showSql && (
         <div className="sql">
-          {props.sql.length === 0 ? <p className="status">No SQL yet.</p> : props.sql.map((statement, i) => <pre key={i}>{statement}</pre>)}
+          {props.sql.length === 0 ? (
+            <p className="status">No SQL yet.</p>
+          ) : (
+            <>
+              <button type="button" className="link" onClick={() => openSql(props.sql)}>
+                Open SQL in Editor
+              </button>
+              {props.sql.map((statement, i) => (
+                <pre key={i}>{statement}</pre>
+              ))}
+            </>
+          )}
         </div>
       )}
     </section>

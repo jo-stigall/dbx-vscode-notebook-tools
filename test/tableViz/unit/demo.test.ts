@@ -224,7 +224,7 @@ function harness(profilerFor: (profile: string) => Profiler) {
       const c = new AbortController();
       return { signal: c.signal, cancel: () => c.abort() };
     },
-    onOther: (m) => ready.push(m),
+    onOther: (m) => void ready.push(m),
   });
   return { dispatcher, sent, ready };
 }

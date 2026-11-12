@@ -6,7 +6,7 @@
  * queries on Databricks. The code above the profiler does not know which one
  * it uses.
  */
-import { toHostSchema, type Request, type Result, type ToWebview } from './schema.ts';
+import { toHostSchema, type Request, type Result, type ToHost, type ToWebview } from './schema.ts';
 
 /** Tells a profiler to stop. An AbortSignal has this shape. */
 export interface CancelSignal {
@@ -98,13 +98,15 @@ export interface Dispatcher {
  * @param deps.profilerFor  Returns the profiler for a profile name. It throws a ProfilerError if the profile cannot be used.
  * @param deps.post  Sends one message to the webview.
  * @param deps.makeSignal  Makes a cancel signal and the function that fires it.
- * @param deps.onOther  Handles the messages that are not "request" or "cancel", for example "ready".
+ * @param deps.onOther  Handles the messages that are not "request" or "cancel", for example "ready" and "saveView".
  */
 export function createDispatcher(deps: {
   profilerFor: (profile: string) => Profiler;
   post: (message: ToWebview) => void;
   makeSignal: () => { signal: CancelSignal; cancel: () => void };
-  onOther?: (message: { type: 'ready' }) => void;
+  onOther?: (message: Exclude<ToHost, { type: 'request' | 'cancel' }>) => void | Promise<void>;
+  /** Returns a reason if requests must not run now, for example while a saved view waits for the permission of the user. */
+  blocked?: () => string | undefined;
 }): Dispatcher {
   const running = new Map<string, () => void>();
   const exchanges: Exchange[] = [];
@@ -119,11 +121,16 @@ export function createDispatcher(deps: {
       return;
     }
     if (message.type !== 'request') {
-      deps.onOther?.(message);
+      await deps.onOther?.(message);
       return;
     }
 
     const { id, request } = message;
+    const reason = deps.blocked?.();
+    if (reason) {
+      deps.post({ type: 'error', id, message: reason, raw: reason, sql: [] });
+      return;
+    }
     const exchange: Exchange = { id, request };
     exchanges.push(exchange);
     const reply = (response: ToWebview) => {

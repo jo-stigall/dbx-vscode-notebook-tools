@@ -34,7 +34,7 @@
  */
 import { isNumeric, typeFamily } from './kinds.ts';
 import { quoteIdentifier, quoteTableName } from './names.ts';
-import { PERCENTILES, type ColumnRef, type Dataset, type Grain, type Measure, type Request, type RequestOf } from './schema.ts';
+import { PERCENTILES, type Chip, type ColumnRef, type Dataset, type Grain, type Measure, type Request, type RequestOf } from './schema.ts';
 
 /** One named parameter of a statement. `value` is text for all types. */
 export interface SqlParam {
@@ -104,7 +104,24 @@ class Parts {
   }
 
   /**
-   * Write the WHERE clause from the filter of the dataset and one more condition.
+   * Write the condition of one filter chip. Each value is a parameter (`f0`, `f1lo`, `f1hi`, ...).
+   *
+   * @example
+   * // { op: 'eq', column: region, value: 'EMEA' }        ->  CAST(IDENTIFIER(:c0) AS STRING) = :f0
+   * // { op: 'range', column: amount, lo: 10, hi: 20 }    ->  (CAST(IDENTIFIER(:c0) AS DOUBLE) >= :f0lo AND CAST(IDENTIFIER(:c0) AS DOUBLE) < :f0hi)
+   */
+  private chip(chip: Chip, index: number): string {
+    const column = this.column(chip.column);
+    if (chip.op === 'null') return `${column} IS NULL`;
+    if (chip.op === 'eq') return `CAST(${column} AS STRING) = ${this.param(`f${index}`, chip.value, 'STRING')}`;
+    const x = `CAST(${measured(column, chip.measure)} AS DOUBLE)`;
+    const lo = this.param(`f${index}lo`, chip.lo, 'DOUBLE');
+    const hi = this.param(`f${index}hi`, chip.hi, 'DOUBLE');
+    return `(${x} >= ${lo} AND ${x} ${chip.includeHi ? '<=' : '<'} ${hi})`;
+  }
+
+  /**
+   * Write the WHERE clause from the filter of the dataset, its filter chips, and one more condition.
    *
    * The filter is on its own lines. A `--` comment at the end of the filter
    * then cannot remove the text after it.
@@ -113,7 +130,7 @@ class Parts {
    */
   where(dataset: Dataset, extra?: string): string {
     const filter = dataset.filter?.trim();
-    const conditions = [...(filter ? [`(\n  ${filter}\n)`] : []), ...(extra ? [extra] : [])];
+    const conditions = [...(filter ? [`(\n  ${filter}\n)`] : []), ...(dataset.chips ?? []).map((chip, i) => this.chip(chip, i)), ...(extra ? [extra] : [])];
     return conditions.length ? '\nWHERE ' + conditions.join(' AND ') : '';
   }
 }
@@ -354,4 +371,31 @@ export function buildStatements(request: Request, options: BuildOptions = {}): S
 export function renderStatement(statement: Statement): string {
   const lines = statement.params.map((p) => `-- :${p.name} = ${p.type === 'STRING' ? `'${p.value.replace(/'/g, "''")}'` : p.value}`);
   return [...lines, statement.sql].join('\n');
+}
+
+/**
+ * Write a statement so that a person can run it in a SQL editor: with each value in the text, not as a parameter.
+ *
+ * The input is the text of renderStatement(): the parameters as comments,
+ * then the SQL. The function puts the value of each parameter in the place
+ * of its marker.
+ *
+ * @example
+ * inlineRendered("-- :tbl = '`main`.`sales`.`orders`'\n-- :limit = 21\nSELECT 1 FROM IDENTIFIER(:tbl) LIMIT :limit")
+ * // "SELECT 1 FROM IDENTIFIER('`main`.`sales`.`orders`') LIMIT 21"
+ */
+export function inlineRendered(rendered: string): string {
+  const lines = rendered.split('\n');
+  const values = new Map<string, string>();
+  let start = 0;
+  for (; start < lines.length; start++) {
+    const match = /^-- :(\w+) = (.*)$/.exec(lines[start] as string);
+    if (!match) break;
+    // In a Databricks string, a backslash starts an escape. Write it two times so that it stays a backslash.
+    values.set(match[1] as string, (match[2] as string).replace(/\\/g, '\\\\'));
+  }
+  return lines
+    .slice(start)
+    .join('\n')
+    .replace(/(?<![:\w]):(\w+)/g, (marker, name: string) => values.get(name) ?? marker);
 }

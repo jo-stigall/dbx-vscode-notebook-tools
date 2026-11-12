@@ -6,7 +6,7 @@
  * Databricks next to the box.
  */
 import { useEffect, useState } from 'react';
-import { missesPartition, parseVersion } from '../core/derive.ts';
+import { chipLabel, missesPartition, parseVersion, removeChip } from '../core/derive.ts';
 import { displayTableName } from '../core/names.ts';
 import type { Dataset, ResultOf } from '../core/schema.ts';
 import { formatTime } from './format.ts';
@@ -27,9 +27,11 @@ export interface DatasetBarProps {
   onRemove?: () => void;
   /** Hide "Refresh" and "Cancel". In compare mode only the bar of A shows them. */
   hideActions?: boolean;
+  /** Writes the board to a file. If set, the bar has the button "Save View". */
+  onSaveView?: () => void;
 }
 
-export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRemove, hideActions }: DatasetBarProps) {
+export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRemove, hideActions, onSaveView }: DatasetBarProps) {
   const { pending } = useRequests();
   const [draft, setDraft] = useState(dataset.filter ?? '');
   const [checking, setChecking] = useState(false);
@@ -126,6 +128,19 @@ export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRe
         )}
       </form>
 
+      {dataset.chips && dataset.chips.length > 0 && (
+        <ul className="chips" aria-label="Filters from clicks on charts">
+          {dataset.chips.map((chip, i) => (
+            <li key={JSON.stringify(chip)} className="filter-chip">
+              {chipLabel(chip)}
+              <button type="button" title="Remove this filter" aria-label={`Remove the filter ${chipLabel(chip)}`} onClick={() => onChange(removeChip(dataset, i))}>
+                <span className="codicon codicon-close" aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div className="dataset-controls">
         <label title="Read a part of the rows only. Faster and cheaper, but all counts are estimates.">
           <input type="checkbox" checked={dataset.sample !== undefined} onChange={(e) => setSample(e.target.checked, percent)} /> Sample
@@ -163,6 +178,11 @@ export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRe
         {!hideActions && pending > 0 && (
           <button type="button" onClick={cancelAll} title="Stop the queries that run now">
             Cancel {pending} {pending === 1 ? 'query' : 'queries'}
+          </button>
+        )}
+        {onSaveView && (
+          <button type="button" onClick={onSaveView} title="Write the datasets, the filters and the cards of this board to a .tableviz.json file. The file has no data.">
+            Save View
           </button>
         )}
         {!hideActions && (

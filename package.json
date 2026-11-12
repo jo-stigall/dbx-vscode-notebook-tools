@@ -298,7 +298,19 @@
           "contextualTitle": "Databricks Tables"
         }
       ]
-    }
+    },
+    "customEditors": [
+      {
+        "viewType": "dbxNotebook.tableViz.view",
+        "displayName": "Table Visualization",
+        "selector": [
+          {
+            "filenamePattern": "*.tableviz.json"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
   },
   "dependencies": {
     "@databricks/sql": "3.0.0",
