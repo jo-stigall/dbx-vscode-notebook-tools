@@ -1,6 +1,8 @@
-/** The command "Select Profile and Compute for Tables": two lists, first the profile, then the SQL warehouse. */
+/** The command "Select Profile and Compute for Tables": two lists, first the profile, then the SQL warehouse or the cluster. */
 import * as vscode from 'vscode';
+import { accessModeLabel, clusterProblem, driverSupportsNode, parseRuntime, type ClusterInfo } from '../core/clusters.ts';
 import { DEMO_PROFILE, TOKEN_PROFILE_PREFIX, WORKSPACE_PROFILE, type Compute, type HostConnection, type Session } from './session.ts';
+import type { Warehouse } from './workspace.ts';
 
 interface ProfileItem extends vscode.QuickPickItem {
   /** The profile name. Not set for the item "Type a workspace URL and a token…". */
@@ -8,7 +10,10 @@ interface ProfileItem extends vscode.QuickPickItem {
 }
 
 interface ComputeItem extends vscode.QuickPickItem {
-  compute: Compute;
+  /** Not set for a line that only separates two groups. */
+  compute?: Compute;
+  /** Why the compute cannot be used. Not set if it can. */
+  problem?: string;
 }
 
 /** Ask for a workspace URL and a personal access token, and keep the token in the secret store. Returns the profile name. */
@@ -33,10 +38,12 @@ async function typeToken(conn: HostConnection): Promise<string | undefined> {
 }
 
 /**
- * Let the user select a profile, then a SQL warehouse of that profile.
+ * Let the user select a profile, then a SQL warehouse or a cluster of that profile.
  *
- * The list of warehouses shows the state and the size of each one. To read
- * that list, the function calls the REST API. It does not start a warehouse.
+ * The second list shows the state of each warehouse and cluster. A cluster
+ * that cannot read Unity Catalog, or that has an old runtime, is in the
+ * list with the reason, but the user cannot select it. To read the list,
+ * the function calls the REST API. It starts nothing.
  *
  * @returns true if the user selected a profile. false if the user closed a list.
  */
@@ -68,34 +75,66 @@ export async function selectProfileAndCompute(session: Session, conn: HostConnec
     return true;
   }
 
-  // The warehouses of the profile. This request also shows if the login works.
-  let warehouses;
+  // The warehouses and the clusters of the profile. These requests also show if the login works.
+  const workspace = session.workspace(profile);
+  let warehouses: Warehouse[];
+  let clusters: ClusterInfo[];
   try {
-    warehouses = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Reading the SQL warehouses of ${session.label(profile)}…` }, () =>
-      session.workspace(profile).listWarehouses()
+    [warehouses, clusters] = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Reading the warehouses and clusters of ${session.label(profile)}…` },
+      // A user who cannot list clusters can still use a warehouse.
+      () => Promise.all([workspace.listWarehouses(), workspace.listClusters().catch(() => [])])
     );
   } catch (e) {
     void vscode.window.showErrorMessage(`Could not read the SQL warehouses of ${session.label(profile)}. ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
+
   const selected = session.compute(profile)?.id;
-  const computeItems: ComputeItem[] = warehouses
-    .filter((w) => w.state !== 'DELETED' && w.state !== 'DELETING')
-    // Running warehouses first: a query on them starts at once and starts nothing.
-    .sort((a, b) => Number(b.state === 'RUNNING') - Number(a.state === 'RUNNING') || a.name.localeCompare(b.name))
-    .map((w) => ({
-      label: `$(database) ${w.name}` + (w.id === selected ? ' (selected)' : ''),
+  const mine = (id: string) => (id === selected ? ' (selected)' : '');
+  // Running compute first: a query on it starts at once and starts nothing.
+  const runningFirst = <T extends { state: string; name: string }>(list: T[]) =>
+    [...list].sort((a, b) => Number(b.state === 'RUNNING') - Number(a.state === 'RUNNING') || a.name.localeCompare(b.name));
+  const oldNode = driverSupportsNode(process.versions.node) ? undefined : `This VS Code contains Node.js ${process.versions.node}. The SQL driver for clusters needs a newer Node.js. Update VS Code.`;
+
+  const computeItems: ComputeItem[] = [];
+  const usableWarehouses = runningFirst(warehouses.filter((w) => w.state !== 'DELETED' && w.state !== 'DELETING'));
+  if (usableWarehouses.length) computeItems.push({ label: 'SQL warehouses', kind: vscode.QuickPickItemKind.Separator });
+  for (const w of usableWarehouses) {
+    computeItems.push({
+      label: `$(database) ${w.name}` + mine(w.id),
       description: [w.state, w.size].filter(Boolean).join(' · '),
-      detail: 'SQL warehouse',
       compute: { kind: 'warehouse', id: w.id, name: w.name },
-    }));
-  if (computeItems.length === 0) {
-    void vscode.window.showWarningMessage(`${session.label(profile)} has no SQL warehouse that you can use. Ask an administrator for the "Can use" permission on a warehouse.`);
+    });
+  }
+  if (clusters.length) computeItems.push({ label: 'All-purpose clusters', kind: vscode.QuickPickItemKind.Separator });
+  for (const c of runningFirst(clusters)) {
+    const runtime = parseRuntime(c.sparkVersion);
+    const facts = [c.state, runtime ? `Runtime ${runtime.major}.${runtime.minor}` : c.sparkVersion, accessModeLabel(c.accessMode)].filter(Boolean).join(' · ');
+    const problem = oldNode ?? clusterProblem(c);
+    // VS Code cannot show a line of a list as "off". A cluster that cannot be used has a different icon and tells the reason.
+    computeItems.push({
+      label: `${problem ? '$(circle-slash)' : '$(server)'} ${c.name}` + mine(c.id),
+      description: problem ? `Cannot be used · ${facts}` : facts,
+      detail: problem,
+      compute: { kind: 'cluster', id: c.id, name: c.name },
+      problem,
+    });
+  }
+  if (!computeItems.some((item) => item.compute && !item.problem)) {
+    void vscode.window.showWarningMessage(`${session.label(profile)} has no SQL warehouse or cluster that you can use. Ask an administrator for the "Can use" permission on a warehouse.`);
     return false;
   }
-  const compute = await vscode.window.showQuickPick(computeItems, { title: 'Compute for tables (2/2)', placeHolder: 'Select the SQL warehouse that runs the queries', matchOnDescription: true });
-  if (!compute) return false;
-  await session.select(profile, compute.compute);
-  session.setComputeState(warehouses.find((w) => w.id === compute.compute.id)?.state);
-  return true;
+
+  for (;;) {
+    const picked = await vscode.window.showQuickPick(computeItems, { title: 'Compute for tables (2/2)', placeHolder: 'Select the SQL warehouse or the cluster that runs the queries', matchOnDescription: true });
+    if (!picked?.compute) return false;
+    if (picked.problem) {
+      await vscode.window.showWarningMessage(`The cluster "${picked.compute.name}" cannot be used.`, { modal: true, detail: picked.problem });
+      continue;
+    }
+    await session.select(profile, picked.compute);
+    session.setComputeState((picked.compute.kind === 'cluster' ? clusters : warehouses).find((c) => c.id === picked.compute?.id)?.state);
+    return true;
+  }
 }

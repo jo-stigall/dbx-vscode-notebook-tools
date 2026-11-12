@@ -240,19 +240,19 @@
         "dbxNotebook.tableViz.warehouseId": {
           "type": "string",
           "default": "",
-          "markdownDescription": "The ID of the SQL warehouse that runs the queries of \"Visualize Table\". A warehouse that you select with \"Select Profile and Compute for Tables\" is used before this setting."
+          "markdownDescription": "The ID of the SQL warehouse that runs the queries of \"Visualize Table\". A warehouse or a cluster that you select with \"Select Profile and Compute for Tables\" is used before this setting."
         },
         "dbxNotebook.tableViz.confirmComputeStart": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Ask before a query starts a stopped SQL warehouse. A warehouse that runs costs money."
+          "markdownDescription": "Ask before a query starts a stopped SQL warehouse or cluster. Compute that runs costs money, and a cluster can take several minutes to start."
         },
         "dbxNotebook.tableViz.maxConcurrentQueries": {
           "type": "integer",
-          "default": 4,
-          "minimum": 1,
+          "default": 0,
+          "minimum": 0,
           "maximum": 20,
-          "markdownDescription": "The largest number of queries that \"Visualize Table\" runs at the same time. The other queries wait."
+          "markdownDescription": "The largest number of queries that \"Visualize Table\" runs at the same time. The other queries wait. `0` means automatic: 4 on a SQL warehouse and 2 on a cluster, because notebooks and jobs use a cluster at the same time."
         },
         "dbxNotebook.tableViz.queryTimeoutSeconds": {
           "type": "integer",
@@ -280,6 +280,7 @@
     }
   },
   "dependencies": {
+    "@databricks/sql": "3.0.0",
     "@vscode/codicons": "0.0.46-24",
     "echarts": "6.1.0",
     "react": "19.3.1",

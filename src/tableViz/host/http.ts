@@ -49,6 +49,11 @@ export interface HttpDeps {
   maxRetries?: number;
   /** Waits for a number of milliseconds. A test can make it return at once. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Gets the ID of the workspace, which Databricks sends in the header
+   * "x-databricks-org-id" of each answer. The cluster runner needs the ID.
+   */
+  onWorkspaceId?: (id: string) => void;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -107,6 +112,9 @@ export function createHttp(deps: HttpDeps): Http {
         if (error.name === 'TimeoutError') throw new HttpError(`${host} did not answer ${path} in ${Math.round(timeoutMs / 1000)} seconds.`, 0);
         throw new HttpError(`Cannot reach ${host}: ${error.cause?.message ?? error.message}`, 0);
       }
+
+      const workspaceId = response.headers.get('x-databricks-org-id');
+      if (workspaceId) deps.onWorkspaceId?.(workspaceId);
 
       // One new token after the first 401. A second 401 is an error.
       if (response.status === 401 && !refreshed) {

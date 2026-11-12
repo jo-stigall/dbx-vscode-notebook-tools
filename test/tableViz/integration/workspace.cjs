@@ -155,6 +155,60 @@ exports.main = async function main(log) {
     assert.strictEqual(api.session.computeState, 'STOPPED', 'the status bar has the state from before the start');
     assert.ok(fake.statements.some((s) => s.warehouse_id === 'wh-stop'));
     log('tableViz: a statement starts a stopped warehouse when the question is off');
+
+    // 10. The SQL driver for clusters is in the built extension, and it loads in VS Code.
+    const driver = await api.session.loadDriver();
+    assert.strictEqual(typeof driver.DBSQLClient, 'function');
+    assert.strictEqual(typeof driver.DBSQLParameter, 'function');
+    log('tableViz: the SQL driver for clusters loads in VS Code');
+
+    // 11. A cluster: the board gets its numbers through the cluster runner. A fake driver takes the place of the real one.
+    const { makeFakeDriver } = require(path.join(__dirname, '..', '..', '..', 'dist', 'test', 'fakeWorkspace.cjs'));
+    const fakeDriver = makeFakeDriver();
+    const realDriver = api.session.loadDriver;
+    api.session.loadDriver = () => fakeDriver.module;
+    api.session.clusterPollMs = 50;
+    try {
+      await api.session.select('@workspace', { kind: 'cluster', id: 'cl-ok', name: 'Fake dedicated' });
+      const onCluster = await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'demo.shop.orders_2026');
+      boards.push(onCluster);
+      const clusterOverview = await until('the overview on the cluster', () => answerOf(onCluster, 'overview'));
+      assert.strictEqual(clusterOverview.response.result.rowCount, 110000);
+      assert.strictEqual(Object.fromEntries(clusterOverview.response.result.columns.map((c) => [c.name, c])).order_id.max, '5001109999');
+      assert.strictEqual(fakeDriver.connects.length, 1, 'one connection for all statements');
+      assert.strictEqual(fakeDriver.connects[0].path, 'sql/protocolv1/o/1234567890123456/cl-ok', 'the HTTP path has the workspace ID from the REST answers');
+      assert.strictEqual(fakeDriver.connects[0].host, fake.url.replace('http://', ''));
+      assert.strictEqual(fakeDriver.connects[0].telemetryEnabled, false);
+      assert.deepStrictEqual(fakeDriver.sessions[0], { feature: 'table-viz' });
+      assert.ok(fakeDriver.statements.every((s) => s.options.useCloudFetch === false));
+      log('tableViz: a board gets correct numbers through the cluster runner');
+
+      // 12. A cluster that cannot read Unity Catalog, and one with an old runtime, are refused with the reason.
+      for (const [id, reason] of [['cl-open', /cannot read Unity Catalog/], ['cl-old', /Runtime 12\.2/]]) {
+        await api.session.select('@workspace', { kind: 'cluster', id, name: id });
+        const refused = await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'demo.shop.orders_2025');
+        boards.push(refused);
+        const error = await until(`the error for ${id}`, () => refused.dispatcher.exchanges.find((x) => x.request.type === 'overview' && x.response && x.response.type === 'error'));
+        assert.match(error.response.message, /cannot run the queries of this feature/);
+        assert.match(error.response.nextStep, reason);
+      }
+      assert.strictEqual(fakeDriver.connects.length, 1, 'no connection to a cluster that is refused');
+      log('tableViz: a cluster with a wrong access mode or an old runtime is refused');
+
+      // 13. A stopped cluster, with the question turned off: the extension starts it and waits until it runs.
+      await api.session.select('@workspace', { kind: 'cluster', id: 'cl-stop', name: 'Fake stopped' });
+      fake.requests.length = 0;
+      const started = await vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable', 'demo.shop.orders_2025');
+      boards.push(started);
+      await until('the overview on the started cluster', () => answerOf(started, 'overview'));
+      assert.ok(fake.requests.includes('POST /api/2.1/clusters/start'));
+      assert.strictEqual(fake.clusters['cl-stop'].state, 'RUNNING');
+      assert.strictEqual(api.session.computeState, 'RUNNING');
+      assert.strictEqual(fakeDriver.connects.at(-1).path, 'sql/protocolv1/o/1234567890123456/cl-stop');
+      log('tableViz: the extension starts a stopped cluster and waits until it runs');
+    } finally {
+      api.session.loadDriver = realDriver;
+    }
   } finally {
     boards.forEach((b) => b && b.panel.dispose());
     await settings.update('confirmComputeStart', undefined, vscode.ConfigurationTarget.Global);

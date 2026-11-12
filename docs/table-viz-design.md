@@ -135,9 +135,9 @@ I will pin exact versions when I install them.
 
 ## Questions for you
 
-Questions 1 and 3 have answers. For questions 2 and 6, the code uses my
-recommendation, because you gave no different answer. Questions 4, 5 and 7
-are open, and no code depends on them yet.
+Questions 1 and 3 have answers. For questions 2, 4 and 6, the code uses my
+recommendation, because you gave no different answer. Questions 5 and 7 are
+open, and no code depends on them yet.
 
 1. **Node.js: answered.** You said yes on 2026-11-12. Node.js 24 is
    installed with Homebrew.
@@ -231,6 +231,39 @@ behaves in an esbuild bundle, and all live queries.
 - **The view "Databricks Tables" is in the Explorer.** To filter it, click
   in the view and type. This is the "find" feature of VS Code trees. It
   filters the lines that are loaded.
+
+## Decisions in milestone 5
+
+- **The driver bundles.** esbuild makes one file from `@databricks/sql`
+  3.0.0 (2.6 MB). The file loads in Node.js 24 and in VS Code 1.146. The
+  two optional parts with native code (`lz4-napi` and the "kernel"
+  packages) are not in the file. The runner turns LZ4 compression off and
+  never sets `useKernel`.
+- **The driver sends usage data by default** (`telemetryEnabled`). The
+  brief did not know this. The runner sets it to `false`. It also sets
+  `useCloudFetch: false`, so that the driver does not download results from
+  cloud storage, which is not the workspace host.
+- **Minimum runtime: 14.2.** `IDENTIFIER()` needs 13.3 LTS. For named
+  parameters through the driver, no page that I read gives a number. From
+  memory of the Python connector docs it is 14.2. A real cluster must
+  confirm this. The constant is `MIN_RUNTIME` in `core/clusters.ts`.
+- **Access modes.** The names of the modes in the Clusters API
+  (`SINGLE_USER`, `USER_ISOLATION`, `DATA_SECURITY_MODE_*`) are from
+  memory. An unknown mode is refused.
+- **HTTP path.** The session reads the workspace ID from the header
+  `x-databricks-org-id` of the REST answers, or from an Azure URL. If it
+  finds neither, it asks for the path one time. I did not confirm that
+  Databricks sends this header.
+- **Old VS Code (question 4).** Warehouses work on all versions. For a
+  cluster, the session checks the Node.js version and refuses with a
+  message if it is too old.
+- **A stopped cluster.** After the user says yes, the session calls the
+  Clusters API to start the cluster and waits until it runs. This is the
+  one request of the feature that changes something in the workspace.
+- **A list cannot show a line as "off".** A cluster that cannot be used has
+  a different icon and its reason, and a click on it shows the reason.
+- **A change of compute applies to open boards.** Their next request goes
+  to the new compute.
 
 ## Proposals
 

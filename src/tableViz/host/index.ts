@@ -64,8 +64,8 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
       'Databricks tables',
       `Profile: ${session.label(profile)}`,
       profile === DEMO_PROFILE ? 'Demo tables. No workspace.' : `Workspace: ${session.hostOf(profile) || 'none'}`,
-      ...(profile === DEMO_PROFILE ? [] : [`SQL warehouse: ${compute ? compute.name + state : 'none selected'}`]),
-      'Click to select a different profile or warehouse.',
+      ...(profile === DEMO_PROFILE ? [] : [`${compute?.kind === 'cluster' ? 'Cluster' : 'SQL warehouse'}: ${compute ? compute.name + state : 'none selected'}`]),
+      'Click to select a different profile, warehouse or cluster.',
     ].join('\n');
     status.show();
   };
@@ -73,6 +73,7 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
   context.subscriptions.push(
     log,
     status,
+    { dispose: () => session.dispose() },
     session.onDidChange(() => {
       showStatus();
       tree.refresh();

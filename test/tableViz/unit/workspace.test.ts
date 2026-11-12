@@ -65,6 +65,25 @@ test('workspace client: warehouses, catalogs, schemas and tables', async () => {
   assert.deepEqual(await workspace.listTables('demo', 'nope'), []);
 });
 
+test('workspace client: clusters, and the ID of the workspace', async () => {
+  let workspaceId: string | undefined;
+  const client = createHttp({ host: () => fake.url, token: async () => 't', onWorkspaceId: (id) => (workspaceId = id) });
+  const workspace = new RestWorkspaceClient(client);
+  const clusters = await workspace.listClusters();
+  // The cluster of a job is not in the list.
+  assert.deepEqual(clusters.map((c) => c.id), ['cl-ok', 'cl-open', 'cl-old', 'cl-stop']);
+  assert.deepEqual(clusters[0], { id: 'cl-ok', name: 'Fake dedicated', state: 'RUNNING', sparkVersion: '15.4.x-scala2.12', accessMode: 'SINGLE_USER' });
+  assert.equal(workspaceId, '1234567890123456', 'each answer has the ID of the workspace');
+
+  assert.equal((await workspace.getCluster('cl-stop')).state, 'TERMINATED');
+  await workspace.startCluster('cl-stop');
+  assert.equal((await workspace.getCluster('cl-stop')).state, 'PENDING');
+  assert.equal((await workspace.getCluster('cl-stop')).state, 'RUNNING');
+  (fake.clusters['cl-stop'] as { state: string }).state = 'TERMINATED';
+  await assert.rejects(workspace.getCluster('nope'), (e: unknown) => e instanceof HttpError && e.status === 400);
+  assert.deepEqual(await new DemoWorkspaceClient().listClusters(), []);
+});
+
 test('workspace client: the columns of a table', async () => {
   const workspace = new RestWorkspaceClient(http());
   const info = await workspace.getTable({ catalog: 'demo', schema: 'shop', name: 'orders_2026' });

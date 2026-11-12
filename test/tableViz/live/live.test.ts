@@ -12,6 +12,9 @@
  * (distinct counts and percentiles without "exact"), the test permits a
  * difference of 10 percent.
  *
+ * If TABLE_VIZ_TEST_CLUSTER_ID is set, the tests run a second time on that
+ * cluster, through the SQL driver.
+ *
  * NOT VERIFIED: these tests were written without access to a workspace.
  */
 import assert from 'node:assert/strict';
@@ -22,20 +25,27 @@ import type { Dataset, Request, ResultOf } from '../../../src/tableViz/core/sche
 import { DemoProfiler } from '../../../src/tableViz/demo/demoProfiler.ts';
 import { SqlProfiler } from '../../../src/tableViz/host/sqlProfiler.ts';
 import { RestWorkspaceClient } from '../../../src/tableViz/host/workspace.ts';
-import { liveClients, liveEnv } from './env.ts';
+import type { QueryRunner } from '../../../src/tableViz/core/runner.ts';
+import { liveClients, liveClusterRunner, liveEnv } from './env.ts';
 
 const env = liveEnv();
 const skip = env ? false : 'Set DATABRICKS_HOST, DATABRICKS_TOKEN, TABLE_VIZ_TEST_WAREHOUSE_ID and TABLE_VIZ_TEST_SCHEMA to run the live tests.';
 const demo = new DemoProfiler();
 
+/** The kinds of compute that the tests run on: the warehouse, and the cluster if TABLE_VIZ_TEST_CLUSTER_ID is set. */
+const targets: ('warehouse' | 'cluster')[] = ['warehouse', ...(env?.clusterId ? (['cluster'] as const) : [])];
+let target: 'warehouse' | 'cluster' = 'warehouse';
+let clusterRunner: QueryRunner | undefined;
+
 function profiler() {
   const { http, runner } = liveClients(env as NonNullable<typeof env>, 300);
   const workspace = new RestWorkspaceClient(http);
+  if (target === 'cluster') clusterRunner ??= liveClusterRunner(env as NonNullable<typeof env>);
   return new SqlProfiler({
-    runner,
+    runner: target === 'cluster' ? (clusterRunner as QueryRunner) : runner,
     getTable: (table) => workspace.getTable(table),
-    limiter: new Limiter(() => 4),
-    describe: () => ({ timeoutSeconds: 300, compute: 'The test warehouse', host: env?.host ?? '' }),
+    limiter: new Limiter(() => (target === 'cluster' ? 2 : 4)),
+    describe: () => ({ timeoutSeconds: 300, compute: `The test ${target}`, host: env?.host ?? '' }),
   });
 }
 
@@ -53,16 +63,20 @@ const near = (actual: number | undefined, expected: number | undefined, toleranc
   assert.ok(Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected)), `${what}: ${actual} is not near ${expected}`);
 };
 
-for (const name of ['orders_2025', 'orders_2026']) {
-  test(`${name}: the columns`, { skip }, async () => {
+for (const kind of targets) for (const name of ['orders_2025', 'orders_2026']) {
+  const on = <T>(run: () => Promise<T>) => async () => {
+    target = kind;
+    return run();
+  };
+  test(`${kind}, ${name}: the columns`, { skip }, on(async () => {
     const [real, expected] = await both(name, (dataset) => ({ type: 'tableDetails', dataset }));
     assert.deepEqual(real.columns.map((c) => [c.name, c.typeText.toLowerCase()]), expected.columns.map((c) => [c.name, c.typeText]));
     assert.equal(real.tableType, 'table');
     assert.ok(real.version !== undefined, 'a Delta table has a version');
     assert.ok((real.sizeBytes ?? 0) > 0);
-  });
+  }));
 
-  test(`${name}: the overview`, { skip }, async () => {
+  test(`${kind}, ${name}: the overview`, { skip }, on(async () => {
     const [details] = await both(name, (dataset) => ({ type: 'tableDetails', dataset }));
     const columns = details.columns.map((c) => ({ name: c.name, typeText: c.typeText.toLowerCase() }));
     for (const exact of [false, true]) {
@@ -82,9 +96,9 @@ for (const name of ['orders_2025', 'orders_2026']) {
         }
       }
     }
-  });
+  }));
 
-  test(`${name}: statistics and histogram of amount`, { skip }, async () => {
+  test(`${kind}, ${name}: statistics and histogram of amount`, { skip }, on(async () => {
     const column = [{ name: 'amount', typeText: 'decimal(10,2)' }] as [{ name: string; typeText: string }];
     const [real, expected] = await both(name, (dataset) => ({ type: 'numericStats', dataset, columns: column, exact: true }));
     assert.deepEqual([real.rowCount, real.nonNull, real.zeros, real.negatives, real.min, real.max], [expected.rowCount, expected.nonNull, expected.zeros, expected.negatives, expected.min, expected.max]);
@@ -101,9 +115,9 @@ for (const name of ['orders_2025', 'orders_2026']) {
     // Edges that are narrower than the data: the values outside go to "below" and "above".
     const [clipped, clippedWanted] = await both(name, (dataset) => ({ type: 'histogram', dataset, columns: column, edges: makeEdges(20, 100, 8) }));
     assert.deepEqual([clipped.counts, clipped.below, clipped.above], [clippedWanted.counts, clippedWanted.below, clippedWanted.above]);
-  });
+  }));
 
-  test(`${name}: frequency tables, value lengths and dates`, { skip }, async () => {
+  test(`${kind}, ${name}: frequency tables, value lengths and dates`, { skip }, on(async () => {
     for (const [column, typeText] of [['status', 'string'], ['quantity', 'int'], ['is_gift', 'boolean'], ['customer_id', 'string']] as const) {
       const [real, expected] = await both(name, (dataset) => ({ type: 'frequency', dataset, columns: [{ name: column, typeText }], top: 20 }));
       assert.deepEqual([real.rowCount, real.nulls], [expected.rowCount, expected.nulls], column);
@@ -119,9 +133,9 @@ for (const name of ['orders_2025', 'orders_2026']) {
       const [real, expected] = await both(name, (dataset) => ({ type: 'dateCounts', dataset, columns: [{ name: 'order_date', typeText: 'date' }], grain }));
       assert.deepEqual(real.buckets, expected.buckets, grain);
     }
-  });
+  }));
 
-  test(`${name}: a filter, a sample and a version`, { skip }, async () => {
+  test(`${kind}, ${name}: a filter, a sample and a version`, { skip }, on(async () => {
     const p = profiler();
     const ok = await p.profile({ type: 'validateFilter', dataset: { ...live(name), filter: "region = 'EMEA' AND quantity >= 2" } });
     assert.equal(ok.type, 'validateFilter');
@@ -137,7 +151,7 @@ for (const name of ['orders_2025', 'orders_2026']) {
     const details = (await p.profile({ type: 'tableDetails', dataset: live(name) })) as ResultOf<'tableDetails'>;
     const pinned = (await p.profile({ type: 'overview', dataset: { ...live(name), version: { kind: 'version', n: details.version as string } }, columns: column })) as ResultOf<'overview'>;
     assert.ok(pinned.rowCount > 0);
-  });
+  }));
 }
 
 test('names with special characters: a table that does not exist gives the plain message', { skip }, async () => {

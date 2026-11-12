@@ -140,11 +140,11 @@ different values it has, and charts of its values. Databricks computes all
 numbers. The extension never downloads the rows of the table.
 
 This part is not complete, and no person has run it on a real workspace. It
-works with SQL warehouses. It does not work with clusters yet, and it cannot
-compare two tables yet. [docs/table-viz-design.md](docs/table-viz-design.md)
+works with SQL warehouses and with all-purpose clusters. It cannot compare
+two tables yet. [docs/table-viz-design.md](docs/table-viz-design.md)
 has the plan.
 
-### Select the login and the warehouse
+### Select the login and the compute
 
 Run "Databricks Notebook: Select Profile and Compute for Tables". The first
 list shows the logins that you can use:
@@ -157,12 +157,26 @@ list shows the logins that you can use:
 | Demo | Two demo tables, `demo.shop.orders_2025` and `demo.shop.orders_2026`. No workspace and no login. |
 | Type a workspace URL and a token… | Asks for the URL and a personal access token. |
 
-The second list shows the SQL warehouses of the workspace, with their state
-and size. The status bar then shows the login and the warehouse. Click it to
-select a different one.
+The second list shows the SQL warehouses and the all-purpose clusters of
+the workspace, with their state. The status bar then shows the login and the
+compute. Click it to select a different one.
 
-If the warehouse is stopped, the extension asks before the first query
-starts it, because a warehouse that runs costs money.
+If the warehouse or the cluster is stopped, the extension asks before the
+first query starts it. Compute that runs costs money, and a cluster can take
+several minutes to start.
+
+A SQL warehouse is the better choice: it starts faster, and it needs no
+extra software. The extension can use a cluster only if these three things
+are true:
+
+| Condition | Why |
+|---|---|
+| The access mode of the cluster is "standard" or "dedicated". | A cluster with "no isolation shared" cannot read Unity Catalog. |
+| The cluster has Databricks Runtime 14.2 or later. | The queries use `IDENTIFIER()` and named parameters. |
+| VS Code is a recent version. | The Databricks SQL driver needs Node.js 22.23.4, 24.22.1 or later, and VS Code contains its own Node.js. |
+
+The list shows a cluster that does not meet a condition with the reason, and
+you cannot select it.
 
 ### Open a table
 
@@ -213,8 +227,13 @@ Above the cards:
   you opened the board. The cards then agree while a job writes to the table.
 - Before the first query on a table larger than 100 GB, the board asks. You
   can use a sample or a filter.
-- The extension runs 4 queries at the same time at most, and it cancels a
-  query after 5 minutes. The settings change both numbers.
+- The extension runs 4 queries at the same time at most on a warehouse, and
+  2 on a cluster. It cancels a query after 5 minutes. The settings change
+  these numbers.
+- On a cluster, the extension uses the Databricks SQL Driver for Node.js. It
+  turns off the usage data that the driver sends by default, and it does not
+  let the driver download results from cloud storage. The extension talks to
+  your workspace URL only.
 
 ## Magic commands
 
@@ -238,9 +257,9 @@ Above the cards:
 | `dbxNotebook.cliPath` | empty | The path of the `databricks` command. Empty uses the one from the official extension. |
 | `dbxNotebook.tableViz.defaultBins` | 30 | The number of bins of a new histogram in "Visualize Table". From 5 to 200. |
 | `dbxNotebook.tableViz.topValues` | 20 | The number of values in the bar chart of a category column. From 1 to 100. |
-| `dbxNotebook.tableViz.warehouseId` | empty | The ID of the SQL warehouse for "Visualize Table". A warehouse that you select from the list is used before this setting. |
-| `dbxNotebook.tableViz.confirmComputeStart` | on | Ask before a query starts a stopped warehouse. |
-| `dbxNotebook.tableViz.maxConcurrentQueries` | 4 | The largest number of queries that run at the same time. |
+| `dbxNotebook.tableViz.warehouseId` | empty | The ID of the SQL warehouse for "Visualize Table". A warehouse or a cluster that you select from the list is used before this setting. |
+| `dbxNotebook.tableViz.confirmComputeStart` | on | Ask before a query starts a stopped warehouse or cluster. |
+| `dbxNotebook.tableViz.maxConcurrentQueries` | 0 | The largest number of queries that run at the same time. `0` means 4 on a warehouse and 2 on a cluster. |
 | `dbxNotebook.tableViz.queryTimeoutSeconds` | 300 | The time limit of one query, in seconds. |
 | `dbxNotebook.tableViz.largeTableWarningGB` | 100 | The board asks before the first full scan of a table that is larger than this size. |
 

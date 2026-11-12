@@ -7,6 +7,7 @@
  * This file does not import `vscode`, so that a test can use it with a
  * local server.
  */
+import type { ClusterInfo } from '../core/clusters.ts';
 import { displayTableName } from '../core/names.ts';
 import type { ColumnInfo, TableName } from '../core/schema.ts';
 import { DEMO_TABLE_NAMES, demoTable } from '../demo/data.ts';
@@ -32,6 +33,11 @@ export interface TableEntry {
 export interface WorkspaceClient {
   listWarehouses(): Promise<Warehouse[]>;
   getWarehouse(id: string): Promise<Warehouse>;
+  /** List the all-purpose clusters. The list does not contain the clusters of jobs and pipelines. */
+  listClusters(): Promise<ClusterInfo[]>;
+  getCluster(id: string): Promise<ClusterInfo>;
+  /** Tell Databricks to start a stopped cluster. The function returns before the cluster runs. */
+  startCluster(id: string): Promise<void>;
   listCatalogs(): Promise<string[]>;
   listSchemas(catalog: string): Promise<string[]>;
   listTables(catalog: string, schema: string): Promise<TableEntry[]>;
@@ -82,6 +88,33 @@ export class RestWorkspaceClient implements WorkspaceClient {
 
   async getWarehouse(id: string): Promise<Warehouse> {
     return RestWorkspaceClient.warehouse((await this.http('GET', `/api/2.0/sql/warehouses/${encodeURIComponent(id)}`)) as Record<string, unknown>);
+  }
+
+  private static cluster(raw: Record<string, unknown>): ClusterInfo {
+    return {
+      id: String(raw.cluster_id ?? ''),
+      name: String(raw.cluster_name ?? raw.cluster_id ?? ''),
+      state: String(raw.state ?? 'UNKNOWN'),
+      sparkVersion: raw.spark_version ? String(raw.spark_version) : undefined,
+      accessMode: raw.data_security_mode ? String(raw.data_security_mode) : undefined,
+    };
+  }
+
+  async listClusters(): Promise<ClusterInfo[]> {
+    const clusters = await this.pages<Record<string, unknown>>('/api/2.1/clusters/list', { page_size: 100 }, 'clusters');
+    return clusters
+      // A person makes an all-purpose cluster in the UI or with the API. Jobs and pipelines make the other clusters.
+      .filter((c) => c.cluster_source === undefined || c.cluster_source === 'UI' || c.cluster_source === 'API')
+      .map(RestWorkspaceClient.cluster)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getCluster(id: string): Promise<ClusterInfo> {
+    return RestWorkspaceClient.cluster((await this.http('GET', '/api/2.1/clusters/get', { cluster_id: id })) as Record<string, unknown>);
+  }
+
+  async startCluster(id: string): Promise<void> {
+    await this.http('POST', '/api/2.1/clusters/start', { cluster_id: id });
   }
 
   async listCatalogs(): Promise<string[]> {
@@ -136,6 +169,15 @@ export class DemoWorkspaceClient implements WorkspaceClient {
   }
   async getWarehouse(id: string): Promise<Warehouse> {
     throw new HttpError(`The Demo profile has no warehouse ${id}.`, 404);
+  }
+  async listClusters(): Promise<ClusterInfo[]> {
+    return [];
+  }
+  async getCluster(id: string): Promise<ClusterInfo> {
+    throw new HttpError(`The Demo profile has no cluster ${id}.`, 404);
+  }
+  async startCluster(id: string): Promise<void> {
+    throw new HttpError(`The Demo profile has no cluster ${id}.`, 404);
   }
   async listCatalogs(): Promise<string[]> {
     return ['demo'];

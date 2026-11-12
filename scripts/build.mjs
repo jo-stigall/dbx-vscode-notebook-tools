@@ -7,6 +7,7 @@
  * The script writes these files:
  *
  *     dist/tableViz/host.js       the code that runs in the extension host
+ *     dist/tableViz/driver.js     the Databricks SQL driver, which the host loads only for a cluster
  *     dist/tableViz/webview.js    the code that runs in the webview
  *     dist/tableViz/webview.css   the styles of the webview
  *     dist/harness/               a test page that shows the webview in a browser, with demo data
@@ -27,7 +28,21 @@ await esbuild.build({
   platform: 'node',
   format: 'cjs',
   target: 'node20',
-  external: ['vscode'],
+  // './driver.js' is the next file. The host loads it only when the user selects a cluster.
+  external: ['vscode', './driver.js'],
+});
+
+// The SQL driver for clusters, as its own file. Its two optional parts with native code are not in the file:
+// the feature turns LZ4 compression off and never uses the "kernel" path.
+await esbuild.build({
+  ...common,
+  entryPoints: ['src/tableViz/host/driver.ts'],
+  outfile: 'dist/tableViz/driver.js',
+  platform: 'node',
+  format: 'cjs',
+  target: 'node20',
+  minify: true,
+  external: ['lz4-napi', '@databricks/databricks-sql-kernel-*'],
 });
 
 // The webview. One script and one style sheet, because the Content Security Policy permits no other code.

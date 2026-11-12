@@ -26,7 +26,7 @@ test files from the repository.
 | `mock_databricks.py` | The fake Databricks server. The test and the demo start it. | |
 | `tableViz/unit/` | Tests the pure code, the SQL and the demo data of "Visualize Table". | 1 second |
 | `tableViz/webview/` | Tests the content of each kind of detail card. | 1 second |
-| `tableViz/fake/` | A fake SQL warehouse and a fake workspace. They answer from the demo tables. | |
+| `tableViz/fake/` | A fake SQL warehouse, a fake workspace and a fake of the SQL driver. They answer from the demo tables. | |
 | `tableViz/integration/workspace.cjs` | Tests "Visualize Table" in a VS Code window with the fake workspace. `e2e.js` runs it. | 5 seconds |
 | `tableViz/live/` | Tests on a real Databricks workspace. They run only if you set four variables. | |
 | `tableViz/integration/demo.cjs` | Tests "Visualize Table" in a VS Code window. `e2e.js` runs it. | 2 seconds |
@@ -81,7 +81,7 @@ in `tableViz/unit/` directly. It cannot run the `.tsx` file in
 The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 82
+ℹ pass 94
 ℹ fail 0
 ```
 
@@ -103,6 +103,10 @@ The tests make sure of these things:
 - The SQL profiler gives the same numbers as the demo profiler for each
   request type. A fake warehouse answers its statements from the demo tables.
 - Browsing the catalog sends no SQL statement.
+- The cluster runner gives the same rows as the warehouse runner. It cancels
+  a statement on request and after the time limit, and it connects again
+  with a new token when the token expired or the session ended. A fake of
+  the SQL driver plays the role of the cluster.
 
 If you change a SQL builder on purpose, write the snapshot file again and
 read the difference before you commit it:
@@ -153,6 +157,10 @@ ok   tableViz: Visualize Table Under Cursor opens the table at the cursor
 ok   tableViz: a cancel stops the statement on the workspace
 ok   tableViz: an error from the workspace becomes a plain message
 ok   tableViz: a statement starts a stopped warehouse when the question is off
+ok   tableViz: the SQL driver for clusters loads in VS Code
+ok   tableViz: a board gets correct numbers through the cluster runner
+ok   tableViz: a cluster with a wrong access mode or an old runtime is refused
+ok   tableViz: the extension starts a stopped cluster and waits until it runs
 PASS
 ```
 
@@ -171,8 +179,12 @@ This shows that the builders, the runner and the parsers fit together. It
 does not show that Databricks accepts each statement. Only the live tests
 show that.
 
-One thing has no automatic test: the question "Start the warehouse?". It is
-a dialog that a test cannot click.
+The test in VS Code loads the real SQL driver, but it does not connect with
+it: a fake of the driver answers the statements. Thus no test shows that
+the real driver can talk to a real cluster.
+
+One thing has no automatic test: the questions "Start the warehouse?" and
+"Start the cluster?". They are dialogs that a test cannot click.
 
 ## Test on a real workspace
 
@@ -184,6 +196,7 @@ These tests are off by default. To run them, set four variables:
 | `DATABRICKS_TOKEN` | A personal access token. |
 | `TABLE_VIZ_TEST_WAREHOUSE_ID` | The ID of a SQL warehouse. |
 | `TABLE_VIZ_TEST_SCHEMA` | A schema that the tests can write to, as `catalog.schema`. |
+| `TABLE_VIZ_TEST_CLUSTER_ID` | Optional. The ID of an all-purpose cluster that runs. The tests then run a second time on the cluster. |
 
 Load the demo tables into the schema one time. This script makes two tables
 and writes about 210,000 rows:
