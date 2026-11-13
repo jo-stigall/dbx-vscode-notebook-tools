@@ -86,11 +86,13 @@ export class CachingProfiler implements Profiler {
    *
    * A request that fails stores nothing, so the same request runs a query again.
    *
-   * @param options.refresh  true: do not use the stored result. Ask the inner profiler and replace the stored result.
+   * @param options.refresh  true: delete the stored result, ask the inner profiler and store its answer. If the inner profiler fails, the cache has no result for the request.
    */
   async profile(request: Request, options: ProfileOptions = {}): Promise<Result> {
     const key = this.key(request);
-    const found = options.refresh ? undefined : this.entries.get(key);
+    // "Refresh": forget the stored result first. If the new query fails, the cache must not give the old numbers later.
+    if (options.refresh) this.forget(key);
+    const found = this.entries.get(key);
     if (found) {
       // Move the entry to the end: it is now the most recently used.
       this.entries.delete(key);
@@ -104,17 +106,21 @@ export class CachingProfiler implements Profiler {
     return result;
   }
 
+  /** Delete the stored result of one key, if there is one. */
+  private forget(key: string): void {
+    const old = this.entries.get(key);
+    if (!old) return;
+    this.size -= old.size;
+    this.entries.delete(key);
+  }
+
   /**
    * Store a result. Then delete the oldest results until the cache is not larger than `maxSize`.
    *
    * The method does not keep a result that alone is larger than `maxSize`.
    */
   private store(key: string, result: Result): void {
-    const old = this.entries.get(key);
-    if (old) {
-      this.size -= old.size;
-      this.entries.delete(key);
-    }
+    this.forget(key);
     const size = key.length + JSON.stringify(result).length;
     if (size > this.maxSize) return; // One result that is larger than the full cache: do not keep it.
     this.entries.set(key, { result, size });

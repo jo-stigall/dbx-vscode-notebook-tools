@@ -105,7 +105,7 @@ request for A and one for B. The host keeps a separate cache entry for each.
 
 | Package | License | Used for |
 |---|---|---|
-| `@databricks/sql` | Apache-2.0 | Queries on a cluster. The extension loads it only when you select a cluster. |
+| `@databricks/sql` | Apache-2.0 | Queries on a cluster. The extension loads it only when the first statement runs on a cluster. |
 | `echarts` | Apache-2.0 | Charts. |
 | `react`, `react-dom` | MIT | The webview. |
 | `zod` | MIT | Message checks. |

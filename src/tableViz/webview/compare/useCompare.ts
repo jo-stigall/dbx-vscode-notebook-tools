@@ -53,6 +53,63 @@ export class Scope {
 }
 
 /**
+ * The requests of the pairs that the user compares as text: one Scope for each pair.
+ *
+ * A pair whose types differ runs queries only after the user selects
+ * "Compare as text". When the user clears the check mark, the board does
+ * not need those queries, so the hook closes the scope of the pair and the
+ * queries that still run stop.
+ *
+ * @example
+ * const scopes = new TextScopes();
+ * columnDrift(scopes.open('store_id', base).ask, a, b, pair, 'values', ...);   // the user selected "Compare as text"
+ * scopes.keep(new Set(['store_id']));   // the pair is still compared as text: nothing stops
+ * scopes.keep(new Set());               // the user cleared the check mark: the queries of the pair stop
+ */
+export class TextScopes {
+  /** The name of a column of A -> the scope of its pair, and the datasets (as text) that the scope is for. */
+  private readonly scopes = new Map<string, { base: string; scope: Scope }>();
+  /** Scopes for datasets that the board does not show any more. keep() closes them. */
+  private old: Scope[] = [];
+
+  /**
+   * Get the scope of a pair. Make a new scope if the pair has none for these datasets.
+   *
+   * @param name  The name of the column in A.
+   * @param base  Text that identifies the two datasets and the last "Refresh".
+   */
+  open(name: string, base: string): Scope {
+    const found = this.scopes.get(name);
+    if (found?.base === base) return found.scope;
+    if (found) this.old.push(found.scope);
+    const scope = new Scope();
+    this.scopes.set(name, { base, scope });
+    return scope;
+  }
+
+  /**
+   * Close the scope of each pair that is not in `names`, and the scopes for older datasets.
+   *
+   * Call it after the new computations sent their first requests. A request
+   * that an old scope and a new scope want then continues.
+   */
+  keep(names: Set<string>): void {
+    for (const [name, { scope }] of this.scopes) {
+      if (names.has(name)) continue;
+      this.scopes.delete(name);
+      scope.close();
+    }
+    this.old.forEach((scope) => scope.close());
+    this.old = [];
+  }
+
+  /** Close all scopes. Call it when the board leaves the page. */
+  close(): void {
+    this.keep(new Set());
+  }
+}
+
+/**
  * The drift of one pair: not known yet, known, not compared, or failed.
  *
  * If `stale` is true, the drift belongs to the datasets before the last
@@ -132,6 +189,8 @@ export class DatasetHolds {
  *
  * When a dataset changes, the hook releases the requests on the old
  * dataset, and the host cancels those that still run. See DatasetHolds.
+ * When the user clears "Compare as text" for a pair, the hook releases the
+ * requests of that pair. See TextScopes.
  * The hook also starts all computations again after a click on "Refresh".
  *
  * When a dataset changes, the hook keeps the drift of each pair, with
@@ -161,8 +220,11 @@ export function useDrifts(a: Dataset, b: Dataset, pairs: ColumnPair[], overviewA
     .join('|');
 
   const holds = useRef<DatasetHolds>(new DatasetHolds());
+  const textScopes = useRef<TextScopes>(new TextScopes());
   useEffect(() => {
     let current = true;
+    // The pairs that this run compares as text.
+    const asTextNow = new Set<string>();
     // Release the requests on a dataset that the board does not show any more.
     holds.current.show([a, b]);
     const set = (name: string, value: DriftState) =>
@@ -171,22 +233,33 @@ export function useDrifts(a: Dataset, b: Dataset, pairs: ColumnPair[], overviewA
       const statsA = overviewA.stats.get(pair.a.name);
       const statsB = overviewB.stats.get(pair.b.name);
       if (!statsA || !statsB || overviewA.rowCount === undefined || overviewB.rowCount === undefined) continue;
-      const kind = compareKind(pair, statsA, statsB, asText.includes(pair.a.name));
+      const text = asText.includes(pair.a.name);
+      const kind = compareKind(pair, statsA, statsB, text);
       if (kind === 'skip') {
         set(pair.a.name, { status: 'skip' });
         continue;
       }
-      columnDrift(holds.current.ask, a, b, pair, kind, overviewA.rowCount, statsA, overviewB.rowCount, statsB).then(
+      // A pair that the user compares as text has its own scope. Its queries stop when the user clears "Compare as text".
+      if (text) asTextNow.add(pair.a.name);
+      const ask = text ? textScopes.current.open(pair.a.name, base).ask : holds.current.ask;
+      columnDrift(ask, a, b, pair, kind, overviewA.rowCount, statsA, overviewB.rowCount, statsB).then(
         (drift) => set(pair.a.name, drift ? { status: 'done', drift, kind } : { status: 'skip' }),
         (error: RequestError) => set(pair.a.name, { status: 'error', error })
       );
     }
+    textScopes.current.keep(asTextNow);
     return () => {
       current = false;
     };
   }, [base, ready]);
   // When the board leaves the page, release all requests. Their queries that still run stop.
-  useEffect(() => () => holds.current.close(), []);
+  useEffect(
+    () => () => {
+      holds.current.close();
+      textScopes.current.close();
+    },
+    []
+  );
   return useMemo(() => (state.base === base ? state.values : asStale(state.values)), [state, base]);
 }
 

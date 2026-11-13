@@ -8,7 +8,7 @@
  * The bar does not hold the dataset. It calls `onChange` with a new
  * dataset, and the board (Board.tsx) keeps it.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { chipLabel, missesPartition, parseVersion, removeChip } from '../core/derive.ts';
 import { displayTableName } from '../core/names.ts';
 import type { Dataset, ResultOf } from '../core/schema.ts';
@@ -69,6 +69,10 @@ export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRe
   const versionText = dataset.version?.kind === 'version' ? dataset.version.n : (dataset.version?.ts ?? '');
   const [versionDraft, setVersionDraft] = useState(versionText);
   useEffect(() => setDraft(dataset.filter ?? ''), [dataset.filter]);
+  // The dataset as it is now. apply() reads it after Databricks checked the filter, because the user can change
+  // the dataset while the check runs, for example with a click on a bar.
+  const latest = useRef(dataset);
+  latest.current = dataset;
   useEffect(() => setVersionDraft(versionText), [versionText]);
   const versionValid = parseVersion(versionDraft) !== 'invalid';
   const id = `filter-${label ?? 'a'}`;
@@ -93,7 +97,7 @@ export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRe
     setChecking(true);
     try {
       await acquire(request);
-      onChange({ ...dataset, filter });
+      onChange({ ...latest.current, filter });
     } catch (e) {
       const failure = e as RequestError;
       if (!failure.cancelled) setError(failure);

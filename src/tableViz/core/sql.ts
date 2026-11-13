@@ -13,8 +13,9 @@
  *   the statement.
  *
  * A few parts cannot be parameters: the Delta version, the sample percent,
- * and the period of a date chart. The schema in schema.ts permits only
- * digits, date characters and fixed words for them.
+ * the period of a date chart, and the probabilities of a "quantiles"
+ * request. The schema in schema.ts permits only digits, date characters,
+ * fixed words and numbers between 0 and 1 for them.
  *
  * @example
  * buildStatements({
@@ -521,8 +522,9 @@ export function buildStatements(request: Request, options: BuildOptions = {}): S
 /**
  * Write a statement for a person to read: the parameters as comments, then the SQL.
  *
- * The value of a STRING parameter is between single quotation marks, and
- * each single quotation mark in the value is there two times.
+ * The value of a STRING parameter is a Databricks string on one line. See
+ * stringLiteral(). A value can thus never end its comment line and become
+ * SQL in the text that "Open SQL in Editor" writes.
  *
  * @example
  * renderStatement({ sql: 'SELECT count(*) FROM IDENTIFIER(:tbl)', params: [{ name: 'tbl', value: '`main`.`sales`.`orders`', type: 'STRING' }] })
@@ -530,8 +532,27 @@ export function buildStatements(request: Request, options: BuildOptions = {}): S
  * // SELECT count(*) FROM IDENTIFIER(:tbl)
  */
 export function renderStatement(statement: Statement): string {
-  const lines = statement.params.map((p) => `-- :${p.name} = ${p.type === 'STRING' ? `'${p.value.replace(/'/g, "''")}'` : p.value}`);
+  const lines = statement.params.map((p) => `-- :${p.name} = ${p.type === 'STRING' ? stringLiteral(p.value) : p.value.replace(/[\r\n]/g, ' ')}`);
   return [...lines, statement.sql].join('\n');
+}
+
+/**
+ * Write a text value as a Databricks string on one line.
+ *
+ * | In the value          | In the string                         |
+ * |-----------------------|---------------------------------------|
+ * | a single quotation mark | two single quotation marks          |
+ * | a backslash           | two backslashes                       |
+ * | a line break          | a backslash and "n" (or "r")          |
+ *
+ * @example
+ * stringLiteral("it's")              // "'it''s'"
+ * stringLiteral('C:\\temp')           // "'C:\\\\temp'": the value has one backslash, the string has two
+ * stringLiteral('a\nDROP TABLE t')   // "'a\\nDROP TABLE t'": one line, with a backslash and "n"
+ */
+function stringLiteral(value: string): string {
+  const escapes: Record<string, string> = { '\\': '\\\\', "'": "''", '\n': '\\n', '\r': '\\r' };
+  return `'${value.replace(/[\\'\n\r]/g, (ch) => escapes[ch] as string)}'`;
 }
 
 /**
@@ -539,7 +560,8 @@ export function renderStatement(statement: Statement): string {
  *
  * The input is the text of renderStatement(): the parameters as comments,
  * then the SQL. The function puts the value of each parameter in the place
- * of its marker.
+ * of its marker. The value is a Databricks string already, so the function
+ * copies it as it is.
  *
  * @example
  * inlineRendered("-- :tbl = '`main`.`sales`.`orders`'\n-- :limit = 21\nSELECT 1 FROM IDENTIFIER(:tbl) LIMIT :limit")
@@ -552,8 +574,7 @@ export function inlineRendered(rendered: string): string {
   for (; start < lines.length; start++) {
     const match = /^-- :(\w+) = (.*)$/.exec(lines[start] as string);
     if (!match) break;
-    // In a Databricks string, a backslash starts an escape. Write it two times so that it stays a backslash.
-    values.set(match[1] as string, (match[2] as string).replace(/\\/g, '\\\\'));
+    values.set(match[1] as string, match[2] as string);
   }
   return lines
     .slice(start)

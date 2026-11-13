@@ -371,8 +371,9 @@ and B usually have different sizes. Select "Row counts" to see counts, and
 **The drift score** tells how different a column is in A and B. It is the
 Jensen-Shannon distance: 0 means that the column is the same, 1 means that
 A and B have nothing in common. For a category, the board computes it over
-the values. For a number or a date, it computes it over 10 bins that each
-contain one tenth of the values of A. The score ranks the columns. It is
+the values. For a number or a date, it computes it over bins that each
+contain one tenth of the values of A. There are 10 bins, or fewer if the
+column has few different values. The score ranks the columns. It is
 not a test of significance: with millions of rows, each small difference
 would be "significant".
 

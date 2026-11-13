@@ -40,7 +40,8 @@ const serializer = {
    * @returns {vscode.NotebookData}
    */
   deserializeNotebook(content) {
-    const nb = parseNotebook(new TextDecoder().decode(content));
+    // ignoreBOM: keep a byte-order mark at the start of the file, so that the parser can remember it.
+    const nb = parseNotebook(new TextDecoder('utf-8', { ignoreBOM: true }).decode(content));
     const data = new vscode.NotebookData(
       nb.cells.map((c) => {
         const kind = c.kind === 'markdown' ? vscode.NotebookCellKind.Markup : vscode.NotebookCellKind.Code;
@@ -51,7 +52,7 @@ const serializer = {
         return cell;
       })
     );
-    data.metadata = { dbx: { eol: nb.eol, header: nb.header, trailer: nb.trailer } };
+    data.metadata = { dbx: { eol: nb.eol, header: nb.header, trailer: nb.trailer, ...(nb.bom ? { bom: true } : {}) } };
     return data;
   },
 

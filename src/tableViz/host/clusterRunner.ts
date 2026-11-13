@@ -294,7 +294,8 @@ export class ClusterRunner implements QueryRunner {
   private async attempt(statement: Statement, options: RunOptions, fresh: boolean): Promise<QueryResult> {
     const { signal } = options;
     const { session, driver } = await this.session(fresh);
-    if (signal?.aborted) throw new CancelledError();
+    // The user can cancel, or select different compute, while the runner connects. Then do not send the statement.
+    if (signal?.aborted || this.closed) throw new CancelledError();
 
     const timeoutSeconds = this.deps.timeoutSeconds();
     const namedParameters: Record<string, unknown> = {};

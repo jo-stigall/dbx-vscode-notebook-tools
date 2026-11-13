@@ -239,6 +239,29 @@ test('runner: a statement with many status requests puts one listener on the can
   }
 });
 
+test('runner: a cancel stops the wait after HTTP 429 and cancels the statement', async () => {
+  let cancelled = false;
+  const server = await scripted((request) => {
+    if (request.method === 'POST' && request.path.endsWith('/cancel')) return ((cancelled = true), { body: {} });
+    if (request.method === 'POST') return { body: inState('RUNNING') };
+    // Databricks is busy: each status request must wait 60 seconds before the next try.
+    return cancelled ? { body: inState('CANCELED') } : { status: 429, headers: { 'Retry-After': '60' }, body: { message: 'Too many requests.' } };
+  });
+  try {
+    const controller = new AbortController();
+    // The real waits, so that only the cancel can end the test in time.
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
+    const running = makeRunner(server.url, { sleep }).runner.run(statement, { signal: controller.signal });
+    setTimeout(() => controller.abort(), 700);
+    const start = Date.now();
+    await assert.rejects(running, CancelledError);
+    assert.ok(Date.now() - start < 5000, 'the runner does not wait 60 seconds');
+    assert.ok(server.paths().includes('POST /api/2.0/sql/statements/s-1/cancel'), server.paths().join(', '));
+  } finally {
+    server.close();
+  }
+});
+
 test('runner: a statement that fails', async () => {
   const failed = { statement_id: 's-1', status: { state: 'FAILED', sql_state: '42P01', error: { error_code: 'TABLE_OR_VIEW_NOT_FOUND', message: 'The table `x` cannot be found.' } } };
   const server = await scripted((request) => ({ body: request.method === 'POST' ? inState('RUNNING') : failed }));

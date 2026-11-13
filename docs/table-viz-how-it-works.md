@@ -38,12 +38,9 @@ servers and the demo tables.
   src/tableViz/webview/       src/tableViz/host/board.ts
         |                                   |
         |  "request" message                v
-        +---------------------->  Cache    (core/cache.ts)
-                                            |
-                                            v
-                                  Profiler of the profile
-                                  - "Demo":  demo/demoProfiler.ts   (no Databricks)
-                                  - others:  host/sqlProfiler.ts
+        +---------------------->  Profiler of the profile
+                                  - "Demo":  demo/demoProfiler.ts   (no Databricks, no cache)
+                                  - others:  Cache (core/cache.ts), then host/sqlProfiler.ts
                                             |
                                             |  core/sql.ts builds the statement
                                             v
@@ -166,7 +163,8 @@ request to `webview/rpc.ts`, which sends this message to the host:
 
 **2. The host looks in the cache.** If the same request ran before on the
 same workspace, the cache gives the result and no query runs. "Refresh" on
-the board skips the cache.
+the board deletes the stored result and runs the query again. The Demo
+profile has no cache, because it runs no query.
 
 **3. The SQL profiler builds the statement.** `core/sql.ts` returns this
 text. Each name and each number is a parameter, so a column name can never
@@ -278,7 +276,9 @@ Compare mode shows the same column in dataset A and in dataset B.
 
 - **Each request names one dataset.** The page sends one request for A and
   one for B. The cache keeps the two answers apart. If you change B, the
-  answer for A comes from the cache and no query runs on A.
+  answers for A come from the cache. One exception: the histograms of a
+  number column share their bins, and the bins come from the range of A and
+  B together. A new B can thus need a new histogram of A.
 - **`core/match.ts` matches the columns by name.** Example: `amount` in A
   goes with `amount` in B. A column that is only in A shows in the schema
   comparison, not in the list of pairs.
@@ -290,9 +290,12 @@ Compare mode shows the same column in dataset A and in dataset B.
 - **The overview sorts by the drift score.** The columns that changed most
   come first.
 
-For a number or a date, the score uses 10 bins. The borders of the bins are
-the deciles of A. For a category, it uses the values of A and B, with null as
-its own value.
+For a number or a date, the score uses bins. The borders of the bins are
+the deciles of A, so there are usually 10 bins. There are fewer if two or
+more deciles are the same value: a column where each row has the same value
+has 2 bins. If the column has no values in A, the score compares
+the nulls only. For a category, the score uses the values of A and B, with
+null as its own value.
 
 ## How the demo works
 
@@ -329,7 +332,7 @@ npm run build
 | File | What it contains | When the extension loads it |
 |---|---|---|
 | `dist/tableViz/host.js` | The code of `host/`, `core/` and `demo/`. | The first time that you use a command of the feature. |
-| `dist/tableViz/driver.js` | The Databricks SQL Driver for Node.js. | The first time that you select a cluster. |
+| `dist/tableViz/driver.js` | The Databricks SQL Driver for Node.js. | The first time that a statement runs on a cluster. |
 | `dist/tableViz/webview.js`, `webview.css` | The page. | When a board opens. |
 | `dist/test/`, `dist/harness/` | Code for the tests and for the test page in a browser. | Never in the installed extension. |
 
@@ -345,8 +348,8 @@ Example: you want the number of rows for each day of the week.
    parameters for each name and each value.
 3. **`core/parse.ts`:** add the function that converts the rows to the
    result.
-4. **`host/sqlProfiler.ts`:** add a `case` that calls the builder and the
-   parser.
+4. **`host/sqlProfiler.ts`:** add a `case` that calls the parser. The
+   profiler calls `buildStatements()` for each request before the `switch`.
 5. **`demo/demoProfiler.ts`:** add a `case` that counts the rows of the demo
    tables. The tests then compare the two profilers.
 6. **`webview/`:** call `useResult({ type: 'weekdayCounts', ... })` in a

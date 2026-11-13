@@ -472,9 +472,13 @@ test('compare: the drift in words, with the null rate on its own line', async ()
   const { drifts } = await comparison();
   const discount = (drifts.get('discount_pct') as { drift: Drift }).drift;
   const text = textOf(<DriftLine drift={discount} />);
-  assert.ok(text.includes('Drift score 0.33 (Jensen-Shannon distance over 10 bins cut at the deciles of A'), text);
+  assert.ok(text.includes('Drift score 0.33 (Jensen-Shannon distance over 10 bins cut at the deciles of A, plus a bin for null;'), text);
   assert.match(text, /Population Stability Index \d+\.\d\d/);
   assert.ok(text.includes('Null rate: 5.1% in A, 34.9% in B (+29.8 pp)'), text);
+  // A column with few different values has fewer than 10 bins. The sentence gives the real number.
+  const few = textOf(<DriftLine drift={{ ...discount, bins: discount.bins.slice(0, 2) }} />);
+  assert.ok(few.includes('over 2 bins cut at the deciles of A'), few);
+  assert.ok(textOf(<DriftLine drift={{ ...discount, bins: discount.bins.slice(0, 1) }} />).includes('over 1 bin cut'));
   assert.equal(formatPoints(0), '0 pp');
   assert.equal(formatPoints(-0.048), '-4.8 pp');
 });

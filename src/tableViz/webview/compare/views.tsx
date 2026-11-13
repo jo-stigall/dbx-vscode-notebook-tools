@@ -38,16 +38,25 @@ export function formatPoints(difference: number): string {
 }
 
 /**
- * The words that tell how the compare code made the bins of a drift score. DriftLine puts them after "Jensen-Shannon distance".
+ * Tell in words how the compare code made the bins of a drift score. DriftLine puts the words after "Jensen-Shannon distance".
+ *
+ * A column usually has 10 bins. It has fewer if two or more deciles of A are
+ * the same value, for example in a column with three different values. The
+ * null rows are a bin of their own, if A or B has null rows.
  *
  * @example
- * METHODS.deciles   // 'over 10 bins cut at the deciles of A'
+ * methodText({ method: 'deciles', bins: [10 bins and '(null)'], ... })   // 'over 10 bins cut at the deciles of A, plus a bin for null'
+ * methodText({ method: 'deciles', bins: [2 bins], ... })                 // 'over 2 bins cut at the deciles of A'
+ * methodText({ method: 'values', ... })                                  // 'over the values of A and B'
  */
-const METHODS: Record<Drift['method'], string> = {
-  values: 'over the values of A and B',
-  deciles: 'over 10 bins cut at the deciles of A',
-  nulls: 'over "null" and "not null" only',
-};
+function methodText(drift: Drift): string {
+  if (drift.method === 'values') return 'over the values of A and B';
+  if (drift.method === 'nulls') return 'over "null" and "not null" only';
+  // columnDrift() in core/compare.ts gives the bin of the null rows this label.
+  const hasNull = drift.bins.some((bin) => bin.label === '(null)');
+  const count = drift.bins.length - (hasNull ? 1 : 0);
+  return `over ${count} ${count === 1 ? 'bin' : 'bins'} cut at the deciles of A${hasNull ? ', plus a bin for null' : ''}`;
+}
 
 /**
  * The drift of a column in words: the score, the PSI, and the null rate on its own line.
@@ -61,7 +70,7 @@ export function DriftLine({ drift }: { drift: Drift }) {
   return (
     <div className="drift">
       <p>
-        <strong>Drift score {formatScore(drift.score)}</strong> (Jensen-Shannon distance {METHODS[drift.method]}; 0 is "the same", 1 is "nothing in common") · Population Stability Index{' '}
+        <strong>Drift score {formatScore(drift.score)}</strong> (Jensen-Shannon distance {methodText(drift)}; 0 is "the same", 1 is "nothing in common") · Population Stability Index{' '}
         {formatScore(drift.psi)}
       </p>
       <p>

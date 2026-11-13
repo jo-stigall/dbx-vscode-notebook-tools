@@ -45,6 +45,7 @@
  * @property {'\n'|'\r\n'} [eol]  The line ending of the file. Windows files use '\r\n'.
  * @property {string} [header]  The first line and its line ending. Empty for a file that is not a notebook.
  * @property {string} [trailer]  The line ending after the last cell. Empty if the file has none.
+ * @property {boolean} [bom]  true if the file starts with a byte-order mark (the character U+FEFF). Some Windows editors write it.
  */
 
 /** The first line of each Databricks notebook file. */
@@ -215,12 +216,15 @@ function renderCell(cell) {
  * @returns {Notebook}
  */
 function parseNotebook(text) {
+  // Remember a byte-order mark, so that serializeNotebook() can write it again. It is not a part of the first line.
+  const mark = text.startsWith('\uFEFF') ? { bom: true } : {};
+  if (mark.bom) text = text.slice(1);
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   if (eol === '\r\n') text = text.replace(/\r\n/g, '\n');
 
   const h = HEADER_RE.exec(text);
   if (!h) {
-    return { eol, header: '', trailer: '', cells: [{ ...parseCell(text), raw: text }] };
+    return { eol, header: '', trailer: '', cells: [{ ...parseCell(text), raw: text }], ...mark };
   }
   const header = h[0];
   let body = text.slice(header.length);
@@ -242,7 +246,7 @@ function parseNotebook(text) {
   }
   const raw = body.slice(pos);
   cells.push({ ...parseCell(raw), raw, sep });
-  return { eol, header, trailer, cells };
+  return { eol, header, trailer, cells, ...mark };
 }
 
 /**
@@ -324,7 +328,8 @@ function serializeNotebook(nb) {
     out += text;
   });
   out += typeof nb.trailer === 'string' ? nb.trailer : '\n';
-  return nb.eol === '\r\n' ? out.replace(/\n/g, '\r\n') : out;
+  if (nb.eol === '\r\n') out = out.replace(/\n/g, '\r\n');
+  return nb.bom ? '\uFEFF' + out : out;
 }
 
 module.exports = { HEADER, CANON_SEP, hasHeader, parseCell, renderCell, parseNotebook, serializeNotebook };

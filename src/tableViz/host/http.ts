@@ -28,7 +28,7 @@
  *
  * @param path  The path of the API. It starts with "/".
  * @param payload  For GET, a value that is `undefined` does not go in the URL.
- * @param signal  Stops the request when it fires.
+ * @param signal  Stops the request when it fires, also while the client waits to try again after HTTP 429 or 503.
  * @throws {HttpError}  If Databricks answers with an error status or does not answer in time, or if the client cannot reach the workspace.
  */
 export type Http = (method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
@@ -82,6 +82,28 @@ export interface HttpDeps {
 
 /** Wait for a number of milliseconds. createHttp() uses this function if `deps.sleep` is not set. */
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Wait, but return at once when the signal fires.
+ *
+ * @example
+ * await waitOrAbort(sleep, 60_000, signal);   // returns after 60 seconds, or sooner if the caller stops the request
+ * if (signal.aborted) throw signal.reason;
+ *
+ * @param sleep  The function that waits. See HttpDeps.sleep.
+ */
+function waitOrAbort(sleep: (ms: number) => Promise<void>, ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    signal.addEventListener('abort', done);
+    void sleep(ms).then(done);
+  });
+}
 
 /**
  * Tell if a URL points to this computer.
@@ -161,7 +183,9 @@ export function createHttp(deps: HttpDeps): Http {
       if ((response.status === 429 || response.status === 503) && retries < maxRetries) {
         const retryAfter = Number(response.headers.get('retry-after'));
         // Wait as long as Databricks says. If it does not say: 1, 2, 4, 8 seconds.
-        await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 60) * 1000 : 1000 * 2 ** retries);
+        await waitOrAbort(sleep, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 60) * 1000 : 1000 * 2 ** retries, signal);
+        // The caller stopped the request while the client waited. Do not send it again.
+        if (signal?.aborted) throw signal.reason ?? new DOMException('This operation was aborted', 'AbortError');
         retries++;
         continue;
       }

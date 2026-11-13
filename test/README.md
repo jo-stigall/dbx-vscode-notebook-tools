@@ -43,7 +43,7 @@ This command uses the JavaScript runtime in VS Code. If all tests pass, it
 prints:
 
 ```text
-13 passed
+14 passed
 ```
 
 The most important tests make sure that a file does not change when you open
@@ -82,7 +82,7 @@ in `tableViz/unit/` directly. It cannot run the `.tsx` file in
 The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 139
+ℹ pass 145
 ℹ fail 0
 ```
 
@@ -110,7 +110,7 @@ The tests make sure of these things:
 - Browsing the catalog sends no SQL statement.
 - The drift maths gives the values that are computed by hand in the test,
   and a comparison of the two demo tables puts the known differences first.
-- A change of dataset B runs no query for dataset A.
+- A change of dataset B runs no drift query for dataset A.
 - A filter chip becomes SQL with parameters only, and in the Demo profile it
   selects the same rows as a direct count.
 - The host runs no request while a saved view waits for the permission of

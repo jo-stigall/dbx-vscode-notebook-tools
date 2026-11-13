@@ -26,6 +26,29 @@ newest first.
 - **The partition hint** no longer says that a filter reads all partitions
   when the name of the partition column first occurs inside a longer name.
 - **The catalog tree** asks Unity Catalog for catalogs and schemas in pages.
+- **"Open SQL in Editor" and "Show SQL"** write each value on one line. A
+  value with a line break (from a row of the table or from a
+  `.tableviz.json` file) could end its comment line. The rest of the value
+  then showed as SQL in the editor, for example as a `DROP TABLE`
+  statement. The extension never ran such text.
+- **"Cancel" on a SQL warehouse** stops a statement at once when Databricks
+  answers a status request with "too many requests" (HTTP 429). Before, the
+  cancel had to wait up to 60 seconds for each new try.
+- **A cluster connection that you leave** (you select different compute
+  while the extension connects) no longer runs the statement that waited
+  for it.
+- **A "Refresh" that fails** no longer leaves the old numbers in the cache.
+  Before, a card that you opened again could show them with no sign that
+  they were old.
+- **Compare mode:** when you clear "Compare as text" for a column, the
+  queries of that column stop.
+- **Compare mode:** the text below a drift score gives the real number of
+  bins. A column with few different values has fewer than 10.
+- **The filter box:** a filter chip that you add while Databricks checks a
+  filter stays. Before, the end of the check removed it.
+- **Notebook files that start with a byte-order mark** keep the mark when
+  you save. Before, the extension removed it, so git showed a change in the
+  first line.
 - **"Last modified" of a table** is correct when Databricks gives the time
   without a time zone. The board reads such a time as UTC. Before, it used
   the time zone of your computer, so the time could be some hours off.

@@ -9,7 +9,7 @@
  *
  *     ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code" test/format.test.js
  *
- * The script prints the number of tests that passed, for example "13 passed". It prints each failure
+ * The script prints the number of tests that passed, for example "14 passed". It prints each failure
  * and exits with code 1 if a test fails.
  */
 const assert = require('assert');
@@ -213,6 +213,20 @@ test('renderCell/parseCell are inverses for generated cells', () => {
     { kind: 'code', language: 'python', value: '%pip install x', dbtitle: '1,Install' },
   ];
   for (const c of cells) assert.deepStrictEqual(parseCell(renderCell(c)), c);
+});
+
+test('a file with a byte-order mark round-trips byte-for-byte', () => {
+  const withMark = '\uFEFF' + CANONICAL;
+  const nb = parseNotebook(withMark);
+  assert.strictEqual(nb.bom, true);
+  assert.strictEqual(nb.header, '# Databricks notebook source\n', 'the mark is not a part of the header line');
+  assert.strictEqual(nb.cells.length, parseNotebook(CANONICAL).cells.length);
+  assert.strictEqual(roundTrip(withMark), withMark);
+  assert.strictEqual(roundTrip(withMark.replace(/\n/g, '\r\n')), withMark.replace(/\n/g, '\r\n'));
+  // A plain script with a mark keeps it too.
+  assert.strictEqual(roundTrip('\uFEFFprint(1)\n'), '\uFEFFprint(1)\n');
+  // A file without a mark gets none.
+  assert.strictEqual('bom' in parseNotebook(CANONICAL), false);
 });
 
 test('hasHeader accepts the header line only', () => {

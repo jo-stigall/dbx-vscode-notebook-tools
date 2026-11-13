@@ -33,8 +33,8 @@ export const DRIFT_TOP = 50;
  * | Kind         | The drift score uses                                        |
  * |--------------|-------------------------------------------------------------|
  * | 'values'     | the counts of the values of the two datasets                |
- * | 'continuous' | 10 bins cut at the deciles of A                             |
- * | 'date'       | 10 bins cut at the deciles of the dates of A                |
+ * | 'continuous' | bins cut at the deciles of A: 10, or fewer if deciles repeat |
+ * | 'date'       | bins cut at the deciles of the dates of A                   |
  * | 'nulls'      | only "null" and "not null": an ID or a complex type has no values to compare |
  * | 'skip'       | nothing: the types differ and the user did not ask to compare them as text |
  */

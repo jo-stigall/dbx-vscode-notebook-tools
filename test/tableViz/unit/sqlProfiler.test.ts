@@ -406,7 +406,15 @@ test('cache: the same request runs one query; refresh runs it again', async () =
   const flaky = new CachingProfiler({ profile: async (r) => { if (fail) throw new ProfilerError('down'); return inner.profile(r); } }, { hostOf: () => 'h' });
   await assert.rejects(flaky.profile(request('a')), /down/);
   fail = false;
-  await flaky.profile(request('a'));
+  const stored = await flaky.profile(request('a'));
+  assert.equal(await flaky.profile(request('a')), stored);
+
+  // A "Refresh" that fails leaves no old result. The next request runs a query, and does not get the old numbers.
+  fail = true;
+  await assert.rejects(flaky.profile(request('a'), { refresh: true }), /down/);
+  await assert.rejects(flaky.profile(request('a')), /down/);
+  fail = false;
+  assert.notEqual(await flaky.profile(request('a')), stored);
 });
 
 test('cache: the key has the workspace URL, and old results leave when the cache is full', async () => {

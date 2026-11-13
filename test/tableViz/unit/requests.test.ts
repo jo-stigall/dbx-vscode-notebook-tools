@@ -24,7 +24,7 @@ Object.assign(globalThis, {
   acquireVsCodeApi: () => ({ postMessage: (message: { type: string; id?: string }) => sent.push(message), getState: () => undefined, setState: () => {} }),
 });
 const { hold, refreshAll } = await import('../../../src/tableViz/webview/rpc.ts');
-const { DatasetHolds, Scope } = await import('../../../src/tableViz/webview/compare/useCompare.ts');
+const { DatasetHolds, Scope, TextScopes } = await import('../../../src/tableViz/webview/compare/useCompare.ts');
 
 /** The base dataset of all requests. No test here runs a query, so the table does not have to exist. */
 const dataset: Dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders' } };
@@ -140,6 +140,33 @@ test('drift requests: a change to B cancels the queries on the old B, and the qu
 
   holds.close();
   assert.deepEqual(messages(from).cancels, [idOldB, idA], 'the board left the page: the query on A stops');
+});
+
+test('drift requests: clearing "Compare as text" cancels the queries of that pair only', () => {
+  const from = sent.length;
+  const scopes = new TextScopes();
+  // The user selected "Compare as text" for store_id and for zip.
+  void scopes.open('store_id', 'base-1').ask(request('i = 1')).catch(() => {});
+  void scopes.open('zip', 'base-1').ask(request('i = 2')).catch(() => {});
+  const [idStore, idZip] = messages(from).requests;
+  scopes.keep(new Set(['store_id', 'zip']));
+  assert.deepEqual(messages(from).cancels, [], 'the two pairs are still compared');
+
+  // More overview numbers arrive: the hook asks again. The same scope gives the same query.
+  void scopes.open('store_id', 'base-1').ask(request('i = 1')).catch(() => {});
+  scopes.keep(new Set(['store_id', 'zip']));
+  assert.equal(messages(from).requests.length, 2);
+
+  // The user clears the check mark of store_id.
+  scopes.keep(new Set(['zip']));
+  assert.deepEqual(messages(from).cancels, [idStore]);
+
+  // A dataset changes: the pair gets a new scope. The old scope closes after the new one asked, so a query that the two need continues.
+  void scopes.open('zip', 'base-2').ask(request('i = 2')).catch(() => {});
+  scopes.keep(new Set(['zip']));
+  assert.deepEqual(messages(from).cancels, [idStore], 'the query of zip continues');
+  scopes.close();
+  assert.deepEqual(messages(from).cancels, [idStore, idZip]);
 });
 
 test('drift requests: a request on a dataset that the board does not show is not sent', async () => {

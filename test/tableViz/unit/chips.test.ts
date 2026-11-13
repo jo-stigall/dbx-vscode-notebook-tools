@@ -196,6 +196,22 @@ test('inlineRendered writes a statement that a person can run', async () => {
   assert.equal(inlineRendered('SELECT 1'), 'SELECT 1');
 });
 
+test('a value with a line break cannot become SQL in the text for the editor', async () => {
+  const { inlineRendered, renderStatement, buildStatements: build } = await import('../../../src/tableViz/core/sql.ts');
+  // The value can come from a row of the table (a click on a bar) or from a `.tableviz.json` file.
+  const chips: Chip[] = [{ op: 'eq', column: region, value: "x\nDROP TABLE main.s.victim; --\r\n-- :tbl = 'other'" }];
+  const [statement] = build({ type: 'frequency', dataset: { ...dataset, chips }, columns: [region], top: 5 });
+  assert.ok(statement);
+  const shown = renderStatement(statement);
+  const comments = shown.split('\n').filter((line) => line.startsWith('-- :'));
+  assert.equal(comments.length, statement.params.length, `each parameter is one comment line: ${shown}`);
+  const text = inlineRendered(shown);
+  assert.ok(text.startsWith('SELECT `value`'), text);
+  assert.ok(!/^\s*DROP/m.test(text), `no line starts with the injected statement: ${text}`);
+  assert.ok(text.includes("= 'x\\nDROP TABLE main.s.victim; --\\r\\n-- :tbl = ''other'''"), text);
+  assert.ok(!/(?<![:\w]):[a-z]\w*/.test(text.replace(/'(?:[^'\\]|\\.|'')*'/g, "''")), `no parameter marker is left outside a string: ${text}`);
+});
+
 test('a saved view holds the datasets and the cards, and nothing more', async () => {
   const { savedViewSchema } = await import('../../../src/tableViz/core/schema.ts');
   const view = {

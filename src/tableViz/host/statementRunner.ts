@@ -141,8 +141,17 @@ export class StatementExecutionRunner implements QueryRunner {
     if (!id) throw new QueryError('Databricks accepted the statement but returned no statement ID.', { kind: 'http' });
     options.onStarted?.(id);
 
-    // One promise for all waits of this statement. A new listener for each wait would stay on the signal until the request ends.
-    const aborted = signal ? new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve())) : undefined;
+    // One listener for all waits of this statement. A new listener for each wait would stay on the signal until the request ends.
+    // The listener also stops a status request that is on its way or that waits to try again after HTTP 429.
+    const polls = new AbortController();
+    const aborted = signal
+      ? new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => {
+            polls.abort();
+            resolve();
+          })
+        )
+      : undefined;
     for (let delay = 500; !TERMINAL.has(response.status?.state ?? ''); delay = Math.min(delay * 1.5, 5000)) {
       if (signal?.aborted) {
         await this.cancel(id);
@@ -153,7 +162,14 @@ export class StatementExecutionRunner implements QueryRunner {
         throw new QueryError(`The statement ran longer than ${timeoutSeconds} seconds.`, { kind: 'timeout', statementId: id });
       }
       await this.wait(Math.min(delay, Math.max(0, deadline - this.now())), aborted);
-      response = await this.call('GET', `${BASE}/${id}`);
+      try {
+        response = await this.call('GET', `${BASE}/${id}`, undefined, polls.signal);
+      } catch (e) {
+        if (!signal?.aborted) throw e;
+        // The user stopped the statement while the runner asked for its state.
+        await this.cancel(id);
+        throw new CancelledError();
+      }
     }
 
     const state = response.status?.state;
@@ -229,9 +245,9 @@ export class StatementExecutionRunner implements QueryRunner {
   }
 
   /** Send one request. Convert an HttpError to a QueryError with the kind 'http', the same status and the same code. */
-  private async call(method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>): Promise<StatementResponse> {
+  private async call(method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>, signal?: AbortSignal): Promise<StatementResponse> {
     try {
-      return (await this.deps.http(method, path, payload)) as StatementResponse;
+      return (await this.deps.http(method, path, payload, signal)) as StatementResponse;
     } catch (e) {
       if (e instanceof HttpError) throw new QueryError(e.message, { kind: 'http', status: e.status, code: e.code });
       throw e;

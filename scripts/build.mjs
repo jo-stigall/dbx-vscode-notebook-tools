@@ -46,7 +46,7 @@ await esbuild.build({
   platform: 'node',
   format: 'cjs',
   target: 'node20',
-  // './driver.js' is the next file. The host loads it only when the user selects a cluster.
+  // './driver.js' is the next file. The host loads it only when the first statement runs on a cluster.
   external: ['vscode', './driver.js'],
 });
 

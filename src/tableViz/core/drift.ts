@@ -9,7 +9,9 @@
  * A and in dataset B. The compare code makes those lists:
  *
  * - For a category: the values of the two datasets, with null as its own value.
- * - For a number or a date: 10 bins cut at the deciles of A, plus a bin for null.
+ * - For a number or a date: bins cut at the deciles of A, plus a bin for null.
+ *   There are 10 bins, or fewer if two or more deciles are the same value.
+ *   If A has no values, the list has only "null" and "not null".
  */
 
 /**

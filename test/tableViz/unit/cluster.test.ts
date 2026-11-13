@@ -268,6 +268,28 @@ test('cluster runner: the number 403 in the text of a SQL error is not an HTTP s
   assert.equal(fake.sessions.length, 1, 'the runner does not connect again');
 });
 
+test('cluster runner: a runner that closes while it connects does not send the statement', async () => {
+  const fake = makeFakeDriver();
+  let connect = () => {};
+  const waiting = new Promise<void>((resolve) => (connect = resolve));
+  const runner = new ClusterRunner({
+    loadDriver: () => fake.module,
+    host: () => 'https://example',
+    // The connection waits here until the test calls connect().
+    httpPath: async () => (await waiting, 'sql/protocolv1/o/1/c'),
+    token: async () => 't',
+    timeoutSeconds: () => 300,
+    tags: {},
+  });
+  const running = runner.run(frequency);
+  const closing = runner.close(); // the user selects different compute
+  connect();
+  await assert.rejects(running, CancelledError);
+  await closing;
+  assert.equal(fake.statements.length, 0, 'no statement goes to the old cluster');
+  assert.deepEqual([fake.closedSessions, fake.closedClients], [1, 1], 'the runner closes the connection that it made');
+});
+
 test('cluster runner: a connection that fails is tried again by the next statement', async () => {
   const fake = makeFakeDriver();
   let fail = true;
