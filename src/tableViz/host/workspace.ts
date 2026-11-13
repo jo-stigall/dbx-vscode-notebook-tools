@@ -16,8 +16,9 @@
  * local server.
  */
 import type { ClusterInfo } from '../core/clusters.ts';
-import { displayTableName } from '../core/names.ts';
+import { displayTableName, parseTableName } from '../core/names.ts';
 import type { ColumnInfo, TableName } from '../core/schema.ts';
+import { like, type FoundTable } from '../core/search.ts';
 import { DEMO_TABLE_NAMES, demoTable } from '../demo/data.ts';
 import { HttpError, type Http } from './http.ts';
 import type { TableInfo } from './sqlProfiler.ts';
@@ -72,6 +73,26 @@ export interface WorkspaceClient {
   listTables(catalog: string, schema: string): Promise<TableEntry[]>;
   /** Get the columns and the type of a table. Throws an HttpError with status 404 if the table does not exist. */
   getTable(table: TableName): Promise<TableInfo>;
+  /**
+   * Find the tables and views of one catalog whose names fit two patterns. The function runs no SQL.
+   *
+   * @example
+   * await workspace.findTables('main', undefined, '%ord%', 200)
+   * // { tables: [{ table: { catalog: 'main', schema: 'shop', name: 'orders' }, tableType: 'table' }], more: false }
+   *
+   * @param schemaPattern  A SQL LIKE pattern for the schema name. Not set: all schemas.
+   * @param tablePattern  A SQL LIKE pattern for the table name. Not set: all tables.
+   * @param limit  The largest number of tables to return.
+   * @param signal  Stops the requests when it fires.
+   * @returns `more` is true if the catalog has more tables that fit than `limit`.
+   */
+  findTables(catalog: string, schemaPattern: string | undefined, tablePattern: string | undefined, limit: number, signal?: AbortSignal): Promise<FoundTables>;
+}
+
+/** The answer of findTables(): the tables, and `more` if there are more than the limit. */
+export interface FoundTables {
+  tables: FoundTable[];
+  more: boolean;
 }
 
 /**
@@ -316,6 +337,35 @@ export class RestWorkspaceClient implements WorkspaceClient {
   }
 
   /**
+   * Find the tables and views of one catalog whose names fit two patterns.
+   *
+   * Databricks can answer with a page that has no tables but has a
+   * `next_page_token`. The function thus reads pages until it has more
+   * tables than `limit`, until no page is left, or until it read 20 pages.
+   *
+   * @example
+   * // GET /api/2.1/unity-catalog/table-summaries?catalog_name=main&table_name_pattern=%25ord%25&max_results=201
+   * //   answer: { tables: [{ full_name: 'main.shop.orders', table_type: 'MANAGED' }], next_page_token: '...' }
+   * await client.findTables('main', undefined, '%ord%', 200)
+   * // { tables: [{ table: { catalog: 'main', schema: 'shop', name: 'orders' }, tableType: 'table' }], more: false }
+   */
+  async findTables(catalog: string, schemaPattern: string | undefined, tablePattern: string | undefined, limit: number, signal?: AbortSignal): Promise<FoundTables> {
+    const tables: FoundTable[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < 20 && tables.length <= limit; page++) {
+      const query = { catalog_name: catalog, schema_name_pattern: schemaPattern, table_name_pattern: tablePattern, max_results: Math.min(limit + 1, 10_000), page_token: pageToken };
+      const answer = (await this.http('GET', '/api/2.1/unity-catalog/table-summaries', query, signal)) as { tables?: { full_name?: string; table_type?: string }[]; next_page_token?: string };
+      for (const entry of answer.tables ?? []) {
+        const table = parseTableName(entry.full_name ?? '');
+        if (table) tables.push({ table, tableType: tableTypeOf(entry.table_type) });
+      }
+      pageToken = answer.next_page_token || undefined;
+      if (!pageToken) break;
+    }
+    return { tables: tables.slice(0, limit), more: tables.length > limit || pageToken !== undefined };
+  }
+
+  /**
    * Get the columns and the type of a table.
    *
    * The function sorts the columns by their `position` in the table. A
@@ -412,6 +462,12 @@ export class DemoWorkspaceClient implements WorkspaceClient {
   async listTables(catalog: string, schema: string): Promise<TableEntry[]> {
     return DEMO_TABLE_NAMES.filter((t) => t.catalog === catalog && t.schema === schema).map((t) => ({ name: t.name, tableType: 'table' as const }));
   }
+  /** Find the demo tables of the catalog 'demo' whose names fit the two patterns. */
+  async findTables(catalog: string, schemaPattern: string | undefined, tablePattern: string | undefined, limit: number): Promise<FoundTables> {
+    const tables = DEMO_TABLE_NAMES.filter((t) => t.catalog === catalog && like(t.schema, schemaPattern) && like(t.name, tablePattern)).map((table) => ({ table, tableType: 'table' as const }));
+    return { tables: tables.slice(0, limit), more: tables.length > limit };
+  }
+
   /**
    * Get the columns of a demo table. Each demo table is a Delta table.
    *

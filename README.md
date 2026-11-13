@@ -159,7 +159,7 @@ the code.
 ![The board of a table: one row for each column, with a small chart](docs/images/overview-dark.jpg)
 
 To try it without a workspace, run "Databricks Notebook: Visualize Table"
-and type `demo.shop.orders_2026`.
+and paste `demo.shop.orders_2026`, or select the catalog `demo` in the list.
 
 ### Select the login and the compute
 
@@ -254,12 +254,33 @@ you cannot select it.
 
 | To do this | Do this |
 |---|---|
-| Open a table by its name | Run "Databricks Notebook: Visualize Table" and type `catalog.schema.table`. |
-| Find a table | Open the view "Databricks Tables" in the Explorer. Open a catalog and a schema, then click a table. Click in the view and type to filter. |
+| Open a table from a list | Run "Databricks Notebook: Visualize Table". The list shows your favorite and recent tables, then the catalogs. Select a catalog, then a schema, then a table. On each level, type to filter. |
+| Open a table by its name | Run "Databricks Notebook: Visualize Table", paste `catalog.schema.table` and press Enter. You can also type the name: `main.` goes into the catalog `main`, and `shop.` then goes into the schema `shop`. |
+| Browse the tables | Open the view "Databricks Tables" in the Explorer. Open a catalog and a schema, then click a table. |
+| Search for a table by name | Click the search button at the top of the view "Databricks Tables", and type a part of the name. Select a table to open it. |
+| Search in one catalog or one schema | Point at the catalog or the schema in the view and click its search button. A search in a schema lists all its tables before you type. |
 | Keep a table at hand | Click the star on a table in the view. The table is then below "Favorites". |
 | Open a table from code | In a `.sql` or `.py` file, right-click a name such as `main.sales.orders` and select "Visualize Table Under Cursor". |
 
-The view reads the catalog with the REST API. It never starts a warehouse.
+The view and the search read the catalog with the REST API. They never start
+a warehouse.
+
+How the search reads your text:
+
+| You type | The search finds |
+|---|---|
+| `ord` | Tables whose name contains "ord", for example `main.shop.orders` and `dev.tmp.reorders`. |
+| `shop.ord` | The same, but only in schemas whose name contains "shop". |
+| `main.shop.ord` | The same, but only in the catalog `main`. |
+
+A search in all catalogs or in one catalog starts after two characters. With
+less text, the search in all catalogs shows your favorite and recent tables.
+The list shows 200 tables at most; type more letters to see fewer. You see
+only the tables that you have the permission to read.
+
+The search is also the command "Databricks Notebook: Search Tables". The
+list of "Visualize Table" has a line that starts the search with the text
+that you typed.
 
 ### Use the board
 
@@ -481,6 +502,9 @@ For "Visualize Table", a real workspace must confirm these items:
   `IDENTIFIER(:name)`.
 - The requests that list SQL warehouses, clusters, catalogs, schemas and
   tables. I wrote their field names from memory.
+- The request of the table search ("List table summaries"). Its fields are
+  from the Databricks documentation. The documentation does not say if the
+  search makes a difference between upper case and lower case.
 - The Databricks SQL driver with a real cluster, and the minimum runtime
   14.2.
 - The login with a profile and `databricks auth token`.

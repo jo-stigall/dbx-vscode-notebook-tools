@@ -12,6 +12,7 @@
  *     GET  /api/2.1/unity-catalog/schemas           the schema "shop"
  *     GET  /api/2.1/unity-catalog/tables            the demo tables, one table on each page
  *     GET  /api/2.1/unity-catalog/tables/{name}     the columns of a demo table
+ *     GET  /api/2.1/unity-catalog/table-summaries   the demo tables whose names fit the patterns: an empty page first, then one table on each page
  *     POST /api/2.0/sql/statements                  answers the statement from the demo tables (see warehouse.ts)
  *     GET  /api/2.0/sql/statements/{id}
  *     POST /api/2.0/sql/statements/{id}/cancel
@@ -47,6 +48,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parseTableName } from '../../../src/tableViz/core/names.ts';
+import { like } from '../../../src/tableViz/core/search.ts';
 import { DEMO_TABLE_NAMES, demoTable } from '../../../src/tableViz/demo/data.ts';
 import { makeFakeDriver } from './driver.ts';
 import { answerStatement, FakeSqlError } from './warehouse.ts';
@@ -204,6 +206,18 @@ export async function startFakeWorkspace(): Promise<FakeWorkspace> {
       const table = tables[page];
       return send(res, 200, {
         tables: table ? [{ name: table.name, table_type: 'MANAGED' }] : [],
+        ...(page + 1 < tables.length ? { next_page_token: String(page + 1) } : {}),
+      });
+    }
+    if (path === '/api/2.1/unity-catalog/table-summaries') {
+      const tables = DEMO_TABLE_NAMES.filter(
+        (t) => t.catalog === query.get('catalog_name') && like(t.schema, query.get('schema_name_pattern') ?? undefined) && like(t.name, query.get('table_name_pattern') ?? undefined)
+      );
+      // Databricks can send a page with no tables and a token. The first page is such a page, so that the client must read on.
+      const page = Number(query.get('page_token') ?? -1);
+      const table = tables[page];
+      return send(res, 200, {
+        tables: table ? [{ full_name: `${table.catalog}.${table.schema}.${table.name}`, table_type: 'MANAGED' }] : [],
         ...(page + 1 < tables.length ? { next_page_token: String(page + 1) } : {}),
       });
     }

@@ -306,6 +306,7 @@ function activate(context) {
     vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeTable', (name) => loadTableViz().visualizeTable(name)),
     vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeTableUnderCursor', () => loadTableViz().visualizeTableUnderCursor()),
     vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeNode', (node) => loadTableViz().visualizeNode(node)),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.searchTables', (node) => loadTableViz().searchTables(node)),
     vscode.commands.registerCommand('dbxNotebook.tableViz.compareTables', (a, b) => loadTableViz().compareTables(a, b)),
     vscode.commands.registerCommand('dbxNotebook.tableViz.selectCompute', () => loadTableViz().selectCompute()),
     vscode.commands.registerCommand('dbxNotebook.tableViz.refreshTables', () => tableTree().refresh()),

@@ -173,11 +173,14 @@ export class TableTree implements vscode.TreeDataProvider<Node> {
       case 'catalog': {
         const item = new vscode.TreeItem(node.catalog, vscode.TreeItemCollapsibleState.Collapsed);
         item.iconPath = new vscode.ThemeIcon('library');
+        // package.json shows the button "Search Tables" for this value and for 'tableViz.schema'.
+        item.contextValue = 'tableViz.catalog';
         return item;
       }
       case 'schema': {
         const item = new vscode.TreeItem(node.schema, vscode.TreeItemCollapsibleState.Collapsed);
         item.iconPath = new vscode.ThemeIcon('folder');
+        item.contextValue = 'tableViz.schema';
         return item;
       }
       case 'table': {

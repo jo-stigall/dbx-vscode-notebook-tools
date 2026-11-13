@@ -150,6 +150,54 @@ exports.main = async function main(log) {
     assert.deepStrictEqual(api.tree.favorites, []);
     log('tableViz: the tree keeps favorites and recent tables');
 
+    // 5b. "Search Tables" on a schema of the tree: the list shows the tables of the schema, and Enter opens a board.
+    // test/tableViz/unit/workspace.test.ts checks that the search sends no SQL statement. Here, the boards of the
+    // steps before can send statements at the same time, so this step cannot count them.
+    fake.requests.length = 0;
+    const searching = vscode.commands.executeCommand('dbxNotebook.tableViz.searchTables', schema);
+    await until('the search request', () => fake.requests.filter((r) => r === 'GET /api/2.1/unity-catalog/table-summaries').length >= 3);
+    await sleep(500); // the list shows the result
+    await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+    const foundBoard = await searching;
+    boards.push(foundBoard);
+    assert.strictEqual(foundBoard.datasets.a.table.name, 'orders_2025', 'the first table of the list opens');
+    assert.strictEqual(api.tree.getTreeItem(schema).contextValue, 'tableViz.schema');
+    assert.strictEqual(api.tree.getTreeItem(catalog).contextValue, 'tableViz.catalog');
+    log('tableViz: Search Tables finds the tables of a schema and opens a board');
+
+    // 5c. "Visualize Table" with no name shows a list: recent tables and catalogs, then schemas, then tables.
+    assert.deepStrictEqual(api.tree.favorites, []);
+    const requested = (path) => fake.requests.some((r) => r === `GET ${path}`);
+    /** Press Enter in the list. */
+    const accept = () => vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+    fake.requests.length = 0;
+    const browsing = vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable');
+    await until('the list of catalogs', () => requested('/api/2.1/unity-catalog/catalogs'));
+    await sleep(500);
+    // The recent tables are the first lines. The catalog "demo" is the line after them.
+    for (let i = 0; i < api.tree.recents.length; i++) await vscode.commands.executeCommand('workbench.action.quickOpenSelectNext');
+    await accept();
+    await until('the list of schemas', () => requested('/api/2.1/unity-catalog/schemas'));
+    await sleep(500);
+    await accept(); // the schema "shop"
+    await until('the list of tables', () => requested('/api/2.1/unity-catalog/tables'));
+    await sleep(500);
+    await accept(); // the first table
+    const browsed = await browsing;
+    boards.push(browsed);
+    assert.deepStrictEqual(browsed.datasets.a.table, { catalog: 'demo', schema: 'shop', name: 'orders_2025' });
+
+    // With no change of the selection, Enter opens the most recent table.
+    const again = vscode.commands.executeCommand('dbxNotebook.tableViz.visualizeTable');
+    fake.requests.length = 0;
+    await until('the list of catalogs', () => requested('/api/2.1/unity-catalog/catalogs'));
+    await sleep(500);
+    await accept();
+    const recent = await again;
+    boards.push(recent);
+    assert.strictEqual(recent.datasets.a.table.name, 'orders_2025', 'the table that was opened last is the first line');
+    log('tableViz: Visualize Table shows a list of catalogs, schemas and tables');
+
     // 6. "Visualize Table Under Cursor" in a SQL file.
     const document = await vscode.workspace.openTextDocument({ language: 'sql', content: 'SELECT *\nFROM demo.shop.orders_2025 o\nWHERE 1 = 1\n' });
     const editor = await vscode.window.showTextDocument(document);

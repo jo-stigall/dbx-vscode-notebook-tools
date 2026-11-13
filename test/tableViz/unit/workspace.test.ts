@@ -29,6 +29,7 @@ import { createHttp, HttpError } from '../../../src/tableViz/host/http.ts';
 import { SqlProfiler } from '../../../src/tableViz/host/sqlProfiler.ts';
 import { StatementExecutionRunner } from '../../../src/tableViz/host/statementRunner.ts';
 import { DemoWorkspaceClient, RestWorkspaceClient } from '../../../src/tableViz/host/workspace.ts';
+import { searchTables } from '../../../src/tableViz/host/search.ts';
 import { comparable } from '../fake/warehouse.ts';
 import { startFakeWorkspace, type FakeWorkspace } from '../fake/workspace.ts';
 
@@ -140,12 +141,39 @@ test('workspace client: the columns of a table', async () => {
   assert.deepEqual(await new DemoWorkspaceClient().listTables('demo', 'shop'), await workspace.listTables('demo', 'shop'));
 });
 
+test('workspace client: find tables by a part of the name', async () => {
+  const workspace = new RestWorkspaceClient(http());
+  const orders2026 = { table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' }, tableType: 'table' };
+  const orders2025 = { table: { catalog: 'demo', schema: 'shop', name: 'orders_2025' }, tableType: 'table' };
+
+  // The fake workspace sends an empty page first, then one table on each page. The client reads all pages.
+  fake.requests.length = 0;
+  assert.deepEqual(await workspace.findTables('demo', undefined, '%2026%', 200), { tables: [orders2026], more: false });
+  assert.equal(fake.requests.filter((r) => r === 'GET /api/2.1/unity-catalog/table-summaries').length, 2);
+  assert.deepEqual((await workspace.findTables('demo', 'shop', undefined, 200)).tables, [orders2025, orders2026]);
+  assert.deepEqual(await workspace.findTables('demo', '%nope%', '%orders%', 200), { tables: [], more: false });
+  assert.deepEqual(await workspace.findTables('other', undefined, '%orders%', 200), { tables: [], more: false });
+
+  // With a limit of 1, the client stops and tells that there are more tables.
+  assert.deepEqual(await workspace.findTables('demo', undefined, '%orders%', 1), { tables: [orders2025], more: true });
+
+  // The Demo profile gives the same answers without a server.
+  const demo = new DemoWorkspaceClient();
+  assert.deepEqual(await demo.findTables('demo', undefined, '%2026%', 200), { tables: [orders2026], more: false });
+  assert.deepEqual(await demo.findTables('demo', undefined, '%orders%', 1), { tables: [orders2025], more: true });
+
+  // The search through search.ts, as the view "Databricks Tables" does it.
+  const result = await searchTables(workspace, {}, 'shop.ORDERS_2026');
+  assert.deepEqual(result, { tables: [orders2026], more: false, problems: [], tooShort: false });
+});
+
 test('browsing the catalog sends no SQL statement', async () => {
   fake.requests.length = 0;
   const workspace = new RestWorkspaceClient(http());
   await workspace.listCatalogs();
   await workspace.listSchemas('demo');
   await workspace.listTables('demo', 'shop');
+  await workspace.findTables('demo', undefined, '%orders%', 200);
   await workspace.getTable({ catalog: 'demo', schema: 'shop', name: 'orders_2026' });
   assert.ok(fake.requests.length > 0);
   assert.ok(!fake.requests.some((r) => r.includes('/sql/statements')), 'no statement: a stopped warehouse stays stopped');

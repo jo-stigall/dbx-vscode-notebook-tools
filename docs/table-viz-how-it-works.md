@@ -88,6 +88,9 @@ The most important files:
 | `host/statementRunner.ts` | Runs a statement on a SQL warehouse (Statement Execution API). |
 | `host/clusterRunner.ts` | Runs a statement on a cluster (Databricks SQL Driver for Node.js). |
 | `host/workspace.ts` | Lists warehouses, clusters, catalogs, schemas and tables with the REST API. It runs no SQL. |
+| `host/tree.ts` | The view "Databricks Tables": catalogs, schemas, tables, favorites and recent tables. |
+| `core/search.ts`, `host/search.ts`, `host/searchPicker.ts` | The search of the view: read the text, ask Unity Catalog for the tables that fit, show the list. |
+| `host/browsePicker.ts` | The list of "Visualize Table" and "Compare Tables": favorite and recent tables, then catalogs, schemas and tables. |
 | `host/board.ts` | Opens the panel of a board and answers its messages. |
 | `webview/Board.tsx` | The board: the facts of the table, the cards and the overview. |
 | `webview/rpc.ts`, `webview/hooks.ts` | Send a request to the host and give the answer to a component (`useResult`). |
@@ -100,7 +103,9 @@ you how to run them.
 
 ## What occurs when you open a table
 
-Example: you run "Visualize Table" and type `main.shop.orders`.
+Example: you run "Visualize Table" and select or paste `main.shop.orders`
+in the list (`host/browsePicker.ts`). The list reads the catalogs, the
+schemas and the tables with the REST API.
 
 1. **The host opens a board.** `host/index.ts` makes a `Board`
    (`host/board.ts`). The board opens a webview panel and loads the page
@@ -121,6 +126,27 @@ Example: you run "Visualize Table" and type `main.shop.orders`.
 5. **The page decides the kind of each column.** See the next section.
 6. **You click a column.** `ColumnCard.tsx` sends the requests of that kind
    of column and shows a card.
+
+## How the table search works
+
+The search button of the view "Databricks Tables" opens a list. Example: you
+type `shop.ord`.
+
+1. **`parseSearch()` in `core/search.ts` reads the text.** The last part is
+   the table (`ord`), and the part before it is the schema (`shop`). The
+   button that you clicked gives the catalog, or "all catalogs".
+2. **`searchTables()` in `host/search.ts` sends one request for each
+   catalog,** four at the same time:
+   `GET /api/2.1/unity-catalog/table-summaries?catalog_name=main&schema_name_pattern=%shop%&table_name_pattern=%ord%`.
+   The request runs no SQL.
+3. **The function sorts the tables.** A table with the same name as the text
+   comes first, then the tables whose names start with the text.
+4. **`host/searchPicker.ts` shows the list.** When you type more, it stops
+   the requests of the old text and starts again. When you select a table,
+   a board opens.
+
+A catalog that the search cannot read does not stop the search. The list
+shows a line that tells how many catalogs failed.
 
 ## How the board decides the kind of a column
 

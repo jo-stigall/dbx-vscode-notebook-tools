@@ -10,7 +10,9 @@ import * as vscode from 'vscode';
 import { displayTableName, parseTableName, tableNameAt } from '../core/names.ts';
 import { boardSettingsSchema, boardStateSchema, DEFAULT_SETTINGS, savedViewSchema, type BoardDatasets, type BoardSettings, type TableName } from '../core/schema.ts';
 import { Board, VIEW_TYPE } from './board.ts';
+import { browseTable } from './browsePicker.ts';
 import { selectProfileAndCompute } from './picker.ts';
+import { pickTable } from './searchPicker.ts';
 import { DEMO_PROFILE, Session, type HostConnection } from './session.ts';
 import { TableTree, type Node } from './tree.ts';
 
@@ -22,7 +24,7 @@ export interface TableVizApi {
   /**
    * Open a board for a table. This is the command "Visualize Table".
    *
-   * @param name  A three-part table name, for example 'demo.shop.orders_2026'. If you omit it, the function asks for the name.
+   * @param name  A three-part table name, for example 'demo.shop.orders_2026'. If you omit it, the function shows the list of catalogs, schemas and tables.
    * @returns The board, or undefined if the user gave no valid name.
    */
   visualizeTable(name?: string): Promise<Board | undefined>;
@@ -30,6 +32,13 @@ export interface TableVizApi {
   visualizeTableUnderCursor(): Promise<Board | undefined>;
   /** Open a board for a table of the tree. */
   visualizeNode(node: Node): Promise<Board | undefined>;
+  /**
+   * Show the search list, and open a board for the table that the user selects. This is the command "Search Tables".
+   *
+   * @param node  A catalog or a schema of the tree: the search looks only there. If you omit it, the search looks in all catalogs.
+   * @returns The board, or undefined if the user closes the list.
+   */
+  searchTables(node?: Node): Promise<Board | undefined>;
   /**
    * Open a board that compares two tables. This is "Compare With..." on a table of the tree, and the command "Compare Tables".
    *
@@ -200,25 +209,17 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
   };
 
   /**
-   * Ask for a three-part table name. Returns undefined if the user closes the box.
+   * Let the user select a table from the list of catalogs, schemas and tables. See browseTable() in browsePicker.ts.
    *
-   * @param title  The title of the box. Example: 'Dataset A'.
-   * @param value  The text that is in the box when it opens. Example: 'demo.shop.orders_2025'.
+   * @param title  The start of the title of the list. Example: 'Dataset A'.
+   * @returns The table, or undefined if the user closes the list.
    */
-  const askTable = async (title: string, value: string): Promise<TableName | undefined> => {
-    const text = await vscode.window.showInputBox({
-      title,
-      prompt: `Type the name of the table: catalog.schema.table (profile: ${session.label(session.profile)})`,
-      value,
-      validateInput: (input) => (parseTableName(input) ? undefined : 'Type three parts: catalog.schema.table'),
-    });
-    return text === undefined ? undefined : parseTableName(text);
-  };
+  const askTable = (title: string): Promise<TableName | undefined> => browseTable(session, tree, title);
 
-  /** Let the user select dataset B: the same table, a recent or favorite table, or a name that the user types. */
+  /** Let the user select dataset B: the same table, a recent or favorite table, or a table from the list of catalogs, schemas and tables. */
   const pickSecond = async (a: TableName): Promise<TableName | undefined> => {
     const same = `$(versions) ${displayTableName(a)}`;
-    const type = '$(edit) Type a table name…';
+    const type = '$(list-tree) Select a different table…';
     const names = [...new Set([...tree.recents, ...tree.favorites])].filter((name) => name !== displayTableName(a));
     const picked = await vscode.window.showQuickPick(
       [
@@ -230,7 +231,7 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
     );
     if (!picked) return undefined;
     if (picked.label === same) return a;
-    if (picked.label === type) return askTable('Dataset B', session.profile === DEMO_PROFILE ? 'demo.shop.orders_2026' : '');
+    if (picked.label === type) return askTable('Dataset B');
     return parseTableName(picked.label.replace('$(table) ', ''));
   };
 
@@ -240,7 +241,7 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
 
     async compareTables(a, b) {
       const first =
-        typeof a === 'string' ? parseTableName(a) : a?.kind === 'table' ? a.table : await askTable('Dataset A', session.profile === DEMO_PROFILE ? 'demo.shop.orders_2025' : (tree.recents[0] ?? ''));
+        typeof a === 'string' ? parseTableName(a) : a?.kind === 'table' ? a.table : await askTable('Dataset A');
       if (!first) return undefined;
       const second = b === undefined ? await pickSecond(first) : parseTableName(b);
       if (!second) return undefined;
@@ -248,19 +249,13 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
     },
 
     async visualizeTable(name) {
-      const example = session.profile === DEMO_PROFILE ? 'demo.shop.orders_2026' : (tree.recents[0] ?? '');
-      const text =
-        name ??
-        (await vscode.window.showInputBox({
-          title: 'Visualize Table',
-          prompt: `Type the name of the table: catalog.schema.table (profile: ${session.label(session.profile)})`,
-          value: example,
-          validateInput: (value) => (parseTableName(value) ? undefined : 'Type three parts: catalog.schema.table'),
-        }));
-      if (text === undefined) return undefined;
-      const table = parseTableName(text);
+      if (name === undefined) {
+        const picked = await askTable('Visualize Table');
+        return picked ? open(picked) : undefined;
+      }
+      const table = parseTableName(name);
       if (!table) {
-        void vscode.window.showErrorMessage(`"${text}" is not a table name. Type three parts: catalog.schema.table`);
+        void vscode.window.showErrorMessage(`"${name}" is not a table name. Type three parts: catalog.schema.table`);
         return undefined;
       }
       return open(table);
@@ -280,6 +275,12 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
 
     async visualizeNode(node) {
       return node?.kind === 'table' ? open(node.table) : undefined;
+    },
+
+    async searchTables(node) {
+      const scope = node?.kind === 'schema' ? { catalog: node.catalog, schema: node.schema } : node?.kind === 'catalog' ? { catalog: node.catalog } : {};
+      const table = await pickTable(session, tree, scope);
+      return table ? open(table) : undefined;
     },
 
     async restoreBoard(panel, state) {

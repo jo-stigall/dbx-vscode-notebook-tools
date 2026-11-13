@@ -71,6 +71,12 @@
         "category": "Databricks Notebook"
       },
       {
+        "command": "dbxNotebook.tableViz.searchTables",
+        "title": "Search Tables",
+        "category": "Databricks Notebook",
+        "icon": "$(search)"
+      },
+      {
         "command": "dbxNotebook.tableViz.selectCompute",
         "title": "Select Profile and Compute for Tables",
         "category": "Databricks Notebook"
@@ -157,6 +163,11 @@
       ],
       "view/title": [
         {
+          "command": "dbxNotebook.tableViz.searchTables",
+          "when": "view == dbxNotebook.tableViz.tables",
+          "group": "navigation@0"
+        },
+        {
           "command": "dbxNotebook.tableViz.refreshTables",
           "when": "view == dbxNotebook.tableViz.tables",
           "group": "navigation@1"
@@ -202,6 +213,16 @@
           "command": "dbxNotebook.tableViz.compareTables",
           "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
           "group": "1_table@2"
+        },
+        {
+          "command": "dbxNotebook.tableViz.searchTables",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(catalog|schema)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbxNotebook.tableViz.searchTables",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(catalog|schema)$/",
+          "group": "1_search@1"
         }
       ],
       "editor/context": [

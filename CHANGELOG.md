@@ -5,6 +5,19 @@ newest first.
 
 ## Not released
 
+### Added
+
+- **"Visualize Table" and "Compare Tables" show a list, not a text box.**
+  The list shows your favorite and recent tables, then the catalogs. Select
+  a catalog, then a schema, then a table, and type to filter on each level.
+  You can still paste `catalog.schema.table` and press Enter. A name and a
+  dot go one level down: `main.` opens the catalog `main`.
+- **Search in the view "Databricks Tables".** The search button at the top
+  of the view finds tables by a part of their name, in all catalogs. Each
+  catalog and each schema has its own search button. Type `shop.ord` to
+  look at the schema name too. The search uses the Unity Catalog REST API
+  and never starts a warehouse. It is also the command "Search Tables".
+
 ### Documentation
 
 - **A guide to the code of "Visualize Table":**

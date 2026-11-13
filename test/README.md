@@ -82,7 +82,7 @@ in `tableViz/unit/` directly. It cannot run the `.tsx` file in
 The last lines of the output give the number of tests that passed and failed:
 
 ```text
-ℹ pass 145
+ℹ pass 157
 ℹ fail 0
 ```
 
@@ -107,7 +107,10 @@ The tests make sure of these things:
   plays the role of Databricks.
 - The SQL profiler gives the same numbers as the demo profiler for each
   request type. A fake warehouse answers its statements from the demo tables.
-- Browsing the catalog sends no SQL statement.
+- Browsing the catalog and searching for a table send no SQL statement.
+- The table search reads the text as catalog, schema and table, puts the
+  best match first, and continues when one catalog fails
+  (`tableViz/unit/search.test.ts`).
 - The drift maths gives the values that are computed by hand in the test,
   and a comparison of the two demo tables puts the known differences first.
 - A change of dataset B runs no drift query for dataset A.
@@ -173,6 +176,8 @@ ok   tableViz: the tree lists catalogs, schemas and tables without SQL
 ok   tableViz: a board gets correct numbers from SQL statements on a warehouse
 ok   tableViz: the cache answers a repeated request, and refresh runs it again
 ok   tableViz: the tree keeps favorites and recent tables
+ok   tableViz: Search Tables finds the tables of a schema and opens a board
+ok   tableViz: Visualize Table shows a list of catalogs, schemas and tables
 ok   tableViz: Visualize Table Under Cursor opens the table at the cursor
 ok   tableViz: a cancel stops the statement on the workspace
 ok   tableViz: an error from the workspace becomes a plain message
