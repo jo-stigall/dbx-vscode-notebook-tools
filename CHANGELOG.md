@@ -26,6 +26,11 @@ newest first.
 - **The partition hint** no longer says that a filter reads all partitions
   when the name of the partition column first occurs inside a longer name.
 - **The catalog tree** asks Unity Catalog for catalogs and schemas in pages.
+- **Ruff no longer reports "tried to close document that didn't exist"**
+  when a notebook file opens. The text document of a file and its notebook
+  have the same address, and Ruff keeps one entry for each address. The
+  extension now closes the text document before it opens the notebook.
+  Before, the two were open at the same time for a moment.
 - **The button "Open as Databricks Notebook"** at the top of a text editor
   shows only for a file that starts with `# Databricks notebook source`.
   Before, it showed for each `.py` file.

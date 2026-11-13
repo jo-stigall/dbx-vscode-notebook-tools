@@ -156,6 +156,8 @@ async function main(log) {
     () => !vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputText),
     5000
   );
+  // The extension closes the text tab first, then opens the notebook and puts the focus in it. Wait until all of that is done.
+  await vscode.commands.executeCommand('dbxNotebook._openDone');
   log('auto-opens as a notebook');
 
   // 2. Cells are parsed correctly.
@@ -328,6 +330,25 @@ async function main(log) {
   await until('no button after undo', async () => !(await buttonShows()), 5000);
   await vscode.commands.executeCommand('workbench.action.files.revert');
   log('shows the notebook button only for a notebook file');
+
+  // 11. The text document of a file closes before its notebook opens. The two have the same address,
+  // and a language server such as Ruff reports an error if the two are open at the same time.
+  const setup = vscode.Uri.file(path.join(work, 'helpers', 'setup.py'));
+  const isSetup = (u) => u.toString() === setup.toString();
+  const events = [];
+  const watchers = [
+    vscode.workspace.onDidOpenTextDocument((d) => isSetup(d.uri) && events.push('text opens')),
+    vscode.workspace.onDidCloseTextDocument((d) => isSetup(d.uri) && events.push('text closes')),
+    vscode.workspace.onDidOpenNotebookDocument((n) => isSetup(n.uri) && events.push('notebook opens')),
+  ];
+  // "vscode.open" does what a click on the file in the Explorer does.
+  await vscode.commands.executeCommand('vscode.open', setup);
+  await until('the notebook of helpers/setup.py', () => events.includes('notebook opens'), 10000);
+  await sleep(500);
+  watchers.forEach((w) => w.dispose());
+  assert.deepStrictEqual(events, ['text opens', 'text closes', 'notebook opens']);
+  assert.ok(!vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputText && isSetup(t.input.uri)), 'the text tab is gone');
+  log('closes the text document before the notebook opens');
 }
 
 /**

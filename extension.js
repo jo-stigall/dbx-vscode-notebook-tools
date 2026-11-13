@@ -159,14 +159,46 @@ function activate(context) {
   }
 
   /**
-   * Open a .py file in the notebook view and close its text editor tab.
+   * Wait until VS Code closed the text document of a file.
+   *
+   * VS Code closes the document a short time after its last tab closes. It
+   * keeps the document longer if a different extension uses it. Thus the
+   * function waits 300 milliseconds at most.
+   *
+   * @param {vscode.Uri} uri  The file.
+   * @returns {Promise<boolean>}  true if the document is closed. false if it was still open after 300 milliseconds.
+   */
+  function textDocumentClosed(uri) {
+    const key = uri.toString();
+    if (!vscode.workspace.textDocuments.some((d) => d.uri.toString() === key)) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = (closed) => {
+        clearTimeout(timer);
+        listener.dispose();
+        resolve(closed);
+      };
+      const listener = vscode.workspace.onDidCloseTextDocument((d) => d.uri.toString() === key && done(true));
+      const timer = setTimeout(() => done(false), 300);
+    });
+  }
+
+  /**
+   * Open a .py file in the notebook view, in the place of its text editor tab.
    *
    * This is the command "Open as Databricks Notebook".
+   *
+   * The function closes the text tab first and waits until VS Code closed
+   * the text document. Then it opens the notebook. The sequence is
+   * important for other extensions: the text document and the notebook
+   * have the same address (the path of the file). A language server such
+   * as Ruff keeps one entry for each address. If the two are open at the
+   * same time, the entry of one replaces the entry of the other, and Ruff
+   * reports "tried to close document that didn't exist".
    *
    * @param {vscode.Uri} [uri]  The file to open. If you omit it, the function uses the file in the text editor that you look at.
    * @returns {Promise<void>}
    */
-  async function openAsNotebook(uri) {
+  async function openNow(uri) {
     uri = uri || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri);
     if (!uri) return;
     const key = uri.toString();
@@ -174,8 +206,36 @@ function activate(context) {
     const textTabs = vscode.window.tabGroups.all
       .flatMap((g) => g.tabs)
       .filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === key && !t.isDirty);
-    await vscode.commands.executeCommand('vscode.openWith', uri, NOTEBOOK_TYPE);
-    await vscode.window.tabGroups.close(textTabs).then(undefined, () => {});
+    // Open the notebook in the editor group of the text tab.
+    const viewColumn = textTabs.length ? textTabs[0].group.viewColumn : undefined;
+    // true if the text tab is the tab that you look at.
+    const wasActive = textTabs.some((t) => t.isActive && t.group.isActive);
+    if (textTabs.length) {
+      await vscode.window.tabGroups.close(textTabs).then(undefined, () => {});
+      await textDocumentClosed(uri);
+    }
+    await vscode.commands.executeCommand('vscode.openWith', uri, NOTEBOOK_TYPE, viewColumn);
+    // When the text tab closed, the keyboard focus left the editor. Put it in the notebook, so that
+    // the keys and the commands of the notebook work without a click.
+    if (wasActive) await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+  }
+
+  /** Ends when the last call of openAsNotebook() is done. */
+  let opening = Promise.resolve();
+
+  /**
+   * Open a .py file in the notebook view. See openNow().
+   *
+   * The function does one file at a time. A second call waits until the
+   * first call is done, so that the steps of two calls do not mix.
+   *
+   * @param {vscode.Uri} [uri]  The file to open. If you omit it, the function uses the file in the text editor that you look at.
+   * @returns {Promise<void>}
+   */
+  function openAsNotebook(uri) {
+    const next = opening.then(() => openNow(uri));
+    opening = next.catch(() => {});
+    return next;
   }
 
   /**
@@ -214,6 +274,8 @@ function activate(context) {
       const editor = vscode.window.activeTextEditor;
       if (editor && e.document === editor.document) updateButton(editor);
     }),
+    // For the tests: wait until the extension finished the last "open as notebook".
+    vscode.commands.registerCommand('dbxNotebook._openDone', () => opening),
     // For the tests: tell if the button shows now.
     vscode.commands.registerCommand('dbxNotebook._activeFileIsNotebook', () => activeFileIsNotebook),
 

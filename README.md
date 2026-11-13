@@ -453,6 +453,12 @@ together.
   `setup.py` but does not set `env`.
 - The extension does not work with serverless compute or SQL warehouses.
 - The extension shows no boxes for `dbutils.widgets` values.
+- The Ruff extension can report "tried to close document that didn't exist"
+  after you select "Reopen Editor With..." for an open notebook, or if a
+  different extension keeps the text document of the file open. The text
+  document and the notebook are then open at the same time for a moment,
+  and Ruff keeps one entry for the two. The message does not change your
+  file.
 
 ## Things that are not tested
 

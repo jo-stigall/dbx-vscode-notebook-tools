@@ -53,6 +53,12 @@ df = spark.table("sales")
 | Lines without `# MAGIC` | A Python cell. |
 | `# DBTITLE 1,Load the data` on the first line | The cell shows the title "Load the data" below it. |
 
+When you open a notebook file, VS Code first shows it as text. The extension
+closes that text tab, waits until VS Code closed the text document, and then
+opens the notebook. The sequence is important for other extensions such as
+Ruff: the text document and the notebook have the same address, and Ruff
+reports an error if the two are open at the same time.
+
 Some files have a `# COMMAND ----------` line directly after the first line.
 The text between the two lines is empty, and the extension does not show it
 as a cell.
