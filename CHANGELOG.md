@@ -26,6 +26,9 @@ newest first.
 - **The partition hint** no longer says that a filter reads all partitions
   when the name of the partition column first occurs inside a longer name.
 - **The catalog tree** asks Unity Catalog for catalogs and schemas in pages.
+- **The button "Open as Databricks Notebook"** at the top of a text editor
+  shows only for a file that starts with `# Databricks notebook source`.
+  Before, it showed for each `.py` file.
 - **Notebook files with a `# COMMAND ----------` line directly after the
   first line** no longer open with an empty first cell. A save still writes
   the same bytes.

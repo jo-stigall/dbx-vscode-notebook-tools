@@ -127,7 +127,8 @@ More things that you can do:
 | To do this | Do this |
 |---|---|
 | See the file as text | Right-click the tab, select "Reopen Editor With...", then "Text Editor". |
-| Go back to the notebook | Click the notebook button at the top right of the text editor. |
+| Go back to the notebook | Click the notebook button at the top right of the text editor. The button shows only for a Databricks notebook file. |
+| Open a normal Python file as a notebook | Right-click the file in the Explorer and select "Open as Databricks Notebook". You get one cell that contains all of the file. |
 | Change the language of a cell | Click the language name at the bottom right of the cell. |
 | Delete all variables on the cluster | Click "Reset Execution Context" in the notebook toolbar. |
 | Use a different cluster | Click "Select Cluster" in the notebook toolbar. |

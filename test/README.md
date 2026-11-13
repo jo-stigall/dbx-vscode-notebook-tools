@@ -158,6 +158,7 @@ ok   cancels a command that you stop while the cluster accepts it
 ok   cancels a command when a status request fails
 ok   writes new cells in Databricks format
 ok   reopening as text sticks
+ok   shows the notebook button only for a notebook file
 ok   tableViz: Visualize Table opens a board
 ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
 ok   tableViz: a statistics request gives numbers and the SQL behind them

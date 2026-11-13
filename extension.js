@@ -112,6 +112,25 @@ function activate(context) {
   /** Notebook URI -> the time when you closed the notebook view of that file. */
   const recentlyClosed = new Map();
 
+  /** true if the text editor that you look at shows a Databricks notebook file. See updateButton(). */
+  let activeFileIsNotebook = false;
+
+  /**
+   * Show or hide the button "Open as Databricks Notebook" at the top of a text editor.
+   *
+   * The button shows only if the file is a .py file and its first line is
+   * "# Databricks notebook source". A normal Python file gets no button.
+   * The function sets the value "dbxNotebook.activeFileIsNotebook", and the
+   * `when` condition of the button in package.json reads it.
+   *
+   * @param {vscode.TextEditor|undefined} editor  The text editor that you look at.
+   */
+  function updateButton(editor) {
+    const doc = editor && editor.document;
+    activeFileIsNotebook = Boolean(doc && doc.fileName.endsWith('.py') && doc.lineCount > 0 && hasHeader(doc.lineAt(0).text));
+    vscode.commands.executeCommand('setContext', 'dbxNotebook.activeFileIsNotebook', activeFileIsNotebook);
+  }
+
   /**
    * Open a file as a notebook if it is a Databricks notebook.
    *
@@ -186,7 +205,17 @@ function activate(context) {
     // transientOutputs: VS Code does not save cell outputs, and a new output does not mark the file as changed.
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, serializer, { transientOutputs: true }),
 
-    vscode.window.onDidChangeActiveTextEditor(autoOpen),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      updateButton(editor);
+      return autoOpen(editor);
+    }),
+    // You can type or delete the header line. Then the button must show or go away.
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && e.document === editor.document) updateButton(editor);
+    }),
+    // For the tests: tell if the button shows now.
+    vscode.commands.registerCommand('dbxNotebook._activeFileIsNotebook', () => activeFileIsNotebook),
 
     // Select the "Databricks Cluster" kernel for each notebook that opens.
     vscode.workspace.onDidOpenNotebookDocument((nb) => {
@@ -264,6 +293,7 @@ function activate(context) {
   for (const nb of vscode.workspace.notebookDocuments) {
     if (isOurs(nb)) kernel.controller.updateNotebookAffinity(nb, vscode.NotebookControllerAffinity.Preferred);
   }
+  updateButton(vscode.window.activeTextEditor);
   autoOpen(vscode.window.activeTextEditor);
 }
 

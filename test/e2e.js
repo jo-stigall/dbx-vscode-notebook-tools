@@ -309,6 +309,25 @@ async function main(log) {
   await sleep(2500);
   assert.ok(vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.fsPath === uri.fsPath, 'stays in the text editor');
   log('reopening as text sticks');
+
+  // 10. The button "Open as Databricks Notebook" shows for a notebook file that is open as text, and not for a normal Python file.
+  const buttonShows = () => vscode.commands.executeCommand('dbxNotebook._activeFileIsNotebook');
+  await until('the button for the notebook file', buttonShows, 5000);
+  const plain = path.join(work, 'plain.py');
+  fs.writeFileSync(plain, '# A normal Python file.\nprint(1)\n');
+  await vscode.window.showTextDocument(vscode.Uri.file(plain));
+  await until('no button for the normal file', async () => !(await buttonShows()), 5000);
+  await sleep(500);
+  assert.ok(vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.fsPath === plain, 'a normal Python file stays a text editor');
+  // Type the header line: the button shows. Undo: it goes away.
+  const top = new vscode.WorkspaceEdit();
+  top.insert(vscode.Uri.file(plain), new vscode.Position(0, 0), '# Databricks notebook source\n');
+  await vscode.workspace.applyEdit(top);
+  await until('the button after the header line was typed', buttonShows, 5000);
+  await vscode.commands.executeCommand('undo');
+  await until('no button after undo', async () => !(await buttonShows()), 5000);
+  await vscode.commands.executeCommand('workbench.action.files.revert');
+  log('shows the notebook button only for a notebook file');
 }
 
 /**
