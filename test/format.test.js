@@ -9,7 +9,7 @@
  *
  *     ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code" test/format.test.js
  *
- * The script prints the number of tests that passed, for example "14 passed". It prints each failure
+ * The script prints the number of tests that passed, for example "15 passed". It prints each failure
  * and exits with code 1 if a test fails.
  */
 const assert = require('assert');
@@ -227,6 +227,33 @@ test('a file with a byte-order mark round-trips byte-for-byte', () => {
   assert.strictEqual(roundTrip('\uFEFFprint(1)\n'), '\uFEFFprint(1)\n');
   // A file without a mark gets none.
   assert.strictEqual('bom' in parseNotebook(CANONICAL), false);
+});
+
+test('a separator directly after the header line makes no empty first cell', () => {
+  const rest = 'x = 1\n\n# COMMAND ----------\n\ny = 2\n';
+  // Zero, one and two empty lines between the header line and the separator.
+  for (const start of ['# Databricks notebook source\n# COMMAND ----------\n\n', '# Databricks notebook source\n\n# COMMAND ----------\n\n', '# Databricks notebook source\n\n\n# COMMAND ----------\n\n']) {
+    const text = start + rest;
+    const nb = parseNotebook(text);
+    assert.deepStrictEqual(nb.cells.map((c) => c.value), ['x = 1', 'y = 2'], JSON.stringify(start));
+    assert.strictEqual(nb.header, start);
+    assert.strictEqual(roundTrip(text), text);
+    assert.strictEqual(roundTrip(text.replace(/\n/g, '\r\n')), text.replace(/\n/g, '\r\n'));
+    // An edit of the first cell changes only that cell.
+    nb.cells[0].value = 'x = 99';
+    assert.strictEqual(serializeNotebook(nb), text.replace('x = 1', 'x = 99'));
+    // A new cell at the top goes after the separator of the header.
+    nb.cells.unshift({ kind: 'code', language: 'python', value: 'new = 0' });
+    assert.strictEqual(serializeNotebook(nb), start + 'new = 0\n\n# COMMAND ----------\n\n' + rest.replace('x = 1', 'x = 99'));
+  }
+  // A file with only the header line and a separator has one empty cell: a notebook needs a cell.
+  const only = '# Databricks notebook source\n# COMMAND ----------';
+  assert.deepStrictEqual(parseNotebook(only).cells.map((c) => c.value), ['']);
+  assert.strictEqual(roundTrip(only), only);
+  // An empty cell after the first separator stays a cell.
+  const second = '# Databricks notebook source\n# COMMAND ----------\n\n\n\n# COMMAND ----------\n\nx = 1\n';
+  assert.deepStrictEqual(parseNotebook(second).cells.map((c) => c.value), ['', 'x = 1']);
+  assert.strictEqual(roundTrip(second), second);
 });
 
 test('hasHeader accepts the header line only', () => {

@@ -53,6 +53,10 @@ df = spark.table("sales")
 | Lines without `# MAGIC` | A Python cell. |
 | `# DBTITLE 1,Load the data` on the first line | The cell shows the title "Load the data" below it. |
 
+Some files have a `# COMMAND ----------` line directly after the first line.
+The text between the two lines is empty, and the extension does not show it
+as a cell.
+
 A `.py` file that does not start with `# Databricks notebook source` opens as
 text. If you open it as a notebook with "Open as Databricks Notebook", you get
 one Python cell that contains all of the file.

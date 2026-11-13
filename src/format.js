@@ -43,7 +43,7 @@
  * @typedef {object} Notebook
  * @property {Cell[]} cells
  * @property {'\n'|'\r\n'} [eol]  The line ending of the file. Windows files use '\r\n'.
- * @property {string} [header]  The first line and its line ending. Empty for a file that is not a notebook.
+ * @property {string} [header]  The first line and its line ending. Empty for a file that is not a notebook. If a separator comes directly after the first line, the header also contains that separator.
  * @property {string} [trailer]  The line ending after the last cell. Empty if the file has none.
  * @property {boolean} [bom]  true if the file starts with a byte-order mark (the character U+FEFF). Some Windows editors write it.
  */
@@ -206,11 +206,20 @@ function renderCell(cell) {
  * A file that does not start with the Databricks header gives one Python cell
  * that contains all of the file.
  *
+ * Some files have a separator directly after the header line. The function
+ * does not make an empty cell from the text between the two. It keeps that
+ * separator in `header`.
+ *
  * @example
  * const nb = parseNotebook('# Databricks notebook source\nx = 1\n\n# COMMAND ----------\n\ny = 2\n');
  * nb.cells.map((c) => c.value)   // ['x = 1', 'y = 2']
  * nb.header                      // '# Databricks notebook source\n'
  * nb.cells[1].sep                // '\n\n# COMMAND ----------\n\n'
+ *
+ * // A separator directly after the header line:
+ * const nb2 = parseNotebook('# Databricks notebook source\n# COMMAND ----------\n\nx = 1\n');
+ * nb2.cells.map((c) => c.value)  // ['x = 1']: one cell, not an empty cell and then 'x = 1'
+ * nb2.header                     // '# Databricks notebook source\n# COMMAND ----------\n\n'
  *
  * @param {string} text  The full text of the file.
  * @returns {Notebook}
@@ -246,7 +255,17 @@ function parseNotebook(text) {
   }
   const raw = body.slice(pos);
   cells.push({ ...parseCell(raw), raw, sep });
-  return { eol, header, trailer, cells, ...mark };
+
+  // Some files have a separator directly after the header line. The text between the two is empty,
+  // and it is not a cell in Databricks. Make it a part of the header, so that the notebook has no
+  // empty first cell and a save writes the same bytes.
+  let start = header;
+  if (cells.length > 1 && cells[0].raw.trim() === '') {
+    start += cells[0].raw + cells[1].sep;
+    cells.shift();
+    delete cells[0].sep;
+  }
+  return { eol, header: start, trailer, cells, ...mark };
 }
 
 /**

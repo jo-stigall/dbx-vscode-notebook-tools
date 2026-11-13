@@ -43,7 +43,7 @@ This command uses the JavaScript runtime in VS Code. If all tests pass, it
 prints:
 
 ```text
-14 passed
+15 passed
 ```
 
 The most important tests make sure that a file does not change when you open
