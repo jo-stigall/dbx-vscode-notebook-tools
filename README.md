@@ -48,6 +48,10 @@ Without the extension, VS Code shows this file as text. With the extension:
 
 ## Install the extension
 
+The repository contains the install file of the current version:
+`dbx-notebook-0.2.0.vsix`. To install the extension, do step 3 only. Do
+steps 1 and 2 only if you changed the code.
+
 1. Get the packages that the build uses. You need Node.js 22 or later for
    this step and the next step.
 
@@ -67,7 +71,12 @@ Without the extension, VS Code shows this file as text. With the extension:
    code --install-extension dbx-notebook-0.2.0.vsix
    ```
 
-A computer that only installs the `.vsix` file does not need Node.js. To try
+A computer that only installs the `.vsix` file does not need Node.js. You
+can also install the file from VS Code: in the Extensions view, click `...`,
+then "Install from VSIX...".
+
+If you change the code, build the install file again and commit it with your
+change. The install file in the repository must match the code. To try
 the extension without a Databricks workspace, see
 [test/README.md](test/README.md).
 

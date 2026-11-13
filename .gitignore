@@ -1,5 +1,9 @@
 .vscode-test/
+# Install files are build results. Git keeps only the install file of the current version,
+# so that a person can install the extension from a clone without a build.
+# When the version in package.json changes, change the name on the next line.
 *.vsix
+!dbx-notebook-0.2.0.vsix
 __pycache__/
 node_modules/
 dist/

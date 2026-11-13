@@ -79,10 +79,27 @@ missing = [f for f in FILES if not (ROOT / f).is_file()]
 if missing:
     raise SystemExit(f"These files do not exist: {', '.join(missing)}. Run `npm install`, then `npm run package`.")
 
+# Each file in the zip gets this time, not the time of the build. Two builds of the same code
+# then give the same bytes, and git shows the install file as changed only when its content changed.
+FIXED_TIME = (2020, 1, 1, 0, 0, 0)
+
+
+def add(z, name, data):
+    """Put one file in the zip with the fixed time.
+
+    z: the open zip file. name: the path in the zip, for example "extension/README.md".
+    data: the content, as text or as bytes.
+    """
+    info = zipfile.ZipInfo(name, FIXED_TIME)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o644 << 16  # a normal file that all users can read
+    z.writestr(info, data)
+
+
 out = ROOT / f'{pkg["name"]}-{pkg["version"]}.vsix'
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-    z.writestr("[Content_Types].xml", content_types)
-    z.writestr("extension.vsixmanifest", manifest)
+    add(z, "[Content_Types].xml", content_types)
+    add(z, "extension.vsixmanifest", manifest)
     for f in FILES:
-        z.write(ROOT / f, f"extension/{f}")
+        add(z, f"extension/{f}", (ROOT / f).read_bytes())
 print(f"{out.name}  ({ident}, {len(FILES)} files, {out.stat().st_size} bytes)")
