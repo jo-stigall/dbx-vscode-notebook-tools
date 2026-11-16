@@ -140,9 +140,21 @@ function activate(context) {
    * - The setting "dbxNotebook.autoOpen" is off.
    * - The file is not a saved .py file on your disk.
    * - The first line is not "# Databricks notebook source".
-   * - The file is open as a notebook, or you closed its notebook less than
-   *   2 seconds ago. This occurs when you select "Reopen Editor With... >
-   *   Text Editor". The file must then stay open as text.
+   * - You closed the notebook of the file less than 2 seconds ago. This
+   *   occurs when you select "Reopen Editor With... > Text Editor". The file
+   *   must then stay open as text.
+   * - No normal text tab shows the file. This occurs when you look at a diff
+   *   of the file, for example from the Source Control view. The diff must
+   *   stay a diff. If the notebook opened next to it, the text document and
+   *   the notebook would be open at the same time, and Ruff stops with
+   *   "expected a single text document, but found a notebook document" when
+   *   you point at the text.
+   *
+   * If the notebook of the file is open, the function closes the text tab
+   * and goes to the notebook. Example: the notebook of `report.py` is open,
+   * and you click `report.py` in the Explorer. VS Code opens a text tab next
+   * to the notebook. Without this step, you have two editors of one file,
+   * and Ruff reports an error for each edit in one of them.
    *
    * @param {vscode.TextEditor|undefined} editor  The text editor that you went to.
    * @returns {Promise<void>}
@@ -153,8 +165,22 @@ function activate(context) {
     if (doc.uri.scheme !== 'file' || !doc.fileName.endsWith('.py') || doc.isDirty) return;
     if (!doc.lineCount || !hasHeader(doc.lineAt(0).text)) return;
     const key = doc.uri.toString();
-    if (vscode.workspace.notebookDocuments.some((nb) => isOurs(nb) && nb.uri.toString() === key)) return;
+    const notebookIsOpen = () => vscode.workspace.notebookDocuments.some((nb) => isOurs(nb) && nb.uri.toString() === key);
+    if (notebookIsOpen()) {
+      // "Reopen Editor With... > Text Editor" puts the text in the place of the notebook tab, and
+      // VS Code closes the notebook some time later. Thus look for a notebook tab, not for the
+      // notebook: if no tab shows the notebook, you selected the text editor, and the file stays text.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const hasNotebookTab = vscode.window.tabGroups.all
+        .flatMap((g) => g.tabs)
+        .some((t) => t.input instanceof vscode.TabInputNotebook && t.input.notebookType === NOTEBOOK_TYPE && t.input.uri.toString() === key);
+      if (!hasNotebookTab || doc.isDirty) return;
+    }
     if (Date.now() - (recentlyClosed.get(key) || 0) < 2000) return;
+    const inTextTab = vscode.window.tabGroups.all
+      .flatMap((g) => g.tabs)
+      .some((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === key);
+    if (!inTextTab) return;
     await openAsNotebook(doc.uri);
   }
 

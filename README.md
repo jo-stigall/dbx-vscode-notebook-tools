@@ -474,12 +474,24 @@ together.
   `setup.py` but does not set `env`.
 - The extension does not work with serverless compute or SQL warehouses.
 - The extension shows no boxes for `dbutils.widgets` values.
-- The Ruff extension can report "tried to close document that didn't exist"
-  after you select "Reopen Editor With..." for an open notebook, or if a
-  different extension keeps the text document of the file open. The text
-  document and the notebook are then open at the same time for a moment,
-  and Ruff keeps one entry for the two. The message does not change your
-  file.
+- The Ruff extension reports errors when the text document of a notebook
+  file and its notebook are open at the same time. The two have the same
+  address (the path of the file), and Ruff keeps one entry for each address.
+  The errors do not change your file. Ruff shows one of these messages:
+  - "Expected a single text document, but found a notebook document"
+  - "tried to close document that didn't exist"
+  - "Ruff encountered a problem. Check the logs for more details."
+
+  The extension prevents the cases that it controls. It closes the text tab
+  before it opens the notebook. It does not open a notebook from a diff. If
+  you open a file again while its notebook is open, it goes to the notebook.
+  These cases remain:
+  - A different extension reads the notebook file as text while the
+    notebook is open. You do not see this. Ruff then stops to check the
+    cells of that notebook until you close the notebook and open it again.
+  - You open a diff of a file while its notebook is open.
+  - You select "Reopen Editor With..." for a notebook that is open in two
+    editor groups.
 
 ## Things that are not tested
 

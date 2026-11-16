@@ -44,6 +44,17 @@ newest first.
   have the same address, and Ruff keeps one entry for each address. The
   extension now closes the text document before it opens the notebook.
   Before, the two were open at the same time for a moment.
+- **A file that you open again goes to its open notebook.** Before, VS Code
+  made a text tab next to the notebook tab, for example when you clicked the
+  file in the Explorer a second time. You then had two editors of one file.
+  Each editor could save over the changes of the other. When you edited the
+  text, Ruff stopped with "Expected a single text document, but found a
+  notebook document".
+- **A diff of a notebook file stays a diff.** Before, the extension opened
+  the notebook when you opened a diff, for example from the Source Control
+  view. The text of the diff and the notebook were then open at the same
+  time. When you pointed at the text, Ruff stopped with "Expected a single
+  text document, but found a notebook document".
 - **The button "Open as Databricks Notebook"** at the top of a text editor
   shows only for a file that starts with `# Databricks notebook source`.
   Before, it showed for each `.py` file.

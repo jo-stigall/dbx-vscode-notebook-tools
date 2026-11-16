@@ -59,6 +59,22 @@ opens the notebook. The sequence is important for other extensions such as
 Ruff: the text document and the notebook have the same address, and Ruff
 reports an error if the two are open at the same time.
 
+For the same reason, the extension opens a notebook only if a normal text
+tab shows the file. A diff of a notebook file stays a diff. Example: you
+click a changed notebook file in the Source Control view. VS Code shows the
+old text and the new text, and no notebook opens.
+
+If you open a file again while its notebook is open, VS Code makes a text
+tab next to the notebook tab. The extension closes that text tab and goes to
+the notebook. Example: the notebook of `report.py` is open, and you click
+`report.py` in the Explorer. You stay in the notebook. Without this step you
+have two editors of one file. Each editor can save over the changes of the
+other, and Ruff reports an error for each edit.
+
+The extension cannot prevent all cases. A different extension can read the
+file as text while the notebook is open. Ruff then loses its entry for the
+notebook. The README lists the cases that remain.
+
 Some files have a `# COMMAND ----------` line directly after the first line.
 The text between the two lines is empty, and the extension does not show it
 as a cell.

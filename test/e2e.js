@@ -307,7 +307,10 @@ async function main(log) {
   log('writes new cells in Databricks format');
 
   // 9. "Reopen with text editor" sticks instead of bouncing back to the notebook.
-  await vscode.commands.executeCommand('vscode.openWith', uri, 'default');
+  // "workbench.action.reopenTextEditor" does what "Reopen Editor With... > Text Editor" does: it puts
+  // the text editor in the place of the notebook tab.
+  await vscode.window.showNotebookDocument(nb);
+  await vscode.commands.executeCommand('workbench.action.reopenTextEditor');
   await sleep(2500);
   assert.ok(vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.fsPath === uri.fsPath, 'stays in the text editor');
   log('reopening as text sticks');
@@ -321,13 +324,17 @@ async function main(log) {
   await until('no button for the normal file', async () => !(await buttonShows()), 5000);
   await sleep(500);
   assert.ok(vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.fsPath === plain, 'a normal Python file stays a text editor');
-  // Type the header line: the button shows. Undo: it goes away.
+  // Type the header line: the button shows. Delete the line: it goes away.
   const top = new vscode.WorkspaceEdit();
   top.insert(vscode.Uri.file(plain), new vscode.Position(0, 0), '# Databricks notebook source\n');
   await vscode.workspace.applyEdit(top);
   await until('the button after the header line was typed', buttonShows, 5000);
-  await vscode.commands.executeCommand('undo');
-  await until('no button after undo', async () => !(await buttonShows()), 5000);
+  // Delete the line with an edit, not with "undo": "undo" goes to the editor that has the keyboard focus,
+  // and the editor does not always have it in the test window.
+  const noTop = new vscode.WorkspaceEdit();
+  noTop.delete(vscode.Uri.file(plain), new vscode.Range(0, 0, 1, 0));
+  await vscode.workspace.applyEdit(noTop);
+  await until('no button after the header line was deleted', async () => !(await buttonShows()), 5000);
   await vscode.commands.executeCommand('workbench.action.files.revert');
   log('shows the notebook button only for a notebook file');
 
@@ -349,6 +356,46 @@ async function main(log) {
   assert.deepStrictEqual(events, ['text opens', 'text closes', 'notebook opens']);
   assert.ok(!vscode.window.tabGroups.all.flatMap((g) => g.tabs).some((t) => t.input instanceof vscode.TabInputText && isSetup(t.input.uri)), 'the text tab is gone');
   log('closes the text document before the notebook opens');
+
+  // 12. A diff of a notebook file stays a diff. The extension must not open the notebook next to it:
+  // the text document of the diff and the notebook would then be open at the same time, and Ruff
+  // stops with "expected a single text document, but found a notebook document" when you point at the text.
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  const constants = vscode.Uri.file(path.join(work, 'helpers', 'constants.py'));
+  const older = vscode.Uri.file(path.join(work, 'helpers', 'constants-old.py'));
+  fs.writeFileSync(older.fsPath, fs.readFileSync(constants.fsPath, 'utf8').replace('hello', 'hi'));
+  await vscode.commands.executeCommand('vscode.diff', older, constants, 'constants.py (changes)');
+  await until('the diff editor', () => vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.toString() === constants.toString(), 5000);
+  await sleep(1500);
+  await vscode.commands.executeCommand('dbxNotebook._openDone');
+  const isConstants = (u) => [constants.toString(), older.toString()].includes(u.toString());
+  assert.ok(!vscode.workspace.notebookDocuments.some((n) => isConstants(n.uri)), 'no notebook opens for a file in a diff');
+  assert.ok(vscode.window.tabGroups.activeTabGroup.activeTab.input instanceof vscode.TabInputTextDiff, 'the diff stays the tab that you look at');
+  log('does not open a notebook from a diff');
+
+  // 13. The notebook of a file is open, and you open the file again. VS Code makes a text tab next to
+  // the notebook. The extension must close that text tab and go to the notebook: two editors of one
+  // file can save over each other, and Ruff reports an error for each edit in one of them.
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  const tabsOf = (uri, type) => vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof type && t.input.uri.toString() === uri.toString());
+  const noteTabs = () => tabsOf(setup, vscode.TabInputNotebook);
+  // Step 12 closed the notebook of this file. For 2 seconds after that, the extension keeps the file as text.
+  await sleep(2100);
+  await vscode.commands.executeCommand('vscode.open', setup);
+  await until('the notebook tab of helpers/setup.py', () => noteTabs().length === 1 && noteTabs()[0].isActive, 10000);
+  // "vscode.open" does what a second click on the file in the Explorer does.
+  await vscode.commands.executeCommand('vscode.open', setup);
+  await sleep(1500);
+  await until('the text tab to close', () => tabsOf(setup, vscode.TabInputText).length === 0, 5000);
+  assert.strictEqual(noteTabs().length, 1, 'the file has one notebook tab');
+  assert.ok(noteTabs()[0].isActive, 'the notebook is the tab that you look at');
+  // The same, in a second editor group ("Open to the Side").
+  await vscode.commands.executeCommand('vscode.open', setup, vscode.ViewColumn.Beside);
+  await sleep(1500);
+  await until('the text tab at the side to close', () => tabsOf(setup, vscode.TabInputText).length === 0, 5000);
+  assert.ok(noteTabs().length >= 1 && vscode.window.tabGroups.activeTabGroup.activeTab.input instanceof vscode.TabInputNotebook, 'the side group shows the notebook');
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  log('goes to the open notebook when you open its file again');
 }
 
 /**
