@@ -208,6 +208,22 @@ Databricks Connect gets the workspace URL, the login and the cluster from
 the extension. They are the same as for the cluster kernel. See
 [Connect to your workspace](#connect-to-your-workspace).
 
+There is one exception. If the official Databricks extension is logged in to
+the workspace in the same window, the local kernel uses the login of that
+extension. The official extension writes the address of its login service
+into `.databricks/.databricks.env`, and the service runs only while that
+extension is logged in. If the service does not answer, the local kernel
+shows a warning and uses the login of the cluster kernel: your token, or
+`databricks auth token`.
+
+If a cell then fails with an error that names `databricks-cli`, the
+Databricks CLI has no login for the workspace. Log in one time, then click
+"Reset Execution Context":
+
+```bash
+databricks auth login --host https://<your workspace>
+```
+
 ### What is different with the local kernel
 
 - Each open notebook has one Python process. The process keeps your
@@ -598,8 +614,10 @@ For the kernel "Local Python", these items are not tested:
 
 - `spark` and `dbutils` with a real Databricks Connect and a real cluster.
   The tests use a Python that has no Databricks Connect.
-- The login that the extension gives to Databricks Connect: a token, and the
-  Databricks CLI.
+- The login that the extension gives to Databricks Connect: a token, the
+  Databricks CLI, and the login service of the official extension. The
+  change to a different login when that service does not answer is tested
+  only with a fake service.
 - The interpreter of the Python extension. The tests use `python3` from the
   PATH.
 - `display()` of a Spark DataFrame and of a pandas DataFrame, and plots.

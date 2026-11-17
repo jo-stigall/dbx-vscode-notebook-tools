@@ -12,6 +12,9 @@ newest first.
   can import each package that you installed in that Python, for example
   with `uv pip install -e .`. Before, all code ran on the cluster, and a
   cell did not find your local packages.
+  If the project uses the login service of the official Databricks extension
+  and that service does not run, the kernel shows a warning and uses your
+  token or the login of the Databricks CLI.
 - **The setting `dbxNotebook.defaultKernel`** selects the kernel of a
   notebook for which you did not select one: `cluster` (the default value)
   or `local`. You can select the other kernel in the kernel list of each

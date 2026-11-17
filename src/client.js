@@ -14,6 +14,7 @@
  */
 const vscode = require('vscode');
 const fs = require('fs');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -90,6 +91,36 @@ function isLoopback(url) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Tell if a program accepts connections at a URL.
+ *
+ * @example
+ * await canConnect('http://127.0.0.1:51215/abc')   // false if no program listens on port 51215
+ *
+ * @param {string} [url]
+ * @param {number} [timeoutMs]  How long the function waits for the connection.
+ * @returns {Promise<boolean>}  false also if `url` is empty or is not a URL.
+ */
+function canConnect(url, timeoutMs = 1000) {
+  let target;
+  try {
+    target = new URL(url);
+  } catch {
+    return Promise.resolve(false);
+  }
+  const port = Number(target.port) || (target.protocol === 'https:' ? 443 : 80);
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: target.hostname.replace(/^\[|\]$/g, ''), port });
+    const done = (ok) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.on('connect', () => done(true));
+    socket.on('error', () => done(false));
+  });
 }
 
 /**
@@ -270,29 +301,44 @@ class Connection {
    * - DATABRICKS_CLI_PATH: the Databricks CLI of the official extension.
    *
    * The function changes no login variable if DATABRICKS_AUTH_TYPE is set,
-   * for example by the official Databricks extension.
+   * with one exception. The official Databricks extension writes
+   * DATABRICKS_AUTH_TYPE=metadata-service and the address of a login service
+   * into `.databricks/.databricks.env`. That service runs only while the
+   * official extension is logged in. If no program answers at the address,
+   * the function removes the two variables and sets the login as above. The
+   * returned `warning` then tells that.
    *
    * @example
-   * conn.localEnv(notebook.uri)
-   * // { PATH: '...', DATABRICKS_HOST: 'https://adb-123.azuredatabricks.net',
-   * //   DATABRICKS_CLUSTER_ID: '0101-123456-abcdefgh', DATABRICKS_AUTH_TYPE: 'databricks-cli', ... }
+   * await conn.localEnv(notebook.uri)
+   * // { env: { PATH: '...', DATABRICKS_HOST: 'https://adb-123.azuredatabricks.net',
+   * //          DATABRICKS_CLUSTER_ID: '0101-123456-abcdefgh', DATABRICKS_AUTH_TYPE: 'databricks-cli', ... },
+   * //   warning: '' }
    *
    * @param {vscode.Uri} [uri]  A file in the project. See resolve().
-   * @returns {Object<string, string>}
+   * @returns {Promise<{ env: Object<string, string>, warning: string }>}  `warning` is empty if the function used the login variables as they were.
    */
-  localEnv(uri) {
+  async localEnv(uri) {
     const folder = uri && vscode.workspace.getWorkspaceFolder(uri);
     const fileEnv = folder ? readEnvFile(path.join(folder.uri.fsPath, '.databricks', '.databricks.env')) : {};
     const env = { ...fileEnv, ...process.env };
     const { host, token, clusterId, cliPath } = this.resolve(uri);
     if (host) env.DATABRICKS_HOST = host;
     if (clusterId && !env.DATABRICKS_SERVERLESS_COMPUTE_ID) env.DATABRICKS_CLUSTER_ID = clusterId;
+
+    let warning = '';
+    if (env.DATABRICKS_AUTH_TYPE === 'metadata-service' && !(await canConnect(env.DATABRICKS_METADATA_SERVICE_URL))) {
+      delete env.DATABRICKS_AUTH_TYPE;
+      delete env.DATABRICKS_METADATA_SERVICE_URL;
+      warning =
+        'The login service of the official Databricks extension does not answer. It runs only while that extension is logged in to the workspace in this window. ' +
+        `The kernel "Local Python" uses ${token ? 'your token' : 'the login of the Databricks CLI'} instead.`;
+    }
     if (!env.DATABRICKS_AUTH_TYPE && host) {
       env.DATABRICKS_AUTH_TYPE = token ? 'pat' : 'databricks-cli';
       if (token) env.DATABRICKS_TOKEN = token;
     }
     if (!env.DATABRICKS_CLI_PATH && path.isAbsolute(cliPath)) env.DATABRICKS_CLI_PATH = cliPath;
-    return env;
+    return { env, warning };
   }
 
   /**

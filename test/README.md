@@ -60,7 +60,7 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code
 If all tests pass, the command prints:
 
 ```text
-13 passed
+15 passed
 ```
 
 The tests make sure that the extension obeys these rules:
@@ -71,6 +71,8 @@ The tests make sure that the extension obeys these rules:
 - It stops a request that gets no answer.
 - It remembers one selected cluster for each project folder.
 - It gives a local Python process the same workspace, login and cluster.
+- It uses the login service of the official Databricks extension only while
+  that service answers.
 
 ## Test the local Python process
 

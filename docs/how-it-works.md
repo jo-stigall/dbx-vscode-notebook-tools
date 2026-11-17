@@ -164,7 +164,9 @@ to the cluster:
    `src/local_runner.py`, in the folder of the notebook. Each open notebook
    has one process. `Connection.localEnv()` in `src/client.js` gives the
    process the workspace URL, the login and the cluster as environment
-   variables. Databricks Connect reads them.
+   variables. Databricks Connect reads them. If the project uses the login
+   service of the official Databricks extension and that service does not
+   answer, `localEnv()` sets the login of the cluster kernel in its place.
 3. **Send the cell.** The kernel writes one line of JSON to the process:
 
    ```json

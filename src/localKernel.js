@@ -162,8 +162,10 @@ class LocalKernel extends Kernel {
   async startProcess(s) {
     const python = await findPython(s.uri);
     const folder = vscode.workspace.getWorkspaceFolder(s.uri);
+    const login = await this.conn.localEnv(s.uri);
+    if (login.warning) vscode.window.showWarningMessage(login.warning);
     const env = {
-      ...this.conn.localEnv(s.uri),
+      ...login.env,
       PYTHONIOENCODING: 'utf-8',
       // The script adds these folders to the places where Python looks for an import.
       DBX_NOTEBOOK_PATHS: folder ? folder.uri.fsPath : '',
