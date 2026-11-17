@@ -81,6 +81,24 @@ const outputText = (cell, mime = 'text/plain') =>
     .join('\n');
 
 /**
+ * Wait for a promise, but not longer than a time limit.
+ *
+ * @example
+ * await within(runAll(nb), 60000, 'the cells to end');
+ *
+ * @param {Promise<any>} promise
+ * @param {number} ms  The time limit in milliseconds.
+ * @param {string} what  The thing that you wait for. The error message contains this text.
+ * @returns {Promise<any>}  The value of the promise.
+ * @throws {Error}  If the promise does not end in the time limit.
+ */
+function within(promise, ms, what) {
+  let timer;
+  const limit = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms)));
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Tell VS Code to run cells. The promise ends when the cells are done.
  *
  * To do something while a cell runs, do not wait for the promise immediately.
@@ -396,6 +414,113 @@ async function main(log) {
   assert.ok(noteTabs().length >= 1 && vscode.window.tabGroups.activeTabGroup.activeTab.input instanceof vscode.TabInputNotebook, 'the side group shows the notebook');
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   log('goes to the open notebook when you open its file again');
+
+  // 14. The kernel "Local Python": Python runs on this computer, in a process that the extension starts.
+  // The file has a new name in each test run, so that VS Code has no kernel in its memory for it.
+  const localFile = path.join(work, `local_${Date.now()}.py`);
+  fs.writeFileSync(path.join(work, 'mylib.py'), 'VALUE = 41\n');
+  fs.writeFileSync(
+    localFile,
+    [
+      '# Databricks notebook source',
+      '# MAGIC %run ./helpers/setup',
+      '',
+      '# COMMAND ----------',
+      '',
+      'import mylib',
+      'print(greeting("local"), mylib.VALUE + 1)',
+      '',
+      '# COMMAND ----------',
+      '',
+      '# MAGIC %sh',
+      '# MAGIC echo from-shell',
+      '',
+      '# COMMAND ----------',
+      '',
+      '# MAGIC %pip install some-package',
+      '',
+      '# COMMAND ----------',
+      '',
+      'display([{"id": 1, "label": "a"}])',
+      '',
+      '# COMMAND ----------',
+      '',
+      'import time',
+      'print("tick 1")',
+      'time.sleep(30)',
+      'print("not reached")',
+      '',
+    ].join('\n')
+  );
+  // 14a. The setting "dbxNotebook.defaultKernel" selects the kernel of a notebook that has none.
+  await vscode.workspace.getConfiguration('dbxNotebook').update('defaultKernel', 'local', vscode.ConfigurationTarget.Workspace);
+  await mock('POST', '/mock/requests');
+  await vscode.window.showTextDocument(vscode.Uri.file(localFile));
+  const localNb = (
+    await until('the local notebook', () => {
+      const e = vscode.window.activeNotebookEditor;
+      return e && e.notebook.uri.fsPath === localFile && e;
+    })
+  ).notebook;
+  const lc = localNb.getCells();
+  // If the extension selected no kernel, VS Code asks for one and the cells never end.
+  await within(runAll(localNb, { start: 0, end: 5 }), 60000, 'the cells to end (did the extension select a kernel?)');
+  const errors = lc.map((c) => outputText(c, 'application/vnd.code.notebook.error')).join(' | ');
+  assert.ok(lc.slice(0, 5).every((c) => c.executionSummary && c.executionSummary.success), 'the cells pass with the local kernel: ' + errors);
+  assert.ok(!(await sent('POST /api/1.2/commands/execute')), 'the local kernel sends no cell to the cluster');
+  log('uses the kernel of the setting "dbxNotebook.defaultKernel"');
+
+  // 14b. %run, an import from the project folder, %sh, %pip and display().
+  assert.strictEqual(outputText(lc[1]), 'hello, local 42\n');
+  assert.strictEqual(outputText(lc[2]), 'from-shell\n');
+  assert.ok(outputText(lc[3]).startsWith('Skipped: the kernel "Local Python" does not run %pip'));
+  assert.ok(outputText(lc[4], 'text/html').includes('<th') && outputText(lc[4]).includes('id\tlabel\n1\ta'));
+  log('runs %run, a local import, %sh and display() with the local kernel');
+
+  // 14c. Stop a cell: the cell ends, and the variables stay.
+  running = runAll(localNb, { start: 5, end: 6 });
+  await until('the slow cell to print', () => outputText(lc[5]).includes('tick 1'));
+  await vscode.commands.executeCommand('notebook.cell.cancelExecution', { ranges: [{ start: 5, end: 6 }], document: localNb.uri });
+  await running;
+  assert.ok(outputText(lc[5]).includes('Cancelled.') && !outputText(lc[5]).includes('not reached'), 'the cell stops: ' + outputText(lc[5]));
+  await runAll(localNb, { start: 1, end: 2 });
+  assert.strictEqual(outputText(lc[1]), 'hello, local 42\n', 'greeting() from the %run cell is still there');
+  log('stops a cell of the local kernel and keeps the variables');
+
+  // 14d. "Reset Execution Context" stops the Python process: the variables are gone.
+  await vscode.commands.executeCommand('dbxNotebook.resetContext');
+  await runAll(localNb, { start: 1, end: 2 });
+  assert.ok(outputText(lc[1], 'application/vnd.code.notebook.error').includes("name 'greeting' is not defined"));
+  log('starts a new Python process after a reset');
+
+  // 14e. A new value of the setting changes the kernel of the open notebook.
+  await vscode.workspace.getConfiguration('dbxNotebook').update('defaultKernel', 'cluster', vscode.ConfigurationTarget.Workspace);
+  await mock('POST', '/mock/requests');
+  await sleep(500);
+  await within(runAll(localNb, { start: 4, end: 5 }), 60000, 'the cell to end on the cluster');
+  assert.ok(await sent('POST /api/1.2/commands/execute'), 'the cell goes to the cluster after the setting changed');
+  log('a new default kernel applies to the open notebook');
+
+  // 14f. You select the local kernel by hand. The notebook uses it the next time, and the setting does not change that.
+  await vscode.commands.executeCommand('notebook.selectKernel', { id: 'dbx-local', extension: 'local.dbx-notebook' });
+  await sleep(500);
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  await sleep(2100); // for 2 seconds after you close a notebook, the extension keeps the file as text
+  await vscode.window.showTextDocument(vscode.Uri.file(localFile));
+  const again = (
+    await until('the local notebook to open again', () => {
+      const e = vscode.window.activeNotebookEditor;
+      return e && e.notebook.uri.fsPath === localFile && e;
+    })
+  ).notebook;
+  await sleep(500);
+  await mock('POST', '/mock/requests');
+  await within(runAll(again, { start: 2, end: 3 }), 60000, 'the cell to end');
+  assert.strictEqual(outputText(again.getCells()[2]), 'from-shell\n');
+  assert.ok(!(await sent('POST /api/1.2/commands/execute')), 'the notebook uses the kernel that was selected by hand');
+  await vscode.workspace.getConfiguration('dbxNotebook').update('defaultKernel', undefined, vscode.ConfigurationTarget.Workspace);
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  log('remembers the kernel that you select for a notebook');
 }
 
 /**

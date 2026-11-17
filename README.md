@@ -1,8 +1,9 @@
 # Databricks Source Notebooks
 
 **Summary:** This VS Code extension opens a Databricks `.py` notebook file as
-a notebook. It runs each cell on your Databricks cluster. It saves the file in
-the same `.py` format that Databricks uses, so your git diffs stay small.
+a notebook. It runs each cell on your Databricks cluster, or in the Python of
+your project with Databricks Connect. It saves the file in the same `.py`
+format that Databricks uses, so your git diffs stay small.
 
 **Status:** Prototype. The tests use a fake Databricks server. No person has
 run the extension on a real cluster. See
@@ -36,9 +37,12 @@ Without the extension, VS Code shows this file as text. With the extension:
 
 - **You see a notebook.** The file above opens as four cells: a title, a
   `%run` cell, an SQL cell and a Python cell. Each result shows below its cell.
-- **The cluster runs the cells.** `spark`, `dbutils` and `display()` work as
-  they do in Databricks, because the code runs in the same place. Your
-  computer runs no notebook code. You do not need Databricks Connect.
+- **You select where the cells run.** The kernel "Databricks Cluster" runs
+  all code on the cluster: `spark`, `dbutils` and `display()` work as they do
+  in Databricks, and you do not need Databricks Connect. The kernel "Local
+  Python (Databricks Connect)" runs Python on your computer, in the Python of
+  your project, and runs Spark on the cluster. See
+  [Select where the cells run](#select-where-the-cells-run).
 - **`%run` works.** `%run ./helpers/setup` runs the file `helpers/setup.py`
   from your disk. That file can contain `%run` and `%sql` cells.
 - **The file stays the same.** If you change one cell and save, git shows a
@@ -130,7 +134,7 @@ More things that you can do:
 | Go back to the notebook | Click the notebook button at the top right of the text editor. The button shows only for a Databricks notebook file. |
 | Open a normal Python file as a notebook | Right-click the file in the Explorer and select "Open as Databricks Notebook". You get one cell that contains all of the file. |
 | Change the language of a cell | Click the language name at the bottom right of the cell. |
-| Delete all variables on the cluster | Click "Reset Execution Context" in the notebook toolbar. |
+| Delete all variables of the notebook | Click "Reset Execution Context" in the notebook toolbar. With the local kernel, this stops the Python process. |
 | Use a different cluster | Click "Select Cluster" in the notebook toolbar. |
 | Stop a cell | Click the stop button of the cell. |
 
@@ -142,6 +146,80 @@ Execution Context" to stop it.
 A cell keeps its language when you replace its text. If you paste Python into
 an SQL cell, the cluster reports an SQL error. Change the language of the cell
 to Python first.
+
+## Select where the cells run
+
+**Summary:** A notebook has two kernels. "Databricks Cluster" runs all code
+on the cluster. "Local Python (Databricks Connect)" runs Python on your
+computer and Spark on the cluster. A setting selects the kernel that a new
+notebook uses.
+
+| | Databricks Cluster | Local Python (Databricks Connect) |
+|---|---|---|
+| Python runs | On the cluster | On your computer, in the Python of your project |
+| Spark runs | On the cluster | On the cluster |
+| `import my_package` finds | The packages on the cluster | The packages in your Python, for example after `uv pip install -e .` |
+| A module file in your project | Not found. The cluster cannot read your disk. | Found, if it is next to the notebook or at the top of the project folder |
+| `%sh` and file paths | The driver of the cluster. `/dbfs` and `/Volumes` exist. | Your computer. `/dbfs` and `/Volumes` do not exist. |
+| You need | A cluster that runs | The package `databricks-connect` in your Python, and a cluster that it can use |
+
+Use the local kernel if your team installs its own code in a local
+environment and does not install it on the cluster. Use the cluster kernel if
+the notebook must do the same as in Databricks.
+
+### Select the kernel
+
+- **For one notebook:** click the kernel name at the top right of the
+  notebook and select the other kernel. The extension remembers your
+  selection for that notebook.
+- **For all notebooks without a selection:** set `dbxNotebook.defaultKernel`
+  to `cluster` (the default value) or `local`. A new value applies
+  immediately to the notebook that you look at, and to each other notebook
+  when you go to it.
+
+Example for a project where all people use the local kernel. Put this in
+`.vscode/settings.json`:
+
+```json
+{ "dbxNotebook.defaultKernel": "local" }
+```
+
+### Which Python the local kernel uses
+
+The kernel looks in these places and uses the first Python that it finds:
+
+1. The setting `dbxNotebook.pythonPath`.
+2. The interpreter that you selected in the Python extension of VS Code.
+3. A `.venv` folder next to the notebook, or in a folder above it, up to the
+   project folder.
+4. `python3` on your PATH (`python` on Windows).
+
+When the Python process starts, the status bar shows its path for some
+seconds, for example `Local Python 3.12.4: /work/sales/.venv/bin/python`.
+
+Install Databricks Connect in that Python. The version must agree with the
+runtime of your cluster:
+
+```bash
+uv pip install databricks-connect
+```
+
+Databricks Connect gets the workspace URL, the login and the cluster from
+the extension. They are the same as for the cluster kernel. See
+[Connect to your workspace](#connect-to-your-workspace).
+
+### What is different with the local kernel
+
+- Each open notebook has one Python process. The process keeps your
+  variables. It starts in the folder of the notebook.
+- `spark` and `dbutils` connect to Databricks when a cell uses them for the
+  first time. A notebook that does not use them needs no Databricks Connect.
+- After you install a package or change a module that the notebook imported,
+  click "Reset Execution Context". The next cell starts a new Python process.
+- `display(df)` shows the first 1000 rows of a Spark or pandas DataFrame.
+- A matplotlib plot shows as an image at the end of its cell.
+- The stop button stops the cell and keeps the variables. On Windows it
+  stops the Python process, and the variables are gone.
 
 ## Look at a table
 
@@ -436,20 +514,24 @@ together.
 
 ## Magic commands
 
-| First line of the cell | What the extension does |
-|---|---|
-| `%md` | Shows the cell as text. Does not run it. |
-| `%sql`, `%scala`, `%r` | Sends the cell to the cluster in that language. |
-| `%sh` | Runs the cell in `bash` on the driver of the cluster. |
-| `%run ./other` | Runs `other.py` from your disk in the session of this notebook. |
-| `%python` | Runs the other lines of the cell as Python. |
-| `%pip`, `%fs` and all others | Sends the cell to the cluster without a change. |
+| First line of the cell | Kernel "Databricks Cluster" | Kernel "Local Python" |
+|---|---|---|
+| `%md` | Shows the cell as text. Does not run it. | The same. |
+| `%sql` | Sends the cell to the cluster as SQL. | Runs the cell with `spark.sql()` and shows the result. The result is also in `_sqldf`. |
+| `%scala`, `%r` | Sends the cell to the cluster in that language. | Error. Only the cluster can run these languages. |
+| `%sh` | Runs the cell in `bash` on the driver of the cluster. | Runs the cell in `bash` on your computer. |
+| `%run ./other` | Runs `other.py` from your disk in the session of this notebook. | The same. |
+| `%python` | Runs the other lines of the cell as Python. | The same. |
+| `%pip` | Sends the cell to the cluster without a change. | Does not run the cell. Shows a note and continues. Install packages in your Python. |
+| `%fs` and all others | Sends the cell to the cluster without a change. | Error. Use `dbutils.fs`. |
 
 ## Settings
 
 | Setting | Default | What it does |
 |---|---|---|
 | `dbxNotebook.autoOpen` | on | Opens Databricks `.py` files as notebooks. Set it to off to open them as text. |
+| `dbxNotebook.defaultKernel` | `cluster` | The kernel of a notebook for which you did not select one: `cluster` or `local`. See [Select where the cells run](#select-where-the-cells-run). |
+| `dbxNotebook.pythonPath` | empty | The Python program that the local kernel starts. Example: `${workspaceFolder}/.venv/bin/python`. Empty uses the interpreter of the Python extension, then `.venv`, then `python3`. |
 | `dbxNotebook.host` | empty | The URL of your workspace. Example: `https://adb-123.azuredatabricks.net`. |
 | `dbxNotebook.profile` | empty | The name of your profile in `~/.databrickscfg`. Empty uses `DEFAULT`. |
 | `dbxNotebook.clusterId` | empty | The ID of your cluster. Example: `0101-123456-abcdefgh`. |
@@ -472,8 +554,13 @@ together.
   as `/Repos/team/project/setup`.
 - `%run` ignores values after the path. `%run ./setup $env="dev"` runs
   `setup.py` but does not set `env`.
-- The extension does not work with serverless compute or SQL warehouses.
+- The cluster kernel does not work with serverless compute or SQL warehouses.
 - The extension shows no boxes for `dbutils.widgets` values.
+- The local kernel does not run `%scala`, `%r`, `%pip` and `%fs` cells.
+- The local kernel has no `sc` and no `sqlContext`. Databricks Connect does
+  not have them.
+- On Windows, the stop button of the local kernel stops the Python process.
+  The variables of the notebook are then gone.
 - The Ruff extension reports errors when the text document of a notebook
   file and its notebook are open at the same time. The two have the same
   address (the path of the file), and Ruff keeps one entry for each address.
@@ -506,6 +593,17 @@ A real cluster must confirm each item in this list:
 - Text that shows while a cell runs. The extension shows such text if the
   cluster reports it. We do not know if a real cluster reports it.
 - Copilot agent mode.
+
+For the kernel "Local Python", these items are not tested:
+
+- `spark` and `dbutils` with a real Databricks Connect and a real cluster.
+  The tests use a Python that has no Databricks Connect.
+- The login that the extension gives to Databricks Connect: a token, and the
+  Databricks CLI.
+- The interpreter of the Python extension. The tests use `python3` from the
+  PATH.
+- `display()` of a Spark DataFrame and of a pandas DataFrame, and plots.
+- Windows.
 
 For "Visualize Table", a real workspace must confirm these items:
 

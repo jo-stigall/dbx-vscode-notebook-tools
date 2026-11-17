@@ -256,6 +256,46 @@ class Connection {
   }
 
   /**
+   * Make the environment variables for a Python process on this computer that uses Databricks Connect.
+   *
+   * Databricks Connect then uses the same workspace URL, the same login and
+   * the same cluster as the kernel "Databricks Cluster". The function starts
+   * with the variables of VS Code and of `.databricks/.databricks.env`, then
+   * adds these variables if they are not set:
+   *
+   * - DATABRICKS_HOST and DATABRICKS_CLUSTER_ID: the values from resolve().
+   * - DATABRICKS_AUTH_TYPE: "pat" with DATABRICKS_TOKEN if resolve() found a
+   *   token. If not, "databricks-cli": Databricks Connect then asks the
+   *   Databricks CLI for a token, as getToken() does.
+   * - DATABRICKS_CLI_PATH: the Databricks CLI of the official extension.
+   *
+   * The function changes no login variable if DATABRICKS_AUTH_TYPE is set,
+   * for example by the official Databricks extension.
+   *
+   * @example
+   * conn.localEnv(notebook.uri)
+   * // { PATH: '...', DATABRICKS_HOST: 'https://adb-123.azuredatabricks.net',
+   * //   DATABRICKS_CLUSTER_ID: '0101-123456-abcdefgh', DATABRICKS_AUTH_TYPE: 'databricks-cli', ... }
+   *
+   * @param {vscode.Uri} [uri]  A file in the project. See resolve().
+   * @returns {Object<string, string>}
+   */
+  localEnv(uri) {
+    const folder = uri && vscode.workspace.getWorkspaceFolder(uri);
+    const fileEnv = folder ? readEnvFile(path.join(folder.uri.fsPath, '.databricks', '.databricks.env')) : {};
+    const env = { ...fileEnv, ...process.env };
+    const { host, token, clusterId, cliPath } = this.resolve(uri);
+    if (host) env.DATABRICKS_HOST = host;
+    if (clusterId && !env.DATABRICKS_SERVERLESS_COMPUTE_ID) env.DATABRICKS_CLUSTER_ID = clusterId;
+    if (!env.DATABRICKS_AUTH_TYPE && host) {
+      env.DATABRICKS_AUTH_TYPE = token ? 'pat' : 'databricks-cli';
+      if (token) env.DATABRICKS_TOKEN = token;
+    }
+    if (!env.DATABRICKS_CLI_PATH && path.isAbsolute(cliPath)) env.DATABRICKS_CLI_PATH = cliPath;
+    return env;
+  }
+
+  /**
    * Find the URL and the token of a named connection. See the `profile` parameter of resolve().
    *
    * A named profile uses the URL and the token of that profile only. It does

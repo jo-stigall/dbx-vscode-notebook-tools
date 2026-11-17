@@ -220,6 +220,32 @@ const tests = [
     assert.strictEqual(await conn.getToken(undefined, { profile: 'oauth', fresh: true }), 'cli-token-2');
     assert.strictEqual(await conn.getToken(undefined, { profile: 'oauth' }), 'cli-token-2');
   }],
+
+  ['gives a local Python process the same workspace, login and cluster', async () => {
+    const conn = newConnection(PROFILE_A);
+    const env = conn.localEnv(undefined);
+    assert.strictEqual(env.DATABRICKS_HOST, 'https://a.example.com');
+    assert.strictEqual(env.DATABRICKS_CLUSTER_ID, 'cluster-a');
+    assert.strictEqual(env.DATABRICKS_AUTH_TYPE, 'pat');
+    assert.strictEqual(env.DATABRICKS_TOKEN, 'token-for-a');
+  }],
+
+  ['tells a local Python process to use the Databricks CLI when there is no token', async () => {
+    const conn = newConnection(PROFILE_A);
+    const notebook = project('local-cli', 'DATABRICKS_HOST=https://b.example.com\n');
+    const env = conn.localEnv(notebook);
+    assert.strictEqual(env.DATABRICKS_HOST, 'https://b.example.com');
+    assert.strictEqual(env.DATABRICKS_AUTH_TYPE, 'databricks-cli');
+    assert.strictEqual(env.DATABRICKS_TOKEN, undefined, 'the token of workspace A does not go to workspace B');
+  }],
+
+  ['does not change the login of a local Python process if the project sets one', async () => {
+    const conn = newConnection(PROFILE_A);
+    const notebook = project('local-auth', 'DATABRICKS_HOST=https://a.example.com\nDATABRICKS_AUTH_TYPE=metadata-service\n');
+    const env = conn.localEnv(notebook);
+    assert.strictEqual(env.DATABRICKS_AUTH_TYPE, 'metadata-service');
+    assert.strictEqual(env.DATABRICKS_TOKEN, undefined);
+  }],
 ];
 
 (async () => {

@@ -170,17 +170,22 @@ class Kernel {
   /**
    * @param {string} notebookType  The notebook type from package.json: 'dbx-notebook'.
    * @param {import('./client').Connection} conn  Sends the requests to Databricks.
+   * @param {{ id?: string, label?: string, description?: string }} [names]  The ID and the texts that VS Code shows in the kernel list. src/localKernel.js gives its own.
    */
-  constructor(notebookType, conn) {
+  constructor(notebookType, conn, names = {}) {
     this.conn = conn;
     /** @type {Map<string, Session>}  Notebook URI -> session. */
     this.sessions = new Map();
-    this.controller = vscode.notebooks.createNotebookController('dbx-cluster', notebookType, 'Databricks Cluster');
-    this.controller.description = 'Runs cells on your Databricks cluster';
+    this.controller = vscode.notebooks.createNotebookController(names.id || 'dbx-cluster', notebookType, names.label || 'Databricks Cluster');
+    this.controller.description = names.description || 'Runs cells on your Databricks cluster';
     this.controller.supportedLanguages = ['python', 'sql', 'scala', 'r', 'shellscript'];
     this.controller.supportsExecutionOrder = true;
     this.controller.executeHandler = (cells, notebook) => this.execute(cells, notebook);
     this.controller.interruptHandler = (notebook) => this.interrupt(notebook);
+    // When you select a different kernel for a notebook, delete the session that this kernel has for it.
+    this.controller.onDidChangeSelectedNotebooks((e) => {
+      if (!e.selected) this.reset(e.notebook.uri);
+    });
   }
 
   /**
@@ -327,17 +332,29 @@ class Kernel {
       if (magic === 'python') code = rest;
     }
 
-    if (language === 'shellscript') {
-      // The API has no shell language. Run the script from Python on the cluster.
-      language = 'python';
-      code = [
-        'import subprocess as _dbx_sp',
-        `_dbx_r = _dbx_sp.run(${JSON.stringify(code)}, shell=True, executable="/bin/bash", stdout=_dbx_sp.PIPE, stderr=_dbx_sp.STDOUT, text=True)`,
-        'print(_dbx_r.stdout, end="")',
-        'if _dbx_r.returncode != 0: raise RuntimeError(f"%sh exited with code {_dbx_r.returncode}")',
-      ].join('\n');
-    }
+    if (language === 'shellscript') return this.runShell(s, code, exec);
     return this.runCommand(s, language, code, exec);
+  }
+
+  /**
+   * Run shell commands. This is the `%sh` command.
+   *
+   * The Databricks API has no shell language. Thus the function sends Python
+   * code that runs the commands in bash on the driver of the cluster.
+   *
+   * @param {Session} s
+   * @param {string} script  The shell commands. Example: 'ls /tmp'.
+   * @param {vscode.NotebookCellExecution} exec
+   * @returns {Promise<boolean>}  true if the commands passed.
+   */
+  runShell(s, script, exec) {
+    const code = [
+      'import subprocess as _dbx_sp',
+      `_dbx_r = _dbx_sp.run(${JSON.stringify(script)}, shell=True, executable="/bin/bash", stdout=_dbx_sp.PIPE, stderr=_dbx_sp.STDOUT, text=True)`,
+      'print(_dbx_r.stdout, end="")',
+      'if _dbx_r.returncode != 0: raise RuntimeError(f"%sh exited with code {_dbx_r.returncode}")',
+    ].join('\n');
+    return this.runCommand(s, 'python', code, exec);
   }
 
   /**
@@ -586,4 +603,4 @@ class Kernel {
   }
 }
 
-module.exports = { Kernel };
+module.exports = { Kernel, textOutput, errorOutput, tableOutput };

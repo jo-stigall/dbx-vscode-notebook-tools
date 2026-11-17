@@ -21,7 +21,8 @@ test files from the repository.
 |---|---|---|
 | `format.test.js` | Tests the parser (`src/format.js`). | 1 second |
 | `client.test.js` | Tests how the extension finds the workspace, the token and the cluster (`src/client.js`). | 1 second |
-| `run-e2e.sh` + `e2e.js` | Tests the full extension in a VS Code window. | 30 seconds |
+| `localRunner.test.js` | Tests the Python process of the kernel "Local Python" (`src/local_runner.py`). | 2 seconds |
+| `run-e2e.sh` + `e2e.js` | Tests the full extension in a VS Code window. | 60 seconds |
 | `demo.sh` | Opens a VS Code window so that you can try the extension. | Until you close the window |
 | `mock_databricks.py` | The fake Databricks server. The test and the demo start it. | |
 | `tableViz/unit/` | Tests the pure code, the SQL and the demo data of "Visualize Table". | 1 second |
@@ -59,7 +60,7 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/Visual Studio Code.app/Contents/MacOS/Code
 If all tests pass, the command prints:
 
 ```text
-10 passed
+13 passed
 ```
 
 The tests make sure that the extension obeys these rules:
@@ -69,6 +70,24 @@ The tests make sure that the extension obeys these rules:
   computer is the only exception.
 - It stops a request that gets no answer.
 - It remembers one selected cluster for each project folder.
+- It gives a local Python process the same workspace, login and cluster.
+
+## Test the local Python process
+
+```bash
+node test/localRunner.test.js
+```
+
+The test starts `src/local_runner.py` with `python3` and sends it cells, as
+the kernel "Local Python" does. To use a different Python, set the variable
+`DBX_TEST_PYTHON`. If all tests pass, the command prints:
+
+```text
+13 passed
+```
+
+The test does not need Databricks Connect. It uses a small replacement for
+`spark`. Thus it does not show that a real Databricks Connect works.
 
 ## Test the code of "Visualize Table"
 
@@ -165,6 +184,12 @@ ok   shows the notebook button only for a notebook file
 ok   closes the text document before the notebook opens
 ok   does not open a notebook from a diff
 ok   goes to the open notebook when you open its file again
+ok   uses the kernel of the setting "dbxNotebook.defaultKernel"
+ok   runs %run, a local import, %sh and display() with the local kernel
+ok   stops a cell of the local kernel and keeps the variables
+ok   starts a new Python process after a reset
+ok   a new default kernel applies to the open notebook
+ok   remembers the kernel that you select for a notebook
 ok   tableViz: Visualize Table opens a board
 ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
 ok   tableViz: a statistics request gives numbers and the SQL behind them

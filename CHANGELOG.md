@@ -7,6 +7,19 @@ newest first.
 
 ### Added
 
+- **The kernel "Local Python (Databricks Connect)".** It runs Python on your
+  computer, in the Python of your project, and Spark on the cluster. A cell
+  can import each package that you installed in that Python, for example
+  with `uv pip install -e .`. Before, all code ran on the cluster, and a
+  cell did not find your local packages.
+- **The setting `dbxNotebook.defaultKernel`** selects the kernel of a
+  notebook for which you did not select one: `cluster` (the default value)
+  or `local`. You can select the other kernel in the kernel list of each
+  notebook, and the extension remembers that selection.
+- **The setting `dbxNotebook.pythonPath`** gives the Python that the local
+  kernel starts. If it is empty, the kernel uses the interpreter of the
+  Python extension, then a `.venv` folder, then `python3`.
+
 - **"Visualize Table" and "Compare Tables" show a list, not a text box.**
   The list shows your favorite and recent tables, then the catalogs. Select
   a catalog, then a schema, then a table, and type to filter on each level.

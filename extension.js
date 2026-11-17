@@ -10,11 +10,13 @@
  * - src/format.js converts a .py file to cells, and back.
  * - src/client.js finds your Databricks workspace and sends requests to it.
  * - src/kernel.js runs cells on the cluster.
+ * - src/localKernel.js runs cells in a Python process on this computer.
  */
 const vscode = require('vscode');
 const { parseNotebook, serializeNotebook, hasHeader } = require('./src/format');
 const { Connection } = require('./src/client');
 const { Kernel } = require('./src/kernel');
+const { LocalKernel } = require('./src/localKernel');
 
 /** The name of the notebook type. package.json uses the same name. */
 const NOTEBOOK_TYPE = 'dbx-notebook';
@@ -77,8 +79,8 @@ const serializer = {
   },
 };
 
-/** The kernel of the running extension. deactivate() uses it. */
-let activeKernel;
+/** The kernels of the running extension. deactivate() uses them. */
+let activeKernels = [];
 
 /**
  * Start the extension. VS Code calls this function one time.
@@ -86,7 +88,9 @@ let activeKernel;
  * The function adds these parts to VS Code:
  *
  * - The serializer, so that VS Code can open and save .py notebooks.
- * - The kernel "Databricks Cluster", so that you can run cells.
+ * - The kernels "Databricks Cluster" and "Local Python (Databricks
+ *   Connect)", so that you can run cells. The setting
+ *   "dbxNotebook.defaultKernel" tells which one a new notebook uses.
  * - Automatic open: a .py file that starts with the Databricks header opens
  *   as a notebook.
  * - The cell title: VS Code shows the "# DBTITLE" text below the cell.
@@ -98,7 +102,61 @@ let activeKernel;
 function activate(context) {
   const conn = new Connection(context);
   const kernel = new Kernel(NOTEBOOK_TYPE, conn);
-  activeKernel = kernel;
+  const localKernel = new LocalKernel(NOTEBOOK_TYPE, conn);
+  activeKernels = [kernel, localKernel];
+
+  /** The name under which VS Code stores the kernels that you selected by hand. Notebook URI -> kernel ID. */
+  const KERNEL_CHOICE_KEY = 'dbxNotebook.kernelChoice';
+  /** The notebooks that got their kernel from selectKernel() since they opened. */
+  const kernelApplied = new Set();
+  /** true while selectKernel() selects a kernel. A selection in this time is not a selection by hand. */
+  let applyingKernel = false;
+
+  /**
+   * Select the kernel of the notebook that you look at.
+   *
+   * VS Code selects no kernel by itself when a notebook type has two kernels:
+   * it asks you each time. Thus the extension selects one:
+   *
+   * 1. The kernel that you selected by hand for this notebook, if there is one.
+   * 2. If not, the kernel of the setting "dbxNotebook.defaultKernel":
+   *    "cluster" or "local".
+   *
+   * The function does its work one time for each open notebook. After that,
+   * you can select the other kernel in the kernel list of the notebook.
+   *
+   * @param {vscode.NotebookEditor|undefined} editor  The notebook editor that you look at.
+   * @returns {Promise<void>}
+   */
+  async function selectKernel(editor) {
+    const nb = editor && editor.notebook;
+    if (!isOurs(nb) || applyingKernel) return;
+    const key = nb.uri.toString();
+    if (kernelApplied.has(key)) return;
+    const choice = context.workspaceState.get(KERNEL_CHOICE_KEY, {})[key];
+    const byDefault = vscode.workspace.getConfiguration('dbxNotebook', nb.uri).get('defaultKernel') === 'local' ? localKernel : kernel;
+    applyingKernel = true;
+    try {
+      // This command selects a kernel for the notebook editor that you look at.
+      await vscode.commands.executeCommand('notebook.selectKernel', { id: choice || byDefault.controller.id, extension: context.extension.id });
+      kernelApplied.add(key);
+    } finally {
+      applyingKernel = false;
+    }
+  }
+
+  /**
+   * Remember a kernel that you selected by hand, so that the notebook uses it the next time.
+   *
+   * @param {string} id  The ID of the kernel: 'dbx-cluster' or 'dbx-local'.
+   * @param {{ notebook: vscode.NotebookDocument, selected: boolean }} e  The event from VS Code.
+   */
+  const rememberKernel = (id, e) => {
+    const key = e.notebook.uri.toString();
+    // Before selectKernel() did its work, the selection comes from VS Code, not from you.
+    if (!e.selected || applyingKernel || !kernelApplied.has(key)) return;
+    context.workspaceState.update(KERNEL_CHOICE_KEY, { ...context.workspaceState.get(KERNEL_CHOICE_KEY, {}), [key]: id });
+  };
 
   /** @returns {boolean} true if the notebook is a Databricks .py notebook. */
   const isOurs = (nb) => nb && nb.notebookType === NOTEBOOK_TYPE;
@@ -288,6 +346,7 @@ function activate(context) {
 
   context.subscriptions.push(
     kernel,
+    localKernel,
     // transientOutputs: VS Code does not save cell outputs, and a new output does not mark the file as changed.
     vscode.workspace.registerNotebookSerializer(NOTEBOOK_TYPE, serializer, { transientOutputs: true }),
 
@@ -305,16 +364,24 @@ function activate(context) {
     // For the tests: tell if the button shows now.
     vscode.commands.registerCommand('dbxNotebook._activeFileIsNotebook', () => activeFileIsNotebook),
 
-    // Select the "Databricks Cluster" kernel for each notebook that opens.
-    vscode.workspace.onDidOpenNotebookDocument((nb) => {
-      if (isOurs(nb)) kernel.controller.updateNotebookAffinity(nb, vscode.NotebookControllerAffinity.Preferred);
+    // Select a kernel for each notebook when you go to it for the first time.
+    vscode.window.onDidChangeActiveNotebookEditor(selectKernel),
+    kernel.controller.onDidChangeSelectedNotebooks((e) => rememberKernel(kernel.controller.id, e)),
+    localKernel.controller.onDidChangeSelectedNotebooks((e) => rememberKernel(localKernel.controller.id, e)),
+    // A new default kernel applies to the open notebooks also, but not to a notebook with a kernel that you selected by hand.
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('dbxNotebook.defaultKernel')) return;
+      kernelApplied.clear();
+      return selectKernel(vscode.window.activeNotebookEditor);
     }),
 
-    // When you close a notebook, delete its session on the cluster.
+    // When you close a notebook, delete its session on the cluster and stop its local Python process.
     vscode.workspace.onDidCloseNotebookDocument((nb) => {
       if (!isOurs(nb)) return;
       recentlyClosed.set(nb.uri.toString(), Date.now());
+      kernelApplied.delete(nb.uri.toString());
       kernel.reset(nb.uri);
+      localKernel.reset(nb.uri);
     }),
 
     // Show the title of a cell below the cell. "# DBTITLE 1,Load the data" shows "Load the data".
@@ -359,29 +426,28 @@ function activate(context) {
     }),
 
     // "Select Cluster": after you select a cluster, delete all sessions. They are on the old cluster.
+    // The local Python processes stop also: Databricks Connect in them uses the old cluster.
     vscode.commands.registerCommand('dbxNotebook.selectCluster', async () => {
       const nb = activeNotebook();
       const uri = nb ? nb.uri : vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0].uri;
       try {
-        if (await conn.pickCluster(uri)) await kernel.resetAll();
+        if (await conn.pickCluster(uri)) await Promise.all([kernel.resetAll(), localKernel.resetAll()]);
       } catch (e) {
         vscode.window.showErrorMessage(e.message);
       }
     }),
 
-    // "Reset Execution Context": the cluster forgets the variables of the notebook that you look at.
+    // "Reset Execution Context": the cluster or the local Python process forgets the variables of the notebook that you look at.
     vscode.commands.registerCommand('dbxNotebook.resetContext', async () => {
       const nb = activeNotebook();
       if (!nb) return;
-      await kernel.reset(nb.uri);
+      await Promise.all([kernel.reset(nb.uri), localKernel.reset(nb.uri)]);
       vscode.window.setStatusBarMessage('Databricks execution context reset: notebook state cleared', 4000);
     })
   );
 
   // Handle the notebooks and the text editor that were open before the extension started.
-  for (const nb of vscode.workspace.notebookDocuments) {
-    if (isOurs(nb)) kernel.controller.updateNotebookAffinity(nb, vscode.NotebookControllerAffinity.Preferred);
-  }
+  selectKernel(vscode.window.activeNotebookEditor);
   updateButton(vscode.window.activeTextEditor);
   autoOpen(vscode.window.activeTextEditor);
 }
@@ -389,7 +455,8 @@ function activate(context) {
 /**
  * Stop the extension. VS Code then removes the parts in `context.subscriptions`.
  *
- * The function deletes the sessions of the open notebooks on the cluster.
+ * The function deletes the sessions of the open notebooks on the cluster and
+ * stops the local Python processes.
  * VS Code waits for the returned promise, so the requests can finish before
  * VS Code stops. Without this, each reload of the VS Code window can leave one
  * session for each open notebook on the cluster.
@@ -397,7 +464,7 @@ function activate(context) {
  * @returns {Promise<void>|undefined}
  */
 function deactivate() {
-  return activeKernel && activeKernel.dispose();
+  return Promise.all(activeKernels.map((k) => k.dispose()));
 }
 
 module.exports = { activate, deactivate, NOTEBOOK_TYPE };

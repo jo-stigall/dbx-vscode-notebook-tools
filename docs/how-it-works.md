@@ -1,8 +1,9 @@
 # How the extension works
 
 **Summary:** The extension has three parts. The parser converts a `.py` file
-to cells, and back. The kernel sends each cell to a Databricks cluster. The
-client finds your workspace and your login. This page explains each part and
+to cells, and back. A kernel runs each cell: the cluster kernel sends it to a
+Databricks cluster, and the local kernel runs it in a Python process on your
+computer. The client finds your workspace and your login. This page explains each part and
 tells you where its code is.
 
 ## Where the code is
@@ -11,7 +12,9 @@ tells you where its code is.
 |---|---|
 | `extension.js` | Starts the extension. Connects the three parts to VS Code. |
 | `src/format.js` | The parser. Converts a `.py` file to cells, and back. |
-| `src/kernel.js` | The kernel. Runs cells on the cluster and shows the results. |
+| `src/kernel.js` | The cluster kernel. Runs cells on the cluster and shows the results. |
+| `src/localKernel.js` | The local kernel. Starts a Python process on your computer and runs cells in it. |
+| `src/local_runner.py` | The script that the Python process of the local kernel runs. |
 | `src/client.js` | The client. Finds the workspace, the login and the cluster. Sends REST requests. |
 | `package.json` | Tells VS Code the name of the extension, its commands and its settings. |
 | `src/tableViz/` | The "Visualize Table" feature, in TypeScript. See [table-viz-how-it-works.md](table-viz-how-it-works.md). It uses `src/client.js` to find the workspace and the token. |
@@ -146,6 +149,57 @@ The kernel runs one cell at a time. If a cell fails, the kernel does not run
 the cells after it.
 
 When you close the notebook, the kernel deletes the session on the cluster.
+
+## How the local kernel runs a cell
+
+The kernel "Local Python (Databricks Connect)" is the class `LocalKernel` in
+`src/localKernel.js`. It uses the code of the cluster kernel for the queue of
+cells, for `%run` and for the magic commands. It replaces the part that talks
+to the cluster:
+
+1. **Find the Python.** `findPython()` looks at the setting
+   `dbxNotebook.pythonPath`, then at the interpreter of the Python extension,
+   then for a `.venv` folder, then for `python3`.
+2. **Start the process.** The kernel starts that Python with the script
+   `src/local_runner.py`, in the folder of the notebook. Each open notebook
+   has one process. `Connection.localEnv()` in `src/client.js` gives the
+   process the workspace URL, the login and the cluster as environment
+   variables. Databricks Connect reads them.
+3. **Send the cell.** The kernel writes one line of JSON to the process:
+
+   ```json
+   {"id": 1, "language": "python", "code": "print(1 + 1)"}
+   ```
+
+4. **Show the answers.** The process writes one line of JSON for each piece
+   of output, then a last line:
+
+   ```json
+   {"id": 1, "type": "stream", "text": "2\n"}
+   {"id": 1, "type": "done", "ok": true}
+   ```
+
+   A `stream` message shows as text immediately. A `table` message comes
+   from `display()`, an `html` message from `displayHTML()`, and an `image`
+   message from a matplotlib plot.
+
+The script keeps one set of variables for the notebook. It makes `spark` and
+`dbutils` when a cell uses them for the first time: `spark` from
+`databricks.connect`, `dbutils` from `databricks.sdk`.
+
+The stop button sends the signal SIGINT to the process. Python then raises
+`KeyboardInterrupt` in the cell, and the variables stay. "Reset Execution
+Context" stops the process.
+
+## How the extension selects a kernel
+
+VS Code selects no kernel by itself when a notebook type has two kernels: it
+asks you each time. Thus `selectKernel()` in `extension.js` selects one when
+you go to a notebook for the first time:
+
+1. The kernel that you selected by hand for this notebook. The extension
+   keeps these selections in the storage of the VS Code workspace.
+2. If there is none, the kernel of the setting `dbxNotebook.defaultKernel`.
 
 ## How `%run` works
 

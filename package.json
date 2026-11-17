@@ -1,7 +1,7 @@
 {
   "name": "dbx-notebook",
   "displayName": "Databricks Source Notebooks",
-  "description": "Open Databricks .py source notebooks in the native notebook UI and run cells on a cluster.",
+  "description": "Open Databricks .py source notebooks in the native notebook UI. Run cells on a cluster, or in your local Python with Databricks Connect.",
   "version": "0.2.0",
   "publisher": "local",
   "license": "UNLICENSED",
@@ -16,7 +16,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p src/tableViz/tsconfig.core.json && tsc -p src/tableViz/tsconfig.host.json && tsc -p src/tableViz/tsconfig.webview.json && tsc -p test/tableViz/tsconfig.json",
-    "test:unit": "npm run build && node test/format.test.js && node test/client.test.js && LC_ALL=en_US.UTF-8 node --test \"test/tableViz/unit/*.test.ts\" \"dist/test/*.test.cjs\"",
+    "test:unit": "npm run build && node test/format.test.js && node test/client.test.js && node test/localRunner.test.js && LC_ALL=en_US.UTF-8 node --test \"test/tableViz/unit/*.test.ts\" \"dist/test/*.test.cjs\"",
     "test:e2e": "npm run build && test/run-e2e.sh",
     "test": "npm run typecheck && npm run test:unit && npm run test:e2e",
     "package": "npm run build && python3 scripts/package.py",
@@ -240,6 +240,26 @@
           "type": "boolean",
           "default": true,
           "description": "Open .py files that start with '# Databricks notebook source' in the notebook UI automatically."
+        },
+        "dbxNotebook.defaultKernel": {
+          "type": "string",
+          "enum": [
+            "cluster",
+            "local"
+          ],
+          "enumDescriptions": [
+            "Databricks Cluster: all code runs on the cluster. Packages and modules must be on the cluster.",
+            "Local Python (Databricks Connect): Python runs on this computer in the Python of your project. Spark runs on the cluster."
+          ],
+          "default": "cluster",
+          "scope": "resource",
+          "markdownDescription": "The kernel that a notebook uses if you did not select one for it. You can select the other kernel in the kernel list of each notebook."
+        },
+        "dbxNotebook.pythonPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "The Python program that the kernel \"Local Python\" starts. Example: `${workspaceFolder}/.venv/bin/python`. If the setting is empty, the kernel uses the interpreter that you selected in the Python extension, then a `.venv` folder in the project, then `python3`."
         },
         "dbxNotebook.host": {
           "type": "string",
