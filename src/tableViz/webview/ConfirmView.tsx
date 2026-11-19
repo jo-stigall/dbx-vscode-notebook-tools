@@ -9,6 +9,7 @@
 import { chipLabel } from '../core/derive.ts';
 import { displayTableName } from '../core/names.ts';
 import type { BoardDatasets, Dataset } from '../core/schema.ts';
+import { compareContext, CopyTableButton, tableContext, useBodyContext } from './CopyTable.tsx';
 
 /**
  * What one dataset of a saved view reads: the table, the login, the filter,
@@ -30,10 +31,12 @@ import type { BoardDatasets, Dataset } from '../core/schema.ts';
  */
 function DatasetFacts({ label, dataset }: { label: string; dataset: Dataset }) {
   const version = dataset.version?.kind === 'version' ? `Delta version ${dataset.version.n}` : dataset.version?.ts;
+  const tableName = displayTableName(dataset.table);
   return (
-    <section className="confirm-dataset" aria-label={`Dataset ${label}`}>
+    <section className="confirm-dataset" aria-label={`Dataset ${label}`} data-vscode-context={tableContext(tableName)}>
       <h2>
-        Dataset {label}: {displayTableName(dataset.table)}
+        Dataset {label}: {tableName}
+        <CopyTableButton name={tableName} />
       </h2>
       <dl>
         <dt>Login</dt>
@@ -65,8 +68,11 @@ function DatasetFacts({ label, dataset }: { label: string; dataset: Dataset }) {
  * @param onApprove  The user permits the queries. App.tsx tells the host, and the host then starts the board.
  */
 export function ConfirmView({ datasets, onApprove }: { datasets: BoardDatasets; onApprove: () => void }) {
+  const nameA = displayTableName(datasets.a.table);
+  const rootContext = datasets.b ? compareContext(nameA, displayTableName(datasets.b.table)) : tableContext(nameA);
+  useBodyContext(rootContext);
   return (
-    <main className="confirm">
+    <main className="confirm" data-vscode-context={rootContext}>
       <h1>Run the queries of this saved view?</h1>
       <p>
         This view comes from a file. It reads the datasets below with your Databricks login. A filter is SQL that the file contains. Read each filter before you continue.

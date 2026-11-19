@@ -85,6 +85,9 @@ const dispatcher = createDispatcher({
     if (message.type === 'approve') approved = true;
     if (message.type === 'ready' || message.type === 'approve') {
       post({ type: 'init', datasets, settings: { ...DEFAULT_SETTINGS, ...(params.get('large') === '1' ? { largeTableBytes: 1024 ** 2 } : {}) }, ...(approved ? {} : { confirm: true }) });
+    } else if (message.type === 'copyText') {
+      sent.push(message);
+      void navigator.clipboard?.writeText(message.text).catch(() => {});
     } else {
       // The test page cannot write files. Keep the message so that a person can look at it.
       sent.push(message);

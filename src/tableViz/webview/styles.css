@@ -34,6 +34,8 @@
 /* The page and its title (the name of the table) */
 body {
   margin: 0;
+  min-height: 100vh;
+  box-sizing: border-box;
   padding: 0 20px 24px;
   color: var(--vscode-foreground);
   background: var(--vscode-editor-background);
@@ -249,6 +251,27 @@ button.link:hover {
 }
 .icon-button[aria-pressed='true'] {
   border-color: var(--vscode-focusBorder);
+}
+/* The copy icon next to a table name in the board header, dataset bar or saved-view prompt */
+.copy-table-button {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.copy-table-button.copied {
+  color: var(--vscode-testing-iconPassed, var(--vscode-icon-foreground, var(--vscode-foreground)));
+}
+.dataset-bar button.copy-table-button {
+  padding: 0;
+  border-color: transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+}
+.dataset-bar button.copy-table-button:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+.dataset-bar button.copy-table-button.copied {
+  color: var(--vscode-testing-iconPassed, var(--vscode-icon-foreground, var(--vscode-foreground)));
 }
 button:focus-visible,
 select:focus-visible,

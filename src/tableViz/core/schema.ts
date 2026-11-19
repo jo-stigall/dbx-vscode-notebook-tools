@@ -584,6 +584,8 @@ export const toHostSchema = z.discriminatedUnion('type', [
   }),
   /** Write the board to a `.tableviz.json` file. */
   z.strictObject({ type: z.literal('saveView'), state: boardStateSchema }),
+  /** Put plain text on the clipboard, for example the name of a table. */
+  z.strictObject({ type: z.literal('copyText'), text: z.string().min(1).max(10_000) }),
   /** The user read the datasets and filters of a saved view and permits its queries. */
   z.strictObject({ type: z.literal('approve') }),
   /** Run a request. `refresh: true` ignores the cache. */

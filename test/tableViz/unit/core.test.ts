@@ -142,6 +142,7 @@ test('message checks accept good messages and refuse bad ones', () => {
   assert.ok(requestSchema.safeParse({ type: 'histogram', dataset, columns: [column], edges: { lo: 0, hi: 1, bins: 30 } }).success);
   assert.ok(toHostSchema.safeParse({ type: 'request', id: '1', request: { type: 'tableDetails', dataset } }).success);
   assert.ok(toHostSchema.safeParse({ type: 'ready' }).success);
+  assert.ok(toHostSchema.safeParse({ type: 'copyText', text: 'demo.shop.orders_2026' }).success);
   assert.ok(toWebviewSchema.safeParse({ type: 'cancelled', id: '1' }).success);
 
   const bad: unknown[] = [
@@ -155,6 +156,8 @@ test('message checks accept good messages and refuse bad ones', () => {
   ];
   for (const request of bad) assert.equal(requestSchema.safeParse(request).success, false, JSON.stringify(request));
   assert.equal(toHostSchema.safeParse({ type: 'request', request: { type: 'tableDetails', dataset } }).success, false); // no id
+  assert.equal(toHostSchema.safeParse({ type: 'copyText', text: '' }).success, false);
+  assert.equal(toHostSchema.safeParse({ type: 'copyText', text: 'a', extra: true }).success, false);
 });
 
 test('frequencyRows: shares, cumulative shares, Other and null', async () => {

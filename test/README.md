@@ -194,6 +194,7 @@ ok   a new default kernel applies to the open notebook
 ok   remembers the kernel that you select for a notebook
 ok   tableViz: Visualize Table opens a board
 ok   tableViz: the overview of demo.shop.orders_2026 has the correct numbers
+ok   tableViz: Copy Table Name copies from the board icon and right-click commands
 ok   tableViz: a statistics request gives numbers and the SQL behind them
 ok   tableViz: Compare Tables opens a board that reads A and B
 ok   tableViz: a saved view opens again with its filter and its card
@@ -204,7 +205,7 @@ ok   tableViz: a missing table shows a plain error
 ok   tableViz: the tree lists catalogs, schemas and tables without SQL
 ok   tableViz: a board gets correct numbers from SQL statements on a warehouse
 ok   tableViz: the cache answers a repeated request, and refresh runs it again
-ok   tableViz: the tree keeps favorites and recent tables
+ok   tableViz: the tree keeps favorites and recent tables, and copies table names
 ok   tableViz: Search Tables finds the tables of a schema and opens a board
 ok   tableViz: Visualize Table shows a list of catalogs, schemas and tables
 ok   tableViz: Visualize Table Under Cursor opens the table at the cursor

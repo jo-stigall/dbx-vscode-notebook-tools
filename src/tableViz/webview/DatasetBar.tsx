@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { chipLabel, missesPartition, parseVersion, removeChip } from '../core/derive.ts';
 import { displayTableName } from '../core/names.ts';
 import type { Dataset, ResultOf } from '../core/schema.ts';
+import { CopyTableButton, tableContext } from './CopyTable.tsx';
 import { formatTime } from './format.ts';
 import { acquire, cancelAll, refreshAll, release, useRequests, type RequestError } from './rpc.ts';
 
@@ -121,12 +122,14 @@ export function DatasetBar({ dataset, pinned, facts, asOf, onChange, label, onRe
 
   // Which data the board shows. Example: "Delta version 42", or "As of 1 Nov 2026, 02:05" for a table that has no Delta version.
   const snapshot = pinned.version?.kind === 'version' ? `Delta version ${pinned.version.n}` : asOf ? `As of ${formatTime(asOf)}` : undefined;
+  const tableName = displayTableName(dataset.table);
 
   return (
-    <div className={`dataset-bar${label ? ` dataset-${label.toLowerCase()}` : ''}`}>
+    <div className={`dataset-bar${label ? ` dataset-${label.toLowerCase()}` : ''}`} data-vscode-context={label ? tableContext(tableName) : undefined}>
       {label && (
         <p className="dataset-name">
-          <span className={`chip chip-${label.toLowerCase()}`}>{label}</span> {displayTableName(dataset.table)}
+          <span className={`chip chip-${label.toLowerCase()}`}>{label}</span> {tableName}
+          <CopyTableButton name={tableName} />
           {onRemove && (
             <button type="button" className="link" onClick={onRemove}>
               Remove

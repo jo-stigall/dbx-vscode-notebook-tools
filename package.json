@@ -110,6 +110,24 @@
         "title": "Compare Tables",
         "category": "Databricks Notebook",
         "icon": "$(diff)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.copyTableName",
+        "title": "Copy Table Name",
+        "category": "Databricks Notebook",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.copyTableAName",
+        "title": "Copy Table A Name",
+        "category": "Databricks Notebook",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbxNotebook.tableViz.copyTableBName",
+        "title": "Copy Table B Name",
+        "category": "Databricks Notebook",
+        "icon": "$(copy)"
       }
     ],
     "menus": {
@@ -154,6 +172,18 @@
         },
         {
           "command": "dbxNotebook.tableViz.removeFavorite",
+          "when": "false"
+        },
+        {
+          "command": "dbxNotebook.tableViz.copyTableName",
+          "when": "false"
+        },
+        {
+          "command": "dbxNotebook.tableViz.copyTableAName",
+          "when": "false"
+        },
+        {
+          "command": "dbxNotebook.tableViz.copyTableBName",
           "when": "false"
         },
         {
@@ -215,6 +245,16 @@
           "group": "1_table@2"
         },
         {
+          "command": "dbxNotebook.tableViz.copyTableName",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "group": "inline@4"
+        },
+        {
+          "command": "dbxNotebook.tableViz.copyTableName",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "group": "1_table@3"
+        },
+        {
           "command": "dbxNotebook.tableViz.searchTables",
           "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(catalog|schema)$/",
           "group": "inline@1"
@@ -230,6 +270,23 @@
           "command": "dbxNotebook.tableViz.visualizeTableUnderCursor",
           "when": "editorLangId == sql || (editorLangId == python && !notebookEditorFocused)",
           "group": "navigation@90"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "dbxNotebook.tableViz.copyTableName",
+          "when": "webviewSection == dbxNotebook.tableViz.table",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "dbxNotebook.tableViz.copyTableAName",
+          "when": "webviewSection == dbxNotebook.tableViz.compare",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "dbxNotebook.tableViz.copyTableBName",
+          "when": "webviewSection == dbxNotebook.tableViz.compare",
+          "group": "1_copy@2"
         }
       ]
     },

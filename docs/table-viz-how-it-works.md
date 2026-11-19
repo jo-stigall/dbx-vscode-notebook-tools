@@ -272,6 +272,7 @@ The page and the host send these messages:
 | `cancel` | No component wants the answer of a request that still runs. |
 | `openSql` | You clicked "Open SQL in Editor". |
 | `export` | You saved or copied a chart or a table. The page cannot write a file, so the host does it. |
+| `copyText` | You clicked the copy icon next to a table name. The host puts the text on the clipboard. |
 | `saveView` | You clicked "Save View". |
 | `approve` | You clicked "Run the Queries" on a saved view. |
 

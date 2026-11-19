@@ -23,6 +23,12 @@ newest first.
   kernel starts. If it is empty, the kernel uses the interpreter of the
   Python extension, then a `.venv` folder, then `python3`.
 
+- **Copy table name in the board and in "Databricks Tables".** Click the copy
+  icon next to a table name on a board (including compare mode and saved-view
+  prompts), right-click anywhere on the interactive board ("Copy Table Name",
+  or "Copy Table A Name" / "Copy Table B Name" in compare mode), or
+  right-click / click the copy icon on a table in the "Databricks Tables"
+  view.
 - **"Visualize Table" and "Compare Tables" show a list, not a text box.**
   The list shows your favorite and recent tables, then the catalogs. Select
   a catalog, then a schema, then a table, and type to filter on each level.

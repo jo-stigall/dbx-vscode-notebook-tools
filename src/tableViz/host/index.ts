@@ -33,6 +33,17 @@ export interface TableVizApi {
   /** Open a board for a table of the tree. */
   visualizeNode(node: Node): Promise<Board | undefined>;
   /**
+   * Copy the three-part name of a table to the clipboard.
+   *
+   * Accepts a table node from the "Databricks Tables" view, a `data-vscode-context`
+   * object from a board's right-click menu, or a plain table name string.
+   *
+   * @param target  The table node, webview context object, or table name string.
+   * @param key  The context field to read from a webview context object. Default: 'tableName'.
+   * @returns The copied table name, or undefined if `target` contains no table name.
+   */
+  copyTableName(target: unknown, key?: 'tableName' | 'tableNameA' | 'tableNameB'): Promise<string | undefined>;
+  /**
    * Show the search list, and open a board for the table that the user selects. This is the command "Search Tables".
    *
    * @param node  A catalog or a schema of the tree: the search looks only there. If you omit it, the search looks in all catalogs.
@@ -71,6 +82,29 @@ export interface TableVizApi {
   tree: TableTree;
   /** The selected profile and compute. Tests use it. */
   session: Session;
+}
+
+/**
+ * Extract a table name string from a tree node, a webview context object, or a plain string.
+ *
+ * @example
+ * tableNameFrom({ kind: 'table', table: { catalog: 'main', schema: 'shop', name: 'orders' }, favorite: false })
+ * // 'main.shop.orders'
+ * tableNameFrom({ tableName: 'main.shop.orders' })                   // 'main.shop.orders'
+ * tableNameFrom({ tableNameB: 'main.shop.orders' }, 'tableNameB')    // 'main.shop.orders'
+ */
+function tableNameFrom(target: unknown, key: 'tableName' | 'tableNameA' | 'tableNameB' = 'tableName'): string | undefined {
+  if (typeof target === 'string') return target.trim() || undefined;
+  if (!target || typeof target !== 'object') return undefined;
+  const record = target as Record<string, unknown>;
+  if (record.kind === 'table' && record.table && typeof record.table === 'object') {
+    const t = record.table as Partial<TableName>;
+    if (typeof t.catalog === 'string' && t.catalog && typeof t.schema === 'string' && t.schema && typeof t.name === 'string' && t.name) {
+      return displayTableName({ catalog: t.catalog, schema: t.schema, name: t.name });
+    }
+  }
+  const value = record[key];
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 /**
@@ -275,6 +309,14 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
 
     async visualizeNode(node) {
       return node?.kind === 'table' ? open(node.table) : undefined;
+    },
+
+    async copyTableName(target, key = 'tableName') {
+      const text = tableNameFrom(target, key);
+      if (!text) return undefined;
+      await vscode.env.clipboard.writeText(text);
+      vscode.window.setStatusBarMessage(`Copied ${text.replace(/\s+/g, ' ')}`, 3000);
+      return text;
     },
 
     async searchTables(node) {

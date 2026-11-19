@@ -32,7 +32,11 @@ import type { Card, ColumnInfo, Dataset, OverviewColumn, Request, ResultOf } fro
 import { DemoProfiler } from '../../../src/tableViz/demo/demoProfiler.ts';
 import { CardShell, type CardShellProps } from '../../../src/tableViz/webview/cards/CardShell.tsx';
 import { ComplexView, ContinuousView, DateView, IdentifierView, ValuesView } from '../../../src/tableViz/webview/cards/views.tsx';
-import { LargeTableNotice } from '../../../src/tableViz/webview/Board.tsx';
+import { LargeTableNotice, Board } from '../../../src/tableViz/webview/Board.tsx';
+import { ConfirmView } from '../../../src/tableViz/webview/ConfirmView.tsx';
+import { COMPARE_CONTEXT_SECTION, compareContext, CopyTableButton, TABLE_CONTEXT_SECTION, tableContext } from '../../../src/tableViz/webview/CopyTable.tsx';
+import { DatasetBar } from '../../../src/tableViz/webview/DatasetBar.tsx';
+import { DEFAULT_SETTINGS } from '../../../src/tableViz/core/schema.ts';
 import { formatBytes } from '../../../src/tableViz/webview/format.ts';
 import { CompareTable, compareRows, SchemaPanel } from '../../../src/tableViz/webview/compare/CompareOverview.tsx';
 import type { DriftState } from '../../../src/tableViz/webview/compare/useCompare.ts';
@@ -547,4 +551,53 @@ test('compare: a drift score of the datasets before the last change is marked as
   assert.ok(html.includes('class="columns compare stale"') && html.includes('aria-busy="true"') && html.includes('<span class="stale">'));
   // The rows keep the sequence of the old scores.
   assert.deepEqual(compareRows(schema, a, b, old, '', 'drift').map((r) => r.name), compareRows(schema, a, b, drifts, '', 'drift').map((r) => r.name));
+});
+
+test('copy table name: icon button and right-click context on board, dataset bar and saved view', () => {
+  // Single-table board: copy icon next to the table name and right-click context on <main>.
+  const singleHtml = renderToStaticMarkup(<Board datasets={{ a: dataset }} settings={DEFAULT_SETTINGS} />);
+  assert.ok(singleHtml.includes('aria-label="Copy table name demo.shop.orders_2026"'), singleHtml);
+  assert.ok(singleHtml.includes('codicon-copy'), singleHtml);
+  assert.equal(JSON.parse(tableContext('demo.shop.orders_2026')).webviewSection, TABLE_CONTEXT_SECTION);
+  assert.equal(JSON.parse(tableContext('demo.shop.orders_2026')).tableName, 'demo.shop.orders_2026');
+  const mainContext = singleHtml.match(/<main[^>]*data-vscode-context="([^"]+)"/)?.[1]?.replace(/&quot;/g, '"');
+  assert.deepEqual(JSON.parse(mainContext ?? 'null'), { webviewSection: TABLE_CONTEXT_SECTION, tableName: 'demo.shop.orders_2026' });
+
+  // Compare-mode board: copy icons for A and B, compare context on <main>, and table context on each dataset bar and heading.
+  const compareHtml = renderToStaticMarkup(<Board datasets={{ a: datasetA, b: dataset }} settings={DEFAULT_SETTINGS} />);
+  assert.ok(compareHtml.includes('aria-label="Copy table name demo.shop.orders_2025"'));
+  assert.ok(compareHtml.includes('aria-label="Copy table name demo.shop.orders_2026"'));
+  const compareMain = compareHtml.match(/<main[^>]*data-vscode-context="([^"]+)"/)?.[1]?.replace(/&quot;/g, '"');
+  assert.deepEqual(JSON.parse(compareMain ?? 'null'), {
+    webviewSection: COMPARE_CONTEXT_SECTION,
+    tableNameA: 'demo.shop.orders_2025',
+    tableNameB: 'demo.shop.orders_2026',
+  });
+  assert.equal(compareContext('a.b.c', 'd.e.f'), JSON.stringify({ webviewSection: COMPARE_CONTEXT_SECTION, tableNameA: 'a.b.c', tableNameB: 'd.e.f' }));
+
+  // Compare dataset bar carries its own table context and copy button; single-table dataset bar does not duplicate them.
+  const barB = renderToStaticMarkup(<DatasetBar label="B" dataset={dataset} pinned={dataset} facts={undefined} asOf={undefined} onChange={noop} />);
+  assert.ok(barB.includes('aria-label="Copy table name demo.shop.orders_2026"'));
+  const barContext = barB.match(/data-vscode-context="([^"]+)"/)?.[1]?.replace(/&quot;/g, '"');
+  assert.deepEqual(JSON.parse(barContext ?? 'null'), { webviewSection: TABLE_CONTEXT_SECTION, tableName: 'demo.shop.orders_2026' });
+  const barSingle = renderToStaticMarkup(<DatasetBar dataset={dataset} pinned={dataset} facts={undefined} asOf={undefined} onChange={noop} />);
+  assert.ok(!barSingle.includes('data-vscode-context'));
+  assert.ok(!barSingle.includes('copy-table-button'));
+
+  // Saved-view confirmation screen includes copy icons and right-click context for single and compare views.
+  const confirmSingle = renderToStaticMarkup(<ConfirmView datasets={{ a: dataset }} onApprove={noop} />);
+  assert.ok(confirmSingle.includes('aria-label="Copy table name demo.shop.orders_2026"'));
+  const confirmCompare = renderToStaticMarkup(<ConfirmView datasets={{ a: datasetA, b: dataset }} onApprove={noop} />);
+  assert.ok(confirmCompare.includes('aria-label="Copy table name demo.shop.orders_2025"'));
+  assert.ok(confirmCompare.includes('aria-label="Copy table name demo.shop.orders_2026"'));
+  const confirmMain = confirmCompare.match(/<main[^>]*data-vscode-context="([^"]+)"/)?.[1]?.replace(/&quot;/g, '"');
+  assert.deepEqual(JSON.parse(confirmMain ?? 'null'), {
+    webviewSection: COMPARE_CONTEXT_SECTION,
+    tableNameA: 'demo.shop.orders_2025',
+    tableNameB: 'demo.shop.orders_2026',
+  });
+
+  // Standalone button renders accessible copy control.
+  const btn = renderToStaticMarkup(<CopyTableButton name="main.`my schema`.orders" />);
+  assert.ok(btn.includes('title="Copy main.`my schema`.orders"') && btn.includes('codicon-copy'));
 });

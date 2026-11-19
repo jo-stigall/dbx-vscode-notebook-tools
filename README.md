@@ -354,6 +354,7 @@ you cannot select it.
 | Search for a table by name | Click the search button at the top of the view "Databricks Tables", and type a part of the name. Select a table to open it. |
 | Search in one catalog or one schema | Point at the catalog or the schema in the view and click its search button. A search in a schema lists all its tables before you type. |
 | Keep a table at hand | Click the star on a table in the view. The table is then below "Favorites". |
+| Copy a table name | In the view "Databricks Tables", right-click a table (or click its copy icon) and select "Copy Table Name". On a board, click the copy icon next to the table name or right-click the board and select "Copy Table Name" (or "Copy Table A Name" / "Copy Table B Name" in compare mode). |
 | Open a table from code | In a `.sql` or `.py` file, right-click a name such as `main.sales.orders` and select "Visualize Table Under Cursor". |
 
 The view and the search read the catalog with the REST API. They never start

@@ -56,8 +56,8 @@ export function webviewOptions(extensionUri: vscode.Uri): vscode.WebviewOptions 
  * One board: a webview panel, and the dispatcher that answers the requests of its webview.
  *
  * The board also handles the messages that are not requests: "ready",
- * "approve", "openSql", "export" and "saveView". When the panel closes, the
- * board cancels all requests that run.
+ * "approve", "openSql", "export", "saveView" and "copyText". When the panel
+ * closes, the board cancels all requests that run.
  *
  * @example
  * const datasets = { a: { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } } };
@@ -133,6 +133,10 @@ export class Board {
               break;
             case 'saveView':
               await this.saveView(message.state);
+              break;
+            case 'copyText':
+              await vscode.env.clipboard.writeText(message.text);
+              vscode.window.setStatusBarMessage(`Copied ${message.text.replace(/\s+/g, ' ')}`, 3000);
               break;
           }
         } catch (e) {

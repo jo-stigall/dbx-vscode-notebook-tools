@@ -21,6 +21,7 @@ import { ColumnCard } from './cards/ColumnCard.tsx';
 import { CompareCard } from './compare/CompareCard.tsx';
 import { CompareTable, compareRows, SchemaPanel } from './compare/CompareOverview.tsx';
 import { useDrifts } from './compare/useCompare.ts';
+import { compareContext, CopyTableButton, tableContext, useBodyContext } from './CopyTable.tsx';
 import { DatasetBar } from './DatasetBar.tsx';
 import { formatBytes, formatCount, formatTime } from './format.ts';
 import { useResult } from './hooks.ts';
@@ -223,10 +224,16 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
   }, [opened]);
 
   const name = displayTableName(dataset.table);
+  const nameB = datasetB && pinnedB ? displayTableName(datasetB.table) : undefined;
+  const boardContext = details.status === 'error' || !nameB ? tableContext(name) : compareContext(name, nameB);
+  useBodyContext(boardContext);
   if (details.status === 'error') {
     return (
-      <main>
-        <h1>{name}</h1>
+      <main data-vscode-context={boardContext}>
+        <h1>
+          {name}
+          <CopyTableButton name={name} />
+        </h1>
         <ErrorPanel error={details.error} />
       </main>
     );
@@ -263,13 +270,21 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
     </div>
   );
 
-  if (datasetB && pinnedB) {
+  if (datasetB && pinnedB && nameB) {
     const difference = overview.rowCount !== undefined && overviewB.rowCount !== undefined ? overviewB.rowCount - overview.rowCount : undefined;
     return (
-      <main>
+      <main data-vscode-context={boardContext}>
         <header className="board-header">
           <h1>
-            <span className="chip chip-a">A</span> {name} <span className="versus">compared with</span> <span className="chip chip-b">B</span> {displayTableName(datasetB.table)}{' '}
+            <span data-vscode-context={tableContext(name)}>
+              <span className="chip chip-a">A</span> {name}
+              <CopyTableButton name={name} />
+            </span>{' '}
+            <span className="versus">compared with</span>{' '}
+            <span data-vscode-context={tableContext(nameB)}>
+              <span className="chip chip-b">B</span> {nameB}
+              <CopyTableButton name={nameB} />
+            </span>{' '}
             <span className="badge">{profileLabel(dataset.profile)}</span>
           </h1>
           <dl className="facts">
@@ -335,10 +350,11 @@ export function Board({ datasets: initial, settings, initialState }: { datasets:
   }
 
   return (
-    <main>
+    <main data-vscode-context={boardContext}>
       <header className="board-header">
         <h1>
-          {name} <span className="badge">{profileLabel(dataset.profile)}</span>
+          {name}
+          <CopyTableButton name={name} /> <span className="badge">{profileLabel(dataset.profile)}</span>
           {sample !== undefined && (
             <span className="sampled" title="The queries read a sample of the rows. All counts are estimates.">
               Sampled {sample}%

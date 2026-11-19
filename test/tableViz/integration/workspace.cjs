@@ -146,9 +146,21 @@ exports.main = async function main(log) {
     assert.deepStrictEqual(groups, ['favorites', 'recents']);
     const favorite = (await api.tree.getChildren({ kind: 'group', group: 'favorites' }))[0];
     assert.strictEqual(api.tree.getTreeItem(favorite).label, 'demo.shop.orders_2025');
+    const priorClipboard = await vscode.env.clipboard.readText();
+    try {
+      assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', tables[1]), 'demo.shop.orders_2026');
+      assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2026');
+      assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', favorite), 'demo.shop.orders_2025');
+      assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2025');
+      const oddNode = { kind: 'table', table: { catalog: 'main', schema: 'sales data', name: 'my orders' }, favorite: false };
+      assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', oddNode), 'main.`sales data`.`my orders`');
+      assert.strictEqual(await vscode.env.clipboard.readText(), 'main.`sales data`.`my orders`');
+    } finally {
+      await vscode.env.clipboard.writeText(priorClipboard);
+    }
     await vscode.commands.executeCommand('dbxNotebook.tableViz.removeFavorite', favorite);
     assert.deepStrictEqual(api.tree.favorites, []);
-    log('tableViz: the tree keeps favorites and recent tables');
+    log('tableViz: the tree keeps favorites and recent tables, and copies table names');
 
     // 5b. "Search Tables" on a schema of the tree: the list shows the tables of the schema, and Enter opens a board.
     // test/tableViz/unit/workspace.test.ts checks that the search sends no SQL statement. Here, the boards of the

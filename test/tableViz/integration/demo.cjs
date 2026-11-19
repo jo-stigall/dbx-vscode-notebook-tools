@@ -100,6 +100,25 @@ exports.main = async function main(log) {
   assert.ok(!exchanges.some((x) => x.response && x.response.type === 'error'), 'no request failed');
   log('tableViz: the overview of demo.shop.orders_2026 has the correct numbers');
 
+  // 2a. Copy table name from the board (icon button message and right-click commands).
+  const priorClipboard = await vscode.env.clipboard.readText();
+  try {
+    await board.dispatcher.handle({ type: 'copyText', text: 'demo.shop.orders_2026' });
+    assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2026');
+    await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', { webviewSection: 'dbxNotebook.tableViz.table', tableName: 'demo.shop.orders_2025' });
+    assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2025');
+    const compareCtx = { webviewSection: 'dbxNotebook.tableViz.compare', tableNameA: 'demo.shop.orders_2025', tableNameB: 'demo.shop.orders_2026' };
+    await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableBName', compareCtx);
+    assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2026');
+    await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableAName', compareCtx);
+    assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2025');
+    assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', { kind: 'catalog', catalog: 'demo' }), undefined);
+    assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2025', 'a non-table node does not change the clipboard');
+  } finally {
+    await vscode.env.clipboard.writeText(priorClipboard);
+  }
+  log('tableViz: Copy Table Name copies from the board icon and right-click commands');
+
   // 2b. A detail card asks for statistics. Send the same request that the card sends, and check the answer and its SQL.
   const dataset = { profile: 'Demo', table: { catalog: 'demo', schema: 'shop', name: 'orders_2026' } };
   await board.dispatcher.handle({

@@ -189,6 +189,7 @@ export function useRequests(): { generation: number; pending: number } {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    () => snapshot,
     () => snapshot
   );
 }
