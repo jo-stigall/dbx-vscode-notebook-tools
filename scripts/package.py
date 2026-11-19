@@ -35,6 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # The five dist/ files are the table visualization feature. `npm run build` makes them.
 FILES = ["package.json", "extension.js", "README.md", "docs/how-it-works.md", "test/README.md",
          "CHANGELOG.md", "docs/table-viz-design.md", "docs/table-viz-how-it-works.md", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs" / "images").glob("*.jpg")),
+         *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "media").glob("*.svg")),
          "dist/tableViz/host.js", "dist/tableViz/driver.js", "dist/tableViz/webview.js", "dist/tableViz/webview.css", "dist/tableViz/codicon.ttf", "src/local_runner.py", *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "src").glob("*.js"))]
 
 pkg = json.loads((ROOT / "package.json").read_text())
@@ -70,6 +71,7 @@ content_types = """<?xml version="1.0" encoding="utf-8"?>
   <Default Extension=".css" ContentType="text/css"/>
   <Default Extension=".ttf" ContentType="font/ttf"/>
   <Default Extension=".jpg" ContentType="image/jpeg"/>
+  <Default Extension=".svg" ContentType="image/svg+xml"/>
   <Default Extension=".md" ContentType="text/markdown"/>
   <Default Extension=".vsixmanifest" ContentType="text/xml"/>
 </Types>

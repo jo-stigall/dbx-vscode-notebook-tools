@@ -26,9 +26,12 @@ newest first.
 - **Copy table name in the board and in "Databricks Tables".** Click the copy
   icon next to a table name on a board (including compare mode and saved-view
   prompts), right-click anywhere on the interactive board ("Copy Table Name",
-  or "Copy Table A Name" / "Copy Table B Name" in compare mode), or
-  right-click / click the copy icon on a table in the "Databricks Tables"
-  view.
+  or "Copy Table A Name" / "Copy Table B Name" in compare mode), or click the
+  copy icon / right-click on a table in the "Databricks Tables" view. Inline
+  buttons on table rows in "Databricks Tables" now show only the favorite star
+  and copy icon (which briefly turns into a green check mark after copying;
+  Visualize and Compare Tables stay available by clicking or right-clicking the
+  table).
 - **"Visualize Table" and "Compare Tables" show a list, not a text box.**
   The list shows your favorite and recent tables, then the catalogs. Select
   a catalog, then a schema, then a table, and type to filter on each level.

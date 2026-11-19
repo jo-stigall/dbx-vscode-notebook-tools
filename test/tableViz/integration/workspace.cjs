@@ -146,16 +146,27 @@ exports.main = async function main(log) {
     assert.deepStrictEqual(groups, ['favorites', 'recents']);
     const favorite = (await api.tree.getChildren({ kind: 'group', group: 'favorites' }))[0];
     assert.strictEqual(api.tree.getTreeItem(favorite).label, 'demo.shop.orders_2025');
+    assert.strictEqual(api.tree.getTreeItem(tables[1]).contextValue, 'tableViz.table');
+    assert.strictEqual(api.tree.getTreeItem(favorite).contextValue, 'tableViz.favorite');
     const priorClipboard = await vscode.env.clipboard.readText();
+    const priorResetMs = api.tree.copiedResetMs;
+    api.tree.copiedResetMs = 80;
     try {
+      fake.requests.length = 0;
       assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', tables[1]), 'demo.shop.orders_2026');
       assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2026');
+      assert.strictEqual(api.tree.getTreeItem(tables[1]).contextValue, 'tableViz.table.copied', 'copied row shows green check');
+      assert.strictEqual(fake.requests.length, 0, 'marking a row copied sends no REST request');
       assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', favorite), 'demo.shop.orders_2025');
       assert.strictEqual(await vscode.env.clipboard.readText(), 'demo.shop.orders_2025');
+      assert.strictEqual(api.tree.getTreeItem(tables[1]).contextValue, 'tableViz.table', 'copying another row resets the first');
+      assert.strictEqual(api.tree.getTreeItem(favorite).contextValue, 'tableViz.favorite.copied');
+      await until('the copied check to reset', () => api.tree.getTreeItem(favorite).contextValue === 'tableViz.favorite');
       const oddNode = { kind: 'table', table: { catalog: 'main', schema: 'sales data', name: 'my orders' }, favorite: false };
       assert.strictEqual(await vscode.commands.executeCommand('dbxNotebook.tableViz.copyTableName', oddNode), 'main.`sales data`.`my orders`');
       assert.strictEqual(await vscode.env.clipboard.readText(), 'main.`sales data`.`my orders`');
     } finally {
+      api.tree.copiedResetMs = priorResetMs;
       await vscode.env.clipboard.writeText(priorClipboard);
     }
     await vscode.commands.executeCommand('dbxNotebook.tableViz.removeFavorite', favorite);

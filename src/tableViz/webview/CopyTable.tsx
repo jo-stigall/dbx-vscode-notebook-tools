@@ -24,7 +24,7 @@ export const TABLE_CONTEXT_SECTION = 'dbxNotebook.tableViz.table';
 export const COMPARE_CONTEXT_SECTION = 'dbxNotebook.tableViz.compare';
 
 /** How long the copy button shows a check mark after a click, in milliseconds. */
-const COPIED_RESET_MS = 1500;
+const COPIED_RESET_MS = 1000;
 
 /**
  * Build the `data-vscode-context` value for a single table.

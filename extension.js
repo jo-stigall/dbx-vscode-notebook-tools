@@ -400,6 +400,7 @@ function activate(context) {
     vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeTableUnderCursor', () => loadTableViz().visualizeTableUnderCursor()),
     vscode.commands.registerCommand('dbxNotebook.tableViz.visualizeNode', (node) => loadTableViz().visualizeNode(node)),
     vscode.commands.registerCommand('dbxNotebook.tableViz.copyTableName', (target) => loadTableViz().copyTableName(target)),
+    vscode.commands.registerCommand('dbxNotebook.tableViz.copiedTableName', (target) => loadTableViz().copyTableName(target)),
     vscode.commands.registerCommand('dbxNotebook.tableViz.copyTableAName', (target) => loadTableViz().copyTableName(target, 'tableNameA')),
     vscode.commands.registerCommand('dbxNotebook.tableViz.copyTableBName', (target) => loadTableViz().copyTableName(target, 'tableNameB')),
     vscode.commands.registerCommand('dbxNotebook.tableViz.searchTables', (node) => loadTableViz().searchTables(node)),

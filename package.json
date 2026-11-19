@@ -118,6 +118,15 @@
         "icon": "$(copy)"
       },
       {
+        "command": "dbxNotebook.tableViz.copiedTableName",
+        "title": "Copied",
+        "category": "Databricks Notebook",
+        "icon": {
+          "light": "media/check-light.svg",
+          "dark": "media/check-dark.svg"
+        }
+      },
+      {
         "command": "dbxNotebook.tableViz.copyTableAName",
         "title": "Copy Table A Name",
         "category": "Databricks Notebook",
@@ -179,6 +188,10 @@
           "when": "false"
         },
         {
+          "command": "dbxNotebook.tableViz.copiedTableName",
+          "when": "false"
+        },
+        {
           "command": "dbxNotebook.tableViz.copyTableAName",
           "when": "false"
         },
@@ -215,44 +228,49 @@
       ],
       "view/item/context": [
         {
-          "command": "dbxNotebook.tableViz.visualizeNode",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "command": "dbxNotebook.tableViz.addFavorite",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.table(\\.copied)?$/",
           "group": "inline@1"
         },
         {
-          "command": "dbxNotebook.tableViz.addFavorite",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem == tableViz.table",
+          "command": "dbxNotebook.tableViz.removeFavorite",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.favorite(\\.copied)?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbxNotebook.tableViz.copyTableName",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
           "group": "inline@2"
         },
         {
-          "command": "dbxNotebook.tableViz.removeFavorite",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem == tableViz.favorite",
+          "command": "dbxNotebook.tableViz.copiedTableName",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)\\.copied$/",
           "group": "inline@2"
         },
         {
           "command": "dbxNotebook.tableViz.visualizeNode",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)(\\.copied)?$/",
           "group": "1_table@1"
         },
         {
-          "command": "dbxNotebook.tableViz.compareTables",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
-          "group": "inline@3"
-        },
-        {
-          "command": "dbxNotebook.tableViz.compareTables",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
+          "command": "dbxNotebook.tableViz.addFavorite",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.table(\\.copied)?$/",
           "group": "1_table@2"
         },
         {
-          "command": "dbxNotebook.tableViz.copyTableName",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
-          "group": "inline@4"
+          "command": "dbxNotebook.tableViz.removeFavorite",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.favorite(\\.copied)?$/",
+          "group": "1_table@2"
+        },
+        {
+          "command": "dbxNotebook.tableViz.compareTables",
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)(\\.copied)?$/",
+          "group": "1_table@3"
         },
         {
           "command": "dbxNotebook.tableViz.copyTableName",
-          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)$/",
-          "group": "1_table@3"
+          "when": "view == dbxNotebook.tableViz.tables && viewItem =~ /^tableViz\\.(table|favorite)(\\.copied)?$/",
+          "group": "1_table@4"
         },
         {
           "command": "dbxNotebook.tableViz.searchTables",

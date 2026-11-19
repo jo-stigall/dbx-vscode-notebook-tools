@@ -353,8 +353,8 @@ you cannot select it.
 | Browse the tables | Open the view "Databricks Tables" in the Explorer. Open a catalog and a schema, then click a table. |
 | Search for a table by name | Click the search button at the top of the view "Databricks Tables", and type a part of the name. Select a table to open it. |
 | Search in one catalog or one schema | Point at the catalog or the schema in the view and click its search button. A search in a schema lists all its tables before you type. |
-| Keep a table at hand | Click the star on a table in the view. The table is then below "Favorites". |
-| Copy a table name | In the view "Databricks Tables", right-click a table (or click its copy icon) and select "Copy Table Name". On a board, click the copy icon next to the table name or right-click the board and select "Copy Table Name" (or "Copy Table A Name" / "Copy Table B Name" in compare mode). |
+| Keep a table at hand | Click the star on a table in the view (or right-click it and select "Add to Favorites"). The table is then below "Favorites". |
+| Copy a table name | In the view "Databricks Tables", click the copy icon on a table (or right-click it and select "Copy Table Name"). On a board, click the copy icon next to the table name or right-click the board and select "Copy Table Name" (or "Copy Table A Name" / "Copy Table B Name" in compare mode). |
 | Open a table from code | In a `.sql` or `.py` file, right-click a name such as `main.sales.orders` and select "Visualize Table Under Cursor". |
 
 The view and the search read the catalog with the REST API. They never start
@@ -474,7 +474,7 @@ compares each column whose name is in A and in B.
 
 | To do this | Do this |
 |---|---|
-| Compare two tables | Run "Databricks Notebook: Compare Tables", or click the compare icon on a table in the view "Databricks Tables". You can also type the second table in the box "Compare with" on a board. |
+| Compare two tables | Run "Databricks Notebook: Compare Tables", or right-click a table in the view "Databricks Tables" and select "Compare Tables". You can also type the second table in the box "Compare with" on a board. |
 | Compare one table under two filters | Click "Compare with this table" on the board. Then type a different filter for A and for B. |
 | Compare one table at two Delta versions | Click "Compare with this table". Then type a version number, or a date and time, in the box "Version" of B. |
 

@@ -237,7 +237,7 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
     }
     const datasets: BoardDatasets = { a: { profile: session.profile, table }, ...(tableB ? { b: { profile: session.profile, table: tableB } } : {}) };
     log.info(`tableViz: open ${displayTableName(table)}${tableB ? ` and ${displayTableName(tableB)}` : ''} with the profile ${session.label(session.profile)}`);
-    void tree.addRecent(table);
+    await tree.addRecent(table);
     const panel = vscode.window.createWebviewPanel(VIEW_TYPE, Board.title(datasets), vscode.ViewColumn.Active);
     return track(new Board(panel, datasets, deps));
   };
@@ -315,6 +315,9 @@ export function activate(context: vscode.ExtensionContext, conn: HostConnection)
       const text = tableNameFrom(target, key);
       if (!text) return undefined;
       await vscode.env.clipboard.writeText(text);
+      if (target && typeof target === 'object' && (target as { kind?: unknown }).kind === 'table') {
+        tree.markCopied(target as Node);
+      }
       vscode.window.setStatusBarMessage(`Copied ${text.replace(/\s+/g, ' ')}`, 3000);
       return text;
     },

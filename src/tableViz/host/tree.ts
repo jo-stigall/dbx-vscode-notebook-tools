@@ -51,6 +51,8 @@ const FAVORITES_KEY = 'dbxNotebook.tableViz.favorites';
 const RECENTS_KEY = 'dbxNotebook.tableViz.recents';
 /** The number of recent tables that the tree shows. */
 const MAX_RECENTS = 10;
+/** How long a tree row shows a green check mark after its table name is copied, in milliseconds. */
+const COPIED_RESET_MS = 1000;
 
 /**
  * Gives VS Code the lines of the view "Databricks Tables", and stores the favorite and the recent tables.
@@ -74,16 +76,52 @@ export class TableTree implements vscode.TreeDataProvider<Node> {
   private readonly changed = new vscode.EventEmitter<Node | undefined | void>();
   /** The event that fires after refresh(). VS Code then calls getChildren() again. */
   readonly onDidChangeTreeData = this.changed.event;
+  /** The table row currently showing a green check mark after its name was copied, if any. */
+  private copied: { key: string; node: Extract<Node, { kind: 'table' }> } | undefined;
+  /** Resets `copied` back to the copy icon after `copiedResetMs`. */
+  private copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** How long the green check mark stays on a copied row, in milliseconds. A test can set a smaller value. */
+  copiedResetMs = COPIED_RESET_MS;
 
   constructor(context: vscode.ExtensionContext, session: Session) {
     this.context = context;
     this.session = session;
-    context.subscriptions.push(this.changed);
+    context.subscriptions.push(this.changed, { dispose: () => clearTimeout(this.copiedTimer) });
+  }
+
+  /** Identify one table row uniquely by its section (favorites, recents, or schema) and full table name. */
+  private rowKey(node: Extract<Node, { kind: 'table' }>): string {
+    return `${node.inGroup ?? 'schema'}:${displayTableName(node.table)}`;
   }
 
   /** Tell VS Code to read all levels of the tree again. */
   refresh(): void {
+    clearTimeout(this.copiedTimer);
+    this.copiedTimer = undefined;
+    this.copied = undefined;
     this.changed.fire();
+  }
+
+  /**
+   * Briefly mark a table row as copied so its inline copy icon switches to a green check mark.
+   *
+   * Fires `onDidChangeTreeData` for only the affected leaf node(s), so no Unity
+   * Catalog REST request runs.
+   */
+  markCopied(node: Node): void {
+    if (node.kind !== 'table') return;
+    const key = this.rowKey(node);
+    const prev = this.copied;
+    clearTimeout(this.copiedTimer);
+    this.copied = { key, node };
+    if (prev && prev.key !== key) this.changed.fire(prev.node);
+    this.changed.fire(node);
+    this.copiedTimer = setTimeout(() => {
+      const current = this.copied;
+      this.copied = undefined;
+      this.copiedTimer = undefined;
+      if (current) this.changed.fire(current.node);
+    }, this.copiedResetMs);
   }
 
   /**
@@ -189,8 +227,12 @@ export class TableTree implements vscode.TreeDataProvider<Node> {
         item.iconPath = new vscode.ThemeIcon(node.tableType === 'view' ? 'eye' : 'table');
         item.tooltip = displayTableName(node.table);
         item.description = node.tableType === 'view' ? 'view' : undefined;
-        // package.json shows "Add to Favorites" or "Remove from Favorites" for these two values.
-        item.contextValue = node.favorite ? 'tableViz.favorite' : 'tableViz.table';
+        // package.json shows "Add to Favorites" or "Remove from Favorites", and swaps the copy icon to a green check when ".copied".
+        const key = this.rowKey(node);
+        const isCopied = this.copied?.key === key;
+        if (isCopied) this.copied = { key, node };
+        const base = node.favorite ? 'tableViz.favorite' : 'tableViz.table';
+        item.contextValue = isCopied ? `${base}.copied` : base;
         item.command = { command: 'dbxNotebook.tableViz.visualizeNode', title: 'Visualize', arguments: [node] };
         return item;
       }
